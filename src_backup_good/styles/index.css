@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #dc2626; /* Red-600 */
+  --color-secondary: #4b5563; /* Gray-600 */
+  --color-background: #ffffff;
+  --color-surface: #f9fafb;
+  --color-accent: #ef4444;
+}
+
+@layer base {
+  html, body {
+    overscroll-behavior-y: none;
+  }
+  body {
+    @apply bg-background text-[#1a1a1a] antialiased selection:bg-red-200 selection:text-red-900;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-feature-settings: "ss01", "ss03", "cv01", "cv11";
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/80 backdrop-blur-md border border-white/20;
+  }
+
+  /* Custom Scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-slate-200 rounded-full hover:bg-slate-300 transition-colors;
+  }
+
+  /* Verse spacing optimization */
+  .verse-item {
+    @apply py-0.5 px-3 border-l-2 border-transparent transition-all;
+  }
+  .verse-item.selected {
+    @apply bg-red-50 border-red-500;
+  }
+
+  /* ✅ 검색 사이드 패널 전용 스타일 */
+  .search-side-panel {
+    @apply flex flex-col h-full bg-white border-l border-slate-200 shadow-2xl;
+  }
+
+  .search-panel-header {
+    @apply p-5 border-b border-slate-100 bg-white/95 backdrop-blur-sm sticky top-0 z-20;
+  }
+
+  .search-options-grid {
+    @apply grid grid-cols-2 gap-3 mb-4 p-3 bg-slate-50 rounded-2xl border border-slate-100;
+  }
+
+  .search-result-list {
+    @apply flex-1 overflow-y-auto p-2;
+  }
+
+  .search-result-item {
+    @apply p-2 hover:bg-red-50/50 rounded-xl cursor-pointer transition-all border-l-4 border-l-transparent hover:border-l-red-500 mb-0.5;
+  }
+}

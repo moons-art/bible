@@ -1,0 +1,212 @@
+      {/* Upload Modal */}
+      <AnimatePresence>
+        {showUploadModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowUploadModal(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-2xl bg-surface border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="flex items-center justify-between p-6 border-b border-white/5">
+                <h2 className="text-xl font-bold">성경 번역본 추가</h2>
+                <button 
+                  onClick={() => setShowUploadModal(false)}
+                  className="p-2 hover:bg-white/5 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-8">
+                <FileUploader 
+                  onUploadSuccess={async (v, rawContent) => {
+                    addVersion(v);
+                    setShowUploadModal(false);
+                    // 구글 드라이브(appDataFolder)에 백업
+                    if (rawContent) {
+                      try {
+                        console.log(`[Bible Sync] Uploading ${v.name}.txt to Google Drive...`);
+                        const { gdriveWebService } = await import('./api/gdriveWebService');
+                        await gdriveWebService.uploadBibleFile(`${v.name}.txt`, rawContent);
+                        console.log(`[Bible Sync] Upload complete`);
+                        alert('성경번역본이 구글 드라이브(CEUM_Bible_Data)에 안전하게 보관되었습니다!');
+                      } catch (e: any) {
+                        console.error('Failed to backup bible to drive', e);
+                        alert(`구글 드라이브 업로드 실패: ${e?.message || e}`);
+                      }
+                    }
+                  }} 
+                />
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+        {/* Sermon Sidebar */}
+        <SermonSidebar 
+          ref={sermonSidebarRef}
+          isOpen={isSermonSidebarOpen}
+          onClose={() => setIsSermonSidebarOpen(false)}
+          clipboardText={clipboardSermonText}
+          onClipboardTextProcessed={() => setClipboardSermonText(null)}
+          dockPosition={sermonDockPosition}
+          onDockPositionChange={setSermonDockPosition}
+          isCollapsed={isSermonCollapsed}
+          onCollapseChange={setIsSermonCollapsed}
+          sidebarWidth={sermonSidebarWidth}
+          onSidebarWidthChange={setSermonSidebarWidth}
+          sidebarHeight={sermonSidebarHeight}
+          onSidebarHeightChange={setSermonSidebarHeight}
+        />
+
+        {/* Note Search Modal */}
+        <AnimatePresence>
+          {showNoteSearch && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowNoteSearch(false)}
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[70vh]"
+              >
+                <div className="p-6 border-b border-slate-100 bg-yellow-50/50">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-extrabold text-slate-800 flex items-center gap-2">
+                      <Search className="w-5 h-5 text-yellow-600" />
+                      주석 검색
+                    </h2>
+                    <button onClick={() => setShowNoteSearch(false)} className="p-1.5 hover:bg-slate-200 rounded-full transition-colors text-slate-500">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <input 
+                    type="text" 
+                    autoFocus
+                    placeholder="작성한 주석 내용을 검색하세요..."
+                    value={noteSearchQuery}
+                    onChange={e => setNoteSearchQuery(e.target.value)}
+                    className="w-full bg-white border-2 border-yellow-200 focus:border-yellow-400 focus:ring-4 focus:ring-yellow-400/10 rounded-xl px-4 py-3 text-sm font-medium text-slate-900 outline-none transition-all placeholder:text-slate-400"
+                  />
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 bg-slate-50 custom-scrollbar flex flex-col gap-2">
+                  {Object.entries(verseData)
+                    .filter(([_, data]) => data.note && data.note.includes(noteSearchQuery))
+                    .map(([verseKey, data]) => {
+                      const [bId, chStr, vsStr] = verseKey.split('_');
+                      const vNum = parseInt(vsStr, 10);
+                      return (
+                        <div 
+                          key={verseKey} 
+                          onClick={() => {
+                            setShowNoteSearch(false);
+                            setIsDualView(true);
+                            handleQuickNav(`${bId} ${chStr}:${vNum}`, 'right');
+                          }}
+                          className="px-4 py-3 bg-white border border-slate-200 rounded-lg hover:border-yellow-400 hover:bg-yellow-50 hover:shadow-sm cursor-pointer transition-all flex flex-col gap-1"
+                        >
+                          <div className="text-[11px] font-black text-yellow-600">
+                            {BIBLE_LIST.find(b => b.id === bId)?.name || bId} {chStr}:{vsStr}
+                          </div>
+                          <p className="text-xs text-slate-600 truncate whitespace-nowrap overflow-hidden">
+                            {data.note}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  {noteSearchQuery && Object.entries(verseData).filter(([_, data]) => data.note && data.note.includes(noteSearchQuery)).length === 0 && (
+                    <div className="text-center py-6 text-slate-400 text-xs font-bold">
+                      검색 결과가 없습니다.
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+  
+        {/* Sermon Search Modal */}
+        <AnimatePresence>
+          {showSermonSearch && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowSermonSearch(false)}
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[70vh]"
+              >
+                <div className="p-4 border-b border-slate-100 bg-indigo-50/50">
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-base font-extrabold text-slate-800 flex items-center gap-2">
+                      <Search className="w-4 h-4 text-indigo-600" />
+                      노트 검색
+                    </h2>
+                    <button onClick={() => setShowSermonSearch(false)} className="p-1 hover:bg-slate-200 rounded-full transition-colors text-slate-500">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <input 
+                    type="text" 
+                    autoFocus
+                    placeholder="작성한 구절노트 내용을 검색하세요..."
+                    value={sermonSearchQuery}
+                    onChange={e => setSermonSearchQuery(e.target.value)}
+                    className="w-full bg-white border-2 border-indigo-200 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-400/10 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 outline-none transition-all placeholder:text-slate-400"
+                  />
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 bg-slate-50 custom-scrollbar flex flex-col gap-2">
+                  {Object.entries(verseData)
+                    .filter(([_, data]) => data.sermon && data.sermon.includes(sermonSearchQuery))
+                    .map(([verseKey, data]) => {
+                      const [bId, chStr, vsStr] = verseKey.split('_');
+                      const vNum = parseInt(vsStr, 10);
+                      return (
+                        <div 
+                          key={verseKey} 
+                          onClick={() => {
+                            setShowSermonSearch(false);
+                            setIsDualView(true);
+                            handleQuickNav(`${bId} ${chStr}:${vNum}`, 'right');
+                          }}
+                          className="px-4 py-3 bg-white border border-slate-200 rounded-lg hover:border-indigo-400 hover:bg-indigo-50 hover:shadow-sm cursor-pointer transition-all flex flex-col gap-1"
+                        >
+                          <div className="text-[11px] font-black text-indigo-600">
+                            {BIBLE_LIST.find(b => b.id === bId)?.name || bId} {chStr}:{vsStr}
+                          </div>
+                          <p className="text-xs text-slate-600 truncate whitespace-nowrap overflow-hidden">
+                            {data.sermon}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  {sermonSearchQuery && Object.entries(verseData).filter(([_, data]) => data.sermon && data.sermon.includes(sermonSearchQuery)).length === 0 && (
+                    <div className="text-center py-6 text-slate-400 text-xs font-bold">
+                      검색 결과가 없습니다.
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
