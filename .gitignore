@@ -32,3 +32,4 @@ scratch/
 *.sw?
 *.bak
 credentials.json
+.firebase/

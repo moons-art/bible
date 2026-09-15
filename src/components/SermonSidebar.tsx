@@ -376,7 +376,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
             animate={getVariants()}
             exit={getVariants()}
             transition={isResizing ? { duration: 0 } : { type: 'spring', damping: 25, stiffness: 200 }}
-            className={`bg-white z-50 flex flex-col overflow-visible ${getContainerClasses()}`}
+            className={`bg-[#FAF9F5] z-50 flex flex-col overflow-visible ${getContainerClasses()}`}
             style={{ zIndex: dockPosition === 'free' ? sermonZIndex : undefined, ...getContainerStyle() }}
           >
             {/* Drag Resize Handle (Left for right-dock, Top for bottom-dock) */}
@@ -384,20 +384,20 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
               <div 
                 onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setIsResizing(true); }}
                 onTouchStart={(e) => { e.stopPropagation(); setIsResizing(true); }}
-                className="absolute -left-2 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-indigo-500/30 active:bg-indigo-600 transition-colors z-[100] group flex items-center justify-center"
+                className="absolute -left-2 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-[#C96442]/20 active:bg-[#C96442]/30 transition-colors z-[100] group flex items-center justify-center"
                 title="드래그하여 크기 조절"
               >
-                <div className="w-1.5 h-16 bg-slate-300 group-hover:bg-indigo-500 rounded-full transition-colors shadow-sm" />
+                <div className="w-1 h-16 bg-[#E7E5DF] group-hover:bg-[#C96442] rounded-full transition-colors shadow-2xs" />
               </div>
             )}
             {dockPosition === 'bottom' && (
               <div 
                 onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setIsResizing(true); }}
                 onTouchStart={(e) => { e.stopPropagation(); setIsResizing(true); }}
-                className="absolute -top-2 left-0 right-0 h-4 cursor-ns-resize hover:bg-indigo-500/30 active:bg-indigo-600 transition-colors z-[100] group flex items-center justify-center"
+                className="absolute -top-2 left-0 right-0 h-4 cursor-ns-resize hover:bg-[#C96442]/20 active:bg-[#C96442]/30 transition-colors z-[100] group flex items-center justify-center"
                 title="드래그하여 크기 조절"
               >
-                <div className="h-1.5 w-16 bg-slate-300 group-hover:bg-indigo-500 rounded-full transition-colors shadow-sm" />
+                <div className="h-1 w-16 bg-[#E7E5DF] group-hover:bg-[#C96442] rounded-full transition-colors shadow-2xs" />
               </div>
             )}
 
@@ -406,7 +406,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
             onClick={() => onCollapseChange(!isCollapsed)}
             className={`
               ${getTabClasses()} 
-              bg-indigo-500/15 backdrop-blur-md text-indigo-700 border-indigo-200/50 shadow-lg hover:bg-indigo-500/30 transition-all z-50
+              bg-[#FAF0EB] text-[#C96442] border-[#F1D3C6] shadow-md hover:bg-[#F5E2DA] transition-all z-50
             `}
             title={isCollapsed ? "설교노트 열기" : "설교노트 숨기기"}
           >
@@ -417,7 +417,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
           {dockPosition === 'free' && (
             <>
               <div 
-                className="absolute top-0 left-0 w-16 h-16 cursor-nwse-resize z-[100] bg-slate-900/0 hover:bg-indigo-500/10 rounded-tl-2xl flex items-start justify-start p-2"
+                className="absolute top-0 left-0 w-16 h-16 cursor-nwse-resize z-[100] bg-slate-900/0 hover:bg-[#C96442]/10 rounded-tl-2xl flex items-start justify-start p-2"
                 onMouseDown={(e) => { 
                   e.preventDefault(); e.stopPropagation(); 
                   dragStartRef.current = { ...dragStartRef.current, x: e.clientX, y: e.clientY, initW: popupSize.width, initH: popupSize.height };
@@ -430,10 +430,10 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                 }}
                 title="크기 조절"
               >
-                <div className="w-5 h-5 border-t-[3px] border-l-[3px] border-slate-400 rounded-tl-sm pointer-events-none mt-1 ml-1 opacity-50"></div>
+                <div className="w-4 h-4 border-t-2 border-l-2 border-[#A3A19B] rounded-tl-xs pointer-events-none mt-1 ml-1 opacity-60"></div>
               </div>
               <div 
-                className="absolute top-0 right-0 w-16 h-16 cursor-nesw-resize z-[100] bg-slate-900/0 hover:bg-indigo-500/10 rounded-tr-2xl flex items-start justify-end p-2"
+                className="absolute top-0 right-0 w-16 h-16 cursor-nesw-resize z-[100] bg-slate-900/0 hover:bg-[#C96442]/10 rounded-tr-2xl flex items-start justify-end p-2"
                 onMouseDown={(e) => { 
                   e.preventDefault(); e.stopPropagation(); 
                   dragStartRef.current = { ...dragStartRef.current, x: e.clientX, y: e.clientY, initW: popupSize.width, initH: popupSize.height };
@@ -446,14 +446,14 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                 }}
                 title="크기 조절"
               >
-                <div className="w-5 h-5 border-t-[3px] border-r-[3px] border-slate-400 rounded-tr-sm pointer-events-none mt-1 mr-1 opacity-50"></div>
+                <div className="w-4 h-4 border-t-2 border-r-2 border-[#A3A19B] rounded-tr-xs pointer-events-none mt-1 mr-1 opacity-60"></div>
               </div>
             </>
           )}
 
           {/* Header */}
           <div 
-            className={`flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50/50 shrink-0 ${dockPosition === 'free' ? 'cursor-move' : ''}`}
+            className={`flex items-center justify-between p-3.5 border-b border-[#E7E5DF] bg-[#F5F3ED] shrink-0 ${dockPosition === 'free' ? 'cursor-move' : ''}`}
             onMouseDown={(e) => {
               if (dockPosition === 'free') {
                 dragStartRef.current = { x: e.clientX, y: e.clientY, initX: popupPos.x, initY: popupPos.y };
@@ -467,42 +467,43 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
               }
             }}
           >
-            <div className="flex items-center gap-2 relative z-[110]">
+            <div className="flex items-center gap-1.5 relative z-[110]">
               <button 
                 onClick={view === 'editor' ? () => setView('list') : handleClose}
-                className="p-1.5 hover:bg-slate-200 rounded-lg transition-colors text-slate-500"
+                className="p-1 hover:bg-white rounded-lg transition-colors text-[#6A6864] hover:text-[#2C2B29]"
+                title="뒤로가기"
               >
-                <ChevronLeft className="w-5 h-5" />
+                <ChevronLeft className="w-4 h-4 stroke-[1.5px]" />
               </button>
-              <h2 className="text-base sm:text-lg font-extrabold text-slate-800 flex items-center gap-2">
-                <FileEdit className="w-4 h-4 text-indigo-600" />
-                {view === 'editor' ? null : '목록'}
+              <h2 className="text-base font-serif font-bold text-[#2C2B29] flex items-center gap-1.5">
+                <FileEdit className="w-4 h-4 text-[#C96442] stroke-[1.5px]" />
+                <span>{view === 'editor' ? '설교노트' : '설교 목록'}</span>
               </h2>
             </div>
             <div className="flex items-center gap-2 relative z-[110]">
               
               {/* Docking Controls */}
-              <div className="hidden sm:flex items-center bg-slate-200/50 rounded-lg p-0.5 mr-2">
-                <button onClick={() => onDockPositionChange('right')} className={`p-1.5 rounded-md transition-colors ${dockPosition === 'right' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`} title="우측 화면으로 이동"><PanelRight className="w-4 h-4" /></button>
-                <button onClick={() => onDockPositionChange('bottom')} className={`p-1.5 rounded-md transition-colors ${dockPosition === 'bottom' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`} title="하단 화면으로 이동"><PanelBottom className="w-4 h-4" /></button>
-                <button onClick={() => onDockPositionChange('free')} className={`p-1.5 rounded-md transition-colors ${dockPosition === 'free' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`} title="자유창(팝업)으로 분리"><Maximize2 className="w-4 h-4" /></button>
+              <div className="hidden sm:flex items-center bg-white rounded-xl border border-[#E7E5DF] p-0.5 shadow-2xs mr-1">
+                <button onClick={() => onDockPositionChange('right')} className={`p-1 rounded-lg transition-colors ${dockPosition === 'right' ? 'bg-[#FAF0EB] text-[#C96442]' : 'text-[#A3A19B] hover:text-[#2C2B29]'}`} title="우측 화면으로 이동"><PanelRight className="w-3.5 h-3.5 stroke-[1.5px]" /></button>
+                <button onClick={() => onDockPositionChange('bottom')} className={`p-1 rounded-lg transition-colors ${dockPosition === 'bottom' ? 'bg-[#FAF0EB] text-[#C96442]' : 'text-[#A3A19B] hover:text-[#2C2B29]'}`} title="하단 화면으로 이동"><PanelBottom className="w-3.5 h-3.5 stroke-[1.5px]" /></button>
+                <button onClick={() => onDockPositionChange('free')} className={`p-1 rounded-lg transition-colors ${dockPosition === 'free' ? 'bg-[#FAF0EB] text-[#C96442]' : 'text-[#A3A19B] hover:text-[#2C2B29]'}`} title="자유창(팝업)으로 분리"><Maximize2 className="w-3.5 h-3.5 stroke-[1.5px]" /></button>
               </div>
 
               {view === 'editor' && (
                 <div className="flex items-center gap-2">
                   {saveStatus === 'saved' && (
-                    <span className="text-[10px] text-green-600 font-bold flex items-center gap-0.5">
+                    <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5">
                       <span>✓</span> 저장됨
                     </span>
                   )}
                   {saveStatus === 'saving' && (
-                    <span className="text-[10px] text-slate-400 font-bold animate-pulse">
+                    <span className="text-[10px] text-[#A3A19B] font-semibold animate-pulse">
                       저장 중...
                     </span>
                   )}
                   {saveStatus === 'unsaved' && (
-                    <span className="text-[10px] text-orange-400 font-bold">
-                      저장되지 않음
+                    <span className="text-[10px] text-[#D97706] font-semibold">
+                      저장 필요
                     </span>
                   )}
                   <button 
@@ -514,63 +515,63 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                         setSaveStatus('saved');
                       }
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-lg transition-colors font-bold text-xs shadow-sm">
-                    <Save className="w-3.5 h-3.5" /> 저장
+                    className="flex items-center gap-1 px-3 py-1.5 bg-[#C96442] hover:bg-[#B55434] active:bg-[#A3472A] text-white rounded-xl transition-colors font-semibold text-xs shadow-2xs">
+                    <Save className="w-3.5 h-3.5 stroke-[1.5px]" /> 저장
                   </button>
                 </div>
               )}
-              <button onClick={handleClose} className="p-1.5 hover:bg-red-50 hover:text-red-600 rounded-full transition-colors text-slate-400">
-                <X className="w-5 h-5" />
+              <button onClick={handleClose} className="p-1 hover:bg-[#FAF0EB] hover:text-[#C96442] rounded-lg transition-colors text-[#A3A19B]">
+                <X className="w-4 h-4 stroke-[1.5px]" />
               </button>
             </div>
           </div>
 
           {view === 'list' ? (
             // --- LIST VIEW ---
-            <div className="flex-1 flex flex-col min-h-0">
-              <div className="p-4 border-b border-slate-100 bg-white shrink-0">
+            <div className="flex-1 flex flex-col min-h-0 bg-[#FAF9F5]">
+              <div className="p-3.5 border-b border-[#E7E5DF] bg-white shrink-0">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#A3A19B] stroke-[1.5px]" />
                   <input 
                     type="text" 
                     placeholder="설교문 제목 검색..." 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/20 transition-all"
+                    className="w-full bg-[#FAF9F5] border border-[#E7E5DF] rounded-xl pl-9 pr-3 py-1.5 text-xs text-[#2C2B29] outline-none focus:bg-white focus:border-[#C96442] focus:ring-2 focus:ring-[#C96442]/10 transition-all placeholder:text-[#A3A19B]"
                   />
                 </div>
               </div>
               
-              <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-slate-50/30 custom-scrollbar">
+              <div className="flex-1 overflow-y-auto p-3.5 space-y-2 bg-[#FAF9F5] custom-scrollbar">
                 <button 
                   onClick={createNewEditor}
-                  className="w-full flex items-center justify-center gap-2 p-3 border-2 border-dashed border-indigo-200 rounded-xl text-indigo-600 text-sm font-bold hover:bg-indigo-50 hover:border-indigo-400 transition-all active:scale-95"
+                  className="w-full flex items-center justify-center gap-2 p-3 border-2 border-dashed border-[#F1D3C6] rounded-xl text-[#C96442] text-xs font-semibold bg-[#FAF0EB]/40 hover:bg-[#FAF0EB] transition-all active:scale-[0.99]"
                 >
-                  <Plus className="w-4 h-4" /> 새 설교문 작성하기
+                  <Plus className="w-4 h-4 stroke-[1.5px]" /> 새 설교문 작성하기
                 </button>
                 
                 {filteredSermons.map(s => (
                   <div 
                     key={s.id} 
                     onClick={() => openEditor(s.id)}
-                    className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-xl shadow-sm hover:shadow-md hover:border-indigo-100 transition-all cursor-pointer group"
+                    className="flex items-center justify-between p-3 bg-white border border-[#E7E5DF] rounded-xl shadow-2xs hover:border-[#C96442] transition-all cursor-pointer group"
                   >
                     <div>
-                      <h3 className="font-bold text-sm text-slate-800 group-hover:text-indigo-600 transition-colors">{s.title}</h3>
-                      <p className="text-xs text-slate-400 flex items-center gap-1 mt-1">
-                        <Calendar className="w-3 h-3" /> {s.date}
+                      <h3 className="font-semibold text-xs text-[#2C2B29] group-hover:text-[#C96442] transition-colors">{s.title}</h3>
+                      <p className="text-[10px] text-[#A3A19B] flex items-center gap-1 mt-1">
+                        <Calendar className="w-3 h-3 stroke-[1.5px]" /> {s.date}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600">
-                        <FileEdit className="w-4 h-4" />
+                    <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="w-7 h-7 rounded-lg bg-[#FAF0EB] flex items-center justify-center text-[#C96442]">
+                        <FileEdit className="w-3.5 h-3.5 stroke-[1.5px]" />
                       </div>
                       <button 
                         onClick={(e) => handleDeleteSermon(s.id, e)}
-                        className="w-8 h-8 rounded-full bg-red-50 flex items-center justify-center text-red-600 hover:bg-red-100 hover:scale-110 transition-all z-10"
+                        className="w-7 h-7 rounded-lg bg-red-50 flex items-center justify-center text-red-600 hover:bg-red-100 transition-all z-10"
                         title="설교문 삭제"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-3.5 h-3.5 stroke-[1.5px]" />
                       </button>
                     </div>
                   </div>
@@ -579,15 +580,15 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
             </div>
           ) : (
             // --- EDITOR VIEW ---
-            <div className="flex-1 flex flex-col min-h-0 bg-white relative">
-              <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-100">
+            <div className="flex-1 flex flex-col min-h-0 bg-[#FAF9F5] relative">
+              <div className="flex items-center justify-between px-4 py-1.5 bg-white border-b border-[#E7E5DF]">
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setSermonFontSize(prev => Math.max(10, prev - 1))} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 transition-colors" title="글자 작게">
-                    <div className="flex items-center"><Type className="w-3 h-3" /><Minus className="w-2.5 h-2.5" /></div>
+                  <button onClick={() => setSermonFontSize(prev => Math.max(10, prev - 1))} className="p-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] transition-colors" title="글자 작게">
+                    <div className="flex items-center"><Type className="w-3 h-3 stroke-[1.5px]" /><Minus className="w-2.5 h-2.5 stroke-[1.5px]" /></div>
                   </button>
-                  <span className="text-xs font-bold text-slate-400 min-w-4 text-center">{sermonFontSize}</span>
-                  <button onClick={() => setSermonFontSize(prev => Math.min(30, prev + 1))} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 transition-colors" title="글자 크게">
-                    <div className="flex items-center"><Type className="w-4 h-4" /><Plus className="w-3 h-3" /></div>
+                  <span className="text-xs font-semibold text-[#A3A19B] min-w-4 text-center">{sermonFontSize}</span>
+                  <button onClick={() => setSermonFontSize(prev => Math.min(30, prev + 1))} className="p-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] transition-colors" title="글자 크게">
+                    <div className="flex items-center"><Type className="w-3.5 h-3.5 stroke-[1.5px]" /><Plus className="w-2.5 h-2.5 stroke-[1.5px]" /></div>
                   </button>
                 </div>
                 <button 
@@ -597,37 +598,37 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                       alert('복사되었습니다.');
                     }
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-slate-200 rounded-lg text-slate-600 transition-colors text-xs font-bold"
+                  className="flex items-center gap-1 px-2.5 py-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] hover:text-[#2C2B29] transition-colors text-xs font-semibold"
                 >
-                  <Copy className="w-3.5 h-3.5" /> 전체 복사
+                  <Copy className="w-3.5 h-3.5 stroke-[1.5px]" /> 전체 복사
                 </button>
               </div>
-              <div className="relative flex-1 flex flex-col min-h-0">
+              <div className="relative flex-1 flex flex-col min-h-0 bg-[#FAF9F5]">
                 <input 
                   id="sermon-title-input"
                   type="text" 
                   disabled={!googleUserId}
                   placeholder="설교 제목..." 
-                  className={`w-full text-lg font-black border-b border-slate-100 outline-none px-6 py-4 placeholder:text-slate-300 shrink-0 ${!googleUserId ? 'text-slate-400 bg-slate-50 opacity-80 cursor-not-allowed' : 'text-slate-900 bg-white'}`}
+                  className={`w-full text-base font-serif font-bold border-b border-[#E7E5DF] outline-none px-6 py-3.5 placeholder:text-[#A3A19B] shrink-0 ${!googleUserId ? 'text-[#A3A19B] bg-[#F5F3ED] opacity-80 cursor-not-allowed' : 'text-[#2C2B29] bg-white'}`}
                   value={editorTitle}
                   onChange={(e) => setEditorTitle(e.target.value)}
                 />
                 <textarea 
                   disabled={!googleUserId}
                   style={{ fontSize: `${sermonFontSize}px` }}
-                  className={`flex-1 w-full p-6 leading-relaxed font-medium border-none outline-none resize-none placeholder:text-slate-400 custom-scrollbar ${!googleUserId ? 'text-slate-400 bg-slate-50 opacity-80 cursor-not-allowed' : 'text-slate-900 bg-white'}`}
+                  className={`flex-1 w-full p-6 leading-relaxed font-serif border-none outline-none resize-none placeholder:text-[#A3A19B] custom-scrollbar ${!googleUserId ? 'text-[#A3A19B] bg-[#F5F3ED] opacity-80 cursor-not-allowed' : 'text-[#2C2B29] bg-[#FAF9F5]'}`}
                   placeholder="말씀을 이곳에 작성하세요..."
                   value={editorContent}
                   onChange={(e) => setEditorContent(e.target.value)}
                 />
                 {!googleUserId && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-50/50 backdrop-blur-[1px] z-10 p-6 text-center">
-                    <div className="w-12 h-12 bg-slate-200 rounded-full flex items-center justify-center mb-4 text-slate-500 shadow-sm border border-slate-300">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#FAF9F5]/90 backdrop-blur-[1px] z-10 p-6 text-center">
+                    <div className="w-10 h-10 bg-[#F5F3ED] rounded-full flex items-center justify-center mb-3 text-[#C96442] shadow-2xs border border-[#E7E5DF]">
+                      <FileEdit className="w-5 h-5 stroke-[1.5px]" />
                     </div>
-                    <h3 className="text-slate-700 font-bold mb-2">로그인이 필요한 기능입니다</h3>
-                    <p className="text-sm text-slate-500 font-medium">
-                      왼쪽 탭 선택기 위쪽의 <strong>[구글 계정으로 로그인]</strong> 버튼을 눌러<br/>로그인하시면 설교노트를 영구적으로 저장할 수 있습니다.
+                    <h3 className="text-[#2C2B29] font-bold text-sm mb-1.5">로그인이 필요한 기능입니다</h3>
+                    <p className="text-xs text-[#6A6864] font-medium leading-relaxed">
+                      왼쪽 사이드바의 <strong>[Google 로그인]</strong> 버튼을 눌러<br/>로그인하시면 설교노트를 영구적으로 저장할 수 있습니다.
                     </p>
                   </div>
                 )}

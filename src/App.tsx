@@ -68,78 +68,78 @@ const BibleNavBar: React.FC<BibleNavBarProps> = ({
   };
 
   return (
-    <div className={`flex flex-nowrap items-center gap-x-1.5 p-1.5 bg-white border-b border-slate-200 shadow-sm sticky top-0 z-20 overflow-x-auto custom-scrollbar ${side === 'right' ? 'bg-slate-50/50' : ''}`}>
+    <div className={`flex flex-nowrap items-center gap-x-2 px-3 py-2 bg-[#FAF9F5] border-b border-[#E7E5DF] sticky top-0 z-20 overflow-x-auto custom-scrollbar ${side === 'right' ? 'bg-[#F5F3ED]/40' : ''}`}>
       {/* 1. Quick Find Input with Search Button */}
-      <div className="relative group w-28 sm:w-32 shrink-0">
+      <div className="relative group w-32 sm:w-36 shrink-0">
         <input 
           type="text"
           value={localQuery}
           onChange={handleChange}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          placeholder="성경구절(창 1)"
-          className="w-full h-8 bg-slate-100 border border-slate-300 rounded-md pl-2 pr-6 text-[10px] font-black text-slate-800 placeholder:text-slate-400 focus:bg-white focus:border-red-400 focus:ring-1 focus:ring-red-500/5 transition-all outline-none"
+          placeholder="성경구절 (창 1)"
+          className="w-full h-8 bg-white border border-[#E7E5DF] rounded-xl pl-3 pr-7 text-xs font-semibold text-[#2C2B29] placeholder:text-[#A3A19B] focus:bg-white focus:border-[#C96442] focus:ring-2 focus:ring-[#C96442]/10 transition-all outline-none shadow-2xs"
         />
         <button 
           onClick={() => handleSearch()}
-          className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-slate-600 hover:text-red-600 transition-colors"
+          className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-[#A3A19B] hover:text-[#C96442] transition-colors"
           title="구절 찾기"
         >
-          <Search className="w-4 h-4 stroke-[2.5px]" />
+          <Search className="w-3.5 h-3.5 stroke-[1.5px]" />
         </button>
       </div>
 
-      <div className="flex items-center gap-0.5 bg-slate-100 rounded-md p-0.5 border border-slate-200 shrink-0">
+      <div className="flex items-center gap-0.5 bg-[#F5F3ED] rounded-xl p-0.5 border border-[#E7E5DF] shrink-0 shadow-2xs">
         {/* Book Selector */}
         <div className="relative group">
           <select 
             value={nav.bookId}
             onChange={(e) => setNav({ bookId: e.target.value, chapter: 1, verse: undefined })}
-            className="bg-transparent text-[11px] font-black text-slate-800 pl-1.5 pr-4 py-1 outline-none appearance-none cursor-pointer hover:bg-white rounded-md transition-colors min-w-[45px]"
+            className="bg-transparent text-xs font-semibold text-[#2C2B29] pl-2 pr-5 py-1 outline-none appearance-none cursor-pointer hover:bg-white rounded-lg transition-colors min-w-[52px]"
           >
             {BIBLE_LIST.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
-          <ChevronDown className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" />
+          <ChevronDown className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-[#A3A19B]" />
         </div>
         
-        <div className="w-px h-3 bg-slate-200"></div>
+        <div className="w-px h-3.5 bg-[#E7E5DF]"></div>
 
         {/* Chapter Selector */}
         <div className="relative group">
           <select 
             value={nav.chapter}
             onChange={(e) => setNav({ ...nav, chapter: parseInt(e.target.value, 10), verse: undefined })}
-            className="bg-transparent text-[11px] font-black text-slate-800 pl-1.5 pr-4 py-1 outline-none appearance-none cursor-pointer hover:bg-white rounded-md transition-colors min-w-[32px]"
+            className="bg-transparent text-xs font-semibold text-[#2C2B29] pl-2 pr-5 py-1 outline-none appearance-none cursor-pointer hover:bg-white rounded-lg transition-colors min-w-[40px]"
           >
             {Array.from({ length: BIBLE_LIST.find(b => b.id === nav.bookId)?.chapters || 1 }, (_, i) => (
               <option key={i + 1} value={i + 1}>{i + 1}장</option>
             ))}
           </select>
-          <ChevronDown className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" />
+          <ChevronDown className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-[#A3A19B]" />
         </div>
 
-        <div className="w-px h-3 bg-slate-200"></div>
+        <div className="w-px h-3.5 bg-[#E7E5DF]"></div>
 
         {/* Verse Selector */}
         <div className="relative group">
           <select 
             value={nav.verse || ''}
             onChange={(e) => setNav({ ...nav, verse: e.target.value ? parseInt(e.target.value, 10) : undefined })}
-            className="bg-transparent text-[11px] font-black text-slate-800 pl-1.5 pr-4 py-1 outline-none appearance-none cursor-pointer hover:bg-white rounded-md transition-colors min-w-[32px]"
+            className="bg-transparent text-xs font-semibold text-[#2C2B29] pl-2 pr-5 py-1 outline-none appearance-none cursor-pointer hover:bg-white rounded-lg transition-colors min-w-[36px]"
           >
-            <option value="">절</option>
+            <option value="">전체</option>
             {Array.from({ length: 150 }, (_, i) => (
               <option key={i + 1} value={i + 1}>{i + 1}절</option>
             ))}
           </select>
-          <ChevronDown className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" />
+          <ChevronDown className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-[#A3A19B]" />
         </div>
 
-        <div className="w-px h-3 bg-slate-200"></div>
+        <div className="w-px h-3.5 bg-[#E7E5DF]"></div>
 
         {/* Navigation Buttons */}
         <div className="flex items-center px-0.5">
-          <button onClick={onPrev} className="p-1 hover:bg-white rounded text-slate-400 hover:text-red-600 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
-          <button onClick={onNext} className="p-1 hover:bg-white rounded text-slate-400 hover:text-red-600 transition-colors"><ChevronRight className="w-4 h-4" /></button>
+          <button onClick={onPrev} className="p-1 hover:bg-white rounded-lg text-[#6A6864] hover:text-[#C96442] transition-colors" title="이전 장"><ChevronLeft className="w-3.5 h-3.5 stroke-[1.5px]" /></button>
+          <button onClick={onNext} className="p-1 hover:bg-white rounded-lg text-[#6A6864] hover:text-[#C96442] transition-colors" title="다음 장"><ChevronRight className="w-3.5 h-3.5 stroke-[1.5px]" /></button>
         </div>
       </div>
     </div>
@@ -458,7 +458,7 @@ const MainApp: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-background text-slate-200 overflow-y-auto overflow-x-hidden font-sans custom-scrollbar">
+    <div className="flex h-screen bg-[#FAF9F5] text-[#2C2B29] overflow-y-auto overflow-x-hidden font-sans custom-scrollbar">
       {/* Sidebar */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -466,29 +466,29 @@ const MainApp: React.FC = () => {
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: "fit-content", opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
-            className="glass border-r border-slate-200 h-full relative z-30 bg-white shadow-xl shrink-0 group/sidebar"
+            className="border-r border-[#E7E5DF] h-full relative z-30 bg-[#F5F3ED] shadow-xs shrink-0 group/sidebar"
           >
             {/* Sidebar Collapse Button */}
             <button
               onClick={() => setIsSidebarOpen(false)}
-              className="absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-12 bg-white border border-slate-200 rounded-full shadow-md flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-slate-50 transition-all z-40 opacity-0 group-hover/sidebar:opacity-100"
+              className="absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-12 bg-white border border-[#E7E5DF] rounded-full shadow-xs flex items-center justify-center text-[#A3A19B] hover:text-[#C96442] hover:bg-[#FAF9F5] transition-all z-40 opacity-0 group-hover/sidebar:opacity-100"
               title="사이드바 접기"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-3.5 h-3.5 stroke-[1.5px]" />
             </button>
 
-            <div className="p-5 h-full flex flex-col w-[16vw] min-w-[180px] max-w-[260px]">
+            <div className="p-4 h-full flex flex-col w-[16vw] min-w-[190px] max-w-[260px]">
               {/* Header */}
-              <div className="flex items-center justify-between mb-4">
-                <h1 className="font-bold bg-gradient-to-r from-red-600 to-red-400 bg-clip-text text-transparent flex items-baseline gap-1.5">
-                  <span className="text-[10px] uppercase tracking-tighter opacity-80">nations</span>
-                  <span className="text-xl">바이블</span>
-                </h1>
-                <BookOpen className="w-5 h-5 text-red-500" />
+              <div className="flex items-center justify-between mb-4 pb-1">
+                <div className="flex items-baseline gap-1.5">
+                  <span className="font-serif font-bold text-base text-[#2C2B29] tracking-tight">NATIONS BIBLE</span>
+                  <span className="text-[10px] font-bold text-[#78350F] bg-[#FEF3C7] px-1.5 py-0.5 rounded-full border border-[#FDE68A]">v2.0</span>
+                </div>
+                <BookOpen className="w-4 h-4 text-[#C96442] stroke-[1.5px]" />
               </div>
 
               {/* Auth (Login / Profile) Section */}
-              <div className="mb-6 relative z-10">
+              <div className="mb-4 relative z-10">
                 {!isAuthenticated ? (
                   <div className="relative">
                     <button
@@ -502,7 +502,7 @@ const MainApp: React.FC = () => {
                           alert('로그인 실패: 구글 인증이 완료되지 않았습니다.');
                         }
                       }}
-                      className="w-full flex items-center justify-center gap-2.5 py-3 px-3 bg-white border border-slate-200 text-slate-700 rounded-xl shadow-sm hover:shadow-md hover:border-slate-300 hover:bg-slate-50 transition-all active:scale-[0.97] group relative overflow-hidden"
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-[#E7E5DF] text-[#2C2B29] rounded-xl shadow-2xs hover:border-[#DDD9D0] hover:bg-[#FAF9F5] transition-all active:scale-[0.98] group relative overflow-hidden"
                     >
                       <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -510,10 +510,7 @@ const MainApp: React.FC = () => {
                         <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
                         <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
                       </svg>
-                      <div className="flex flex-col items-start leading-tight">
-                        <span className="text-[13px] font-extrabold tracking-tight">Google</span>
-                        <span className="text-[13px] font-extrabold tracking-tight">로그인</span>
-                      </div>
+                      <span className="text-xs font-semibold text-[#2C2B29]">Google 로그인</span>
                     </button>
                     
                     <div className="absolute top-2 right-2">
@@ -521,26 +518,26 @@ const MainApp: React.FC = () => {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex flex-col bg-slate-50 border border-slate-200 p-3 rounded-2xl gap-3 shadow-sm">
-                    <div className="flex items-center gap-2.5 overflow-hidden">
+                  <div className="flex flex-col bg-white border border-[#E7E5DF] p-2.5 rounded-xl gap-2.5 shadow-2xs">
+                    <div className="flex items-center gap-2 overflow-hidden">
                       {userProfile?.picture ? (
-                        <img src={userProfile.picture} alt="Profile" className="w-9 h-9 rounded-full shadow-sm shrink-0 border border-slate-200" />
+                        <img src={userProfile.picture} alt="Profile" className="w-8 h-8 rounded-full shrink-0 border border-[#E7E5DF]" />
                       ) : (
-                        <div className="w-9 h-9 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center text-sm font-black shrink-0 border border-indigo-200">
+                        <div className="w-8 h-8 bg-[#FAF0EB] text-[#C96442] rounded-full flex items-center justify-center text-xs font-bold shrink-0 border border-[#F1D3C6]">
                           {userProfile?.name?.charAt(0) || 'U'}
                         </div>
                       )}
                       
                       <div className="flex flex-col flex-1 min-w-0 pr-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm font-black text-slate-800 truncate">{userProfile?.name || '사용자'}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs font-bold text-[#2C2B29] truncate">{userProfile?.name || '사용자'}</span>
                           {isOffline && (
-                            <div className="shrink-0 p-0.5 bg-red-100 rounded-full" title="오프라인 모드">
-                              <WifiOff className="w-3 h-3 text-red-500" />
+                            <div className="shrink-0 p-0.5 bg-[#FBEFEA] rounded-full" title="오프라인 모드">
+                              <WifiOff className="w-3 h-3 text-[#C96442]" />
                             </div>
                           )}
                         </div>
-                        <span className="text-[10px] font-medium text-slate-500 truncate leading-tight">{userProfile?.email || ''}</span>
+                        <span className="text-[10px] text-[#A3A19B] truncate leading-tight">{userProfile?.email || ''}</span>
                       </div>
                     </div>
                     
@@ -552,7 +549,7 @@ const MainApp: React.FC = () => {
                           window.location.reload();
                         }
                       }}
-                      className="w-full flex items-center justify-center py-2 text-xs font-black text-red-600 bg-white hover:bg-red-50 hover:text-red-700 rounded-xl transition-all border border-red-100 shadow-sm"
+                      className="w-full flex items-center justify-center py-1.5 text-xs font-semibold text-[#C96442] bg-[#FAF0EB] hover:bg-[#F5E2DA] rounded-lg transition-all border border-[#F1D3C6]"
                     >
                       로그아웃
                     </button>
@@ -561,11 +558,11 @@ const MainApp: React.FC = () => {
               </div>
 
               {/* Bible Sidebar Content */}
-              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-6">
+              <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-4">
                 <div>
-                  <div className="flex items-center justify-between mb-3 px-2">
+                  <div className="flex items-center justify-between mb-2 px-1">
                     <div className="flex items-center">
-                      <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">번역본 목록</h2>
+                      <h2 className="text-xs font-semibold text-[#A3A19B] uppercase tracking-wider">번역본 목록</h2>
                       <TooltipIcon text="번역본을 업로드 하면 구글드라이브에 저장되어 사용자가 로그인하면 항상 표시 됩니다." />
                     </div>
                     <div className="flex items-center gap-1">
@@ -576,10 +573,10 @@ const MainApp: React.FC = () => {
                               clearAllVersions();
                             }
                           }}
-                          className="p-1 hover:bg-red-500/10 rounded-md transition-colors text-red-400/60 hover:text-red-400"
+                          className="p-1 hover:bg-[#FBEFEA] rounded-lg transition-colors text-[#A3A19B] hover:text-[#C96442]"
                           title="모든 번역본 삭제"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5 stroke-[1.5px]" />
                         </button>
                       )}
                       <button 
@@ -590,33 +587,34 @@ const MainApp: React.FC = () => {
                           }
                           setShowUploadModal(true);
                         }}
-                        className="p-1 hover:bg-slate-100 rounded-md transition-colors text-red-500"
+                        className="p-1 hover:bg-white rounded-lg transition-colors text-[#C96442]"
+                        title="번역본 추가"
                       >
-                        <Plus className="w-4 h-4" />
+                        <Plus className="w-3.5 h-3.5 stroke-[1.5px]" />
                       </button>
                     </div>
                   </div>
                   
                   <div className="space-y-1">
                     {versions.length === 0 ? (
-                      <p className="text-xs text-slate-400 px-2 italic">번역본을 추가해주세요.</p>
+                      <p className="text-xs text-[#A3A19B] px-1 italic">번역본을 추가해주세요.</p>
                     ) : (
                       versions.map((v) => (
                         <div
                           key={v.id}
                           className={`
-                            group flex items-center gap-2 p-2.5 rounded-xl cursor-pointer transition-all duration-200
-                            ${selectedVersionIds.includes(v.id) ? 'bg-red-50 text-red-700 ring-1 ring-red-100' : 'hover:bg-slate-50 text-slate-600'}
+                            group flex items-center gap-2 p-2 rounded-xl cursor-pointer transition-all duration-150 border
+                            ${selectedVersionIds.includes(v.id) ? 'bg-white text-[#C96442] border-[#E7E5DF] shadow-2xs' : 'hover:bg-white/60 text-[#6A6864] border-transparent'}
                           `}
                           onClick={() => toggleVersion(v.id)}
                         >
                           <div className={`
                             w-4 h-4 shrink-0 rounded-md border flex items-center justify-center transition-colors
-                            ${selectedVersionIds.includes(v.id) ? 'bg-red-500 border-red-500' : 'border-slate-200'}
+                            ${selectedVersionIds.includes(v.id) ? 'bg-[#C96442] border-[#C96442]' : 'border-[#D6D3CA] bg-white'}
                           `}>
-                            {selectedVersionIds.includes(v.id) && <Check className="w-3 h-3 text-white" />}
+                            {selectedVersionIds.includes(v.id) && <Check className="w-3 h-3 text-white stroke-[2.5px]" />}
                           </div>
-                          <span className="flex-1 text-[13px] font-bold tracking-tighter truncate leading-tight">{v.name}</span>
+                          <span className="flex-1 text-xs font-semibold tracking-tight truncate leading-tight">{v.name}</span>
                           
                           {!v.isSystem && !v.isBuiltIn && (
                             <button
@@ -626,10 +624,10 @@ const MainApp: React.FC = () => {
                                   removeVersion(v.id);
                                 }
                               }}
-                              className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-100 rounded-md transition-all opacity-0 group-hover:opacity-100"
+                              className="p-1 text-[#A3A19B] hover:text-[#C96442] hover:bg-[#FBEFEA] rounded-md transition-all opacity-0 group-hover:opacity-100"
                               title="이 번역본 삭제"
                             >
-                              <X className="w-3.5 h-3.5" />
+                              <X className="w-3 h-3 stroke-[1.5px]" />
                             </button>
                           )}
                         </div>
@@ -639,20 +637,29 @@ const MainApp: React.FC = () => {
                 </div>
               </div>
 
-              {/* Footer Settings */}
-              <div className="mt-auto pt-6 border-t border-slate-100">
-                <div className="flex items-center gap-2 px-4 py-3 w-full hover:bg-slate-50 rounded-xl transition-colors text-slate-500 hover:text-red-600">
+              {/* Footer */}
+              <div className="mt-auto pt-3 border-t border-[#E7E5DF]">
+                {/* Today Reading Widget */}
+                <div className="p-3 mb-2 rounded-xl bg-white border border-[#E7E5DF] text-[#6A6864] shadow-2xs">
+                  <div className="flex items-center gap-1.5 mb-1 text-[#2C2B29]">
+                    <BookOpen className="w-3.5 h-3.5 text-[#C96442] stroke-[1.5px]" />
+                    <span className="text-xs font-bold">오늘의 통독</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-[#6A6864]">창세기 1장 ~ 3장 · 시편 1편</p>
+                </div>
+
+                <div className="flex items-center gap-2 px-3 py-2 w-full hover:bg-white rounded-xl transition-colors text-[#6A6864] hover:text-[#2C2B29]">
                   <button 
                     onClick={() => setShowSettings(true)}
-                    className="flex items-center gap-3 flex-1"
+                    className="flex items-center gap-2.5 flex-1"
                   >
-                    <Settings className="w-5 h-5" />
-                    <span className="text-sm font-medium">설정</span>
+                    <Settings className="w-4 h-4 stroke-[1.5px]" />
+                    <span className="text-xs font-medium">설정</span>
                   </button>
                   <TooltipIcon text="성경 글자 크기, 글꼴 줄간격 수정" />
                 </div>
-                <div className="mt-4 px-4 text-center">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">제작: CEUM ministry</p>
+                <div className="mt-1.5 px-2 text-center">
+                  <p className="text-[10px] text-[#A3A19B] font-semibold tracking-wider">CEUM ministry</p>
                 </div>
               </div>
             </div>
@@ -670,61 +677,62 @@ const MainApp: React.FC = () => {
             }}
           >
             {/* Header */}
-            <header className="min-h-16 border-b border-slate-200 flex items-center px-4 md:px-6 py-3 gap-4 bg-white sticky top-0 z-30 shadow-sm overflow-x-auto custom-scrollbar flex-col xl:flex-row">
+            <header className="min-h-14 border-b border-[#E7E5DF] flex items-center px-4 md:px-6 py-2 gap-2.5 bg-[#FAF9F5]/95 backdrop-blur-md sticky top-0 z-30 overflow-x-auto custom-scrollbar flex-col xl:flex-row shadow-2xs">
               
               {/* Row 1: Sidebar Toggle, Copy Menu, Search Note/Annotation */}
-              <div className="flex items-center gap-3 shrink-0 flex-nowrap w-full xl:w-auto">
+              <div className="flex items-center gap-2.5 shrink-0 flex-nowrap w-full xl:w-auto">
                 <div className="flex items-center shrink-0">
                   <button 
                     onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                    className="p-2.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 shrink-0 shadow-sm border border-transparent hover:border-slate-200"
+                    className="p-2 hover:bg-white rounded-xl transition-colors text-[#6A6864] hover:text-[#2C2B29] shrink-0 border border-transparent hover:border-[#E7E5DF]"
+                    title="사이드바 토글"
                   >
-                    <Menu className="w-5 h-5" />
+                    <Menu className="w-4 h-4 stroke-[1.5px]" />
                   </button>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0 flex-nowrap">
+                <div className="flex items-center gap-2.5 shrink-0 flex-nowrap">
                   {/* 복사 메뉴 */}
-                  <div className="flex items-center bg-slate-100 rounded-lg border border-slate-200 p-1 shadow-inner shrink-0 whitespace-nowrap">
+                  <div className="flex items-center bg-[#F5F3ED] rounded-xl border border-[#E7E5DF] p-0.5 shadow-2xs shrink-0 whitespace-nowrap">
                     {['default', 'niv+krv', 'all'].map((m) => (
                       <button 
                         key={m} 
                         onClick={() => setCopyMode(m as any)}
-                        className={`px-3 py-1.5 rounded-md text-xs tracking-tight font-black transition-all ${copyMode === m ? 'bg-white text-indigo-600 shadow-md ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${copyMode === m ? 'bg-white text-[#C96442] shadow-2xs' : 'text-[#6A6864] hover:text-[#2C2B29] hover:bg-white/60'}`}
                       >
                         {m === 'default' ? '개역' : m === 'niv+krv' ? '개역+NIV' : '전체 복사'}
                       </button>
                     ))}
-                    <div className="w-px h-4 bg-slate-300 mx-1.5"></div>
+                    <div className="w-px h-3.5 bg-[#E7E5DF] mx-1"></div>
                     <button 
                       onClick={() => setShowVersionInCopy(!showVersionInCopy)}
-                      className={`px-3 py-1.5 rounded-md text-xs tracking-tight font-black transition-all ${!showVersionInCopy ? 'bg-white text-red-600 shadow-md ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${!showVersionInCopy ? 'bg-white text-[#C96442] shadow-2xs' : 'text-[#6A6864] hover:text-[#2C2B29] hover:bg-white/60'}`}
                     >
                       번역본 숨기기
                     </button>
                   </div>
 
-                  <div className="hidden sm:block w-px h-6 bg-slate-200 mx-1 shrink-0"></div>
+                  <div className="hidden sm:block w-px h-5 bg-[#E7E5DF] mx-0.5 shrink-0"></div>
 
                   {/* 검색 및 주석보기 */}
-                  <div className="flex items-center gap-2 shrink-0 flex-nowrap">
+                  <div className="flex items-center gap-1.5 shrink-0 flex-nowrap">
                     <button 
                       onClick={(e) => { e.stopPropagation(); setShowNoteSearch(true); }}
-                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-yellow-50 border border-yellow-200 hover:bg-yellow-100 text-xs font-extrabold text-yellow-700 transition-colors shadow-sm whitespace-nowrap"
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white border border-[#E7E5DF] hover:bg-[#F5F3ED] text-xs font-medium text-[#78350F] transition-all shadow-2xs whitespace-nowrap"
                     >
-                      <Search className="w-4 h-4" /> 주석검색
+                      <Search className="w-3.5 h-3.5 stroke-[1.5px]" /> 주석검색
                     </button>
                     <button 
                       onClick={(e) => { e.stopPropagation(); setShowSermonSearch(true); }}
-                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-xs font-extrabold text-emerald-700 transition-colors shadow-sm whitespace-nowrap"
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white border border-[#E7E5DF] hover:bg-[#F5F3ED] text-xs font-medium text-[#047857] transition-all shadow-2xs whitespace-nowrap"
                     >
-                      <Search className="w-4 h-4" /> 노트검색
+                      <Search className="w-3.5 h-3.5 stroke-[1.5px]" /> 노트검색
                     </button>
                     <button 
                       onClick={(e) => { e.stopPropagation(); setShowAnnotations(!showAnnotations); }}
-                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-xs font-extrabold text-slate-600 transition-colors shadow-sm whitespace-nowrap"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white border border-[#E7E5DF] hover:bg-[#F5F3ED] text-xs font-medium text-[#4A4844] transition-all shadow-2xs whitespace-nowrap"
                     >
-                      {showAnnotations ? <EyeOff className="w-4 h-4 text-slate-400" /> : <Eye className="w-4 h-4 text-indigo-500" />}
+                      {showAnnotations ? <EyeOff className="w-3.5 h-3.5 text-[#A3A19B] stroke-[1.5px]" /> : <Eye className="w-3.5 h-3.5 text-[#C96442] stroke-[1.5px]" />}
                       주석 {showAnnotations ? '숨기기' : '보기'}
                     </button>
                   </div>
@@ -732,7 +740,7 @@ const MainApp: React.FC = () => {
               </div>
 
               {/* Row 2: Dual View, Sermon Note, Bible Search, Settings */}
-              <div className="flex flex-nowrap items-center gap-3 w-full xl:w-auto xl:ml-auto border-t xl:border-t-0 border-slate-100 pt-3 xl:pt-0 shrink-0">
+              <div className="flex flex-nowrap items-center gap-2 w-full xl:w-auto xl:ml-auto border-t xl:border-t-0 border-[#E7E5DF] pt-2 xl:pt-0 shrink-0">
                 <button 
                   onClick={() => {
                     if (!isDualView) {
@@ -741,43 +749,44 @@ const MainApp: React.FC = () => {
                     }
                     setIsDualView(!isDualView);
                   }}
-                  className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl transition-all shadow-sm active:scale-95 border ${isDualView ? 'bg-indigo-600 text-white border-indigo-700' : 'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100'} whitespace-nowrap shrink-0`}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl transition-all shadow-2xs active:scale-98 border text-xs font-semibold whitespace-nowrap shrink-0 ${isDualView ? 'bg-[#C96442] text-white border-[#B55434]' : 'bg-white text-[#4A4844] border-[#E7E5DF] hover:bg-[#F5F3ED]'}`}
                 >
-                  <div className="flex gap-1 shrink-0">
-                    <div className={`w-1.5 h-4 rounded-sm ${isDualView ? 'bg-white' : 'bg-indigo-400'}`} />
-                    <div className={`w-1.5 h-4 rounded-sm ${isDualView ? 'bg-white/60' : 'bg-indigo-200'}`} />
+                  <div className="flex gap-0.5 shrink-0">
+                    <div className={`w-1 h-3.5 rounded-xs ${isDualView ? 'bg-white' : 'bg-[#C96442]'}`} />
+                    <div className={`w-1 h-3.5 rounded-xs ${isDualView ? 'bg-white/60' : 'bg-[#E7E5DF]'}`} />
                   </div>
-                  <span className="text-sm font-black tracking-tight shrink-0">본문 듀얼뷰</span>
+                  <span>본문 듀얼뷰</span>
                 </button>
 
                 <button 
                   onClick={(e) => { e.stopPropagation(); toggleSermonSidebar(); }}
-                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-sm font-extrabold transition-all shadow-md hover:shadow-lg active:scale-95 border border-indigo-700 whitespace-nowrap shrink-0"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#2C2B29] hover:bg-[#1F1E1D] text-white text-xs font-semibold transition-all shadow-2xs active:scale-98 border border-[#1F1E1D] whitespace-nowrap shrink-0"
                 >
-                  <FileEdit className="w-4 h-4 shrink-0" /> 
+                  <FileEdit className="w-3.5 h-3.5 stroke-[1.5px]" /> 
                   설교노트
                 </button>
 
-                <div className="ml-auto flex items-center gap-3 shrink-0">
+                <div className="ml-auto flex items-center gap-2 shrink-0">
                   <button 
                     onClick={() => setIsSearchOpen(!isSearchOpen)}
-                    className={`flex items-center gap-2 px-5 py-2 rounded-xl transition-all duration-300 shadow-sm border ${isSearchOpen ? 'bg-red-600 text-white border-red-700' : 'bg-red-50 text-red-600 hover:bg-red-100 border-red-200'} whitespace-nowrap shrink-0`}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl transition-all shadow-2xs border text-xs font-semibold whitespace-nowrap shrink-0 ${isSearchOpen ? 'bg-[#C96442] text-white border-[#B55434]' : 'bg-white text-[#4A4844] hover:bg-[#F5F3ED] border-[#E7E5DF]'}`}
                   >
-                    <Search className={`w-4 h-4 shrink-0 ${isSearchOpen ? 'animate-pulse' : ''}`} />
-                    <span className="text-sm font-black whitespace-nowrap shrink-0">성경 검색</span>
+                    <Search className="w-3.5 h-3.5 stroke-[1.5px]" />
+                    <span>성경 검색</span>
                   </button>
                   <button 
                     onClick={() => setShowSettings(true)}
-                    className="p-2.5 bg-slate-50 hover:bg-slate-200 rounded-xl text-slate-500 transition-colors border border-slate-200 shrink-0"
+                    className="p-1.5 bg-white hover:bg-[#F5F3ED] rounded-xl text-[#6A6864] transition-colors border border-[#E7E5DF] shrink-0"
+                    title="설정"
                   >
-                    <Settings className="w-5 h-5 shrink-0" />
+                    <Settings className="w-4 h-4 stroke-[1.5px]" />
                   </button>
                 </div>
               </div>
             </header>
 
             {/* Content Area */}
-            <div ref={contentRef} className="flex-1 overflow-hidden relative bg-slate-50">
+            <div ref={contentRef} className="flex-1 overflow-hidden relative bg-[#FAF9F5]">
               {versions.length === 0 ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center p-8 bg-white">
                   <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mb-8 border border-slate-100">
@@ -790,20 +799,20 @@ const MainApp: React.FC = () => {
                   </p>
                   <button 
                     onClick={() => setShowUploadModal(true)}
-                    className="px-8 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-semibold transition-all shadow-lg shadow-red-200 hover:scale-105"
+                    className="px-8 py-3 bg-[#C96442] hover:bg-[#B55434] text-white rounded-xl font-semibold transition-all shadow-xs hover:scale-[1.02]"
                   >
                     성경 파일 업로드하기
                   </button>
                 </div>
               ) : selectedVersionIds.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-slate-400 p-12 italic">
+                <div className="h-full flex flex-col items-center justify-center text-[#A3A19B] p-12 italic">
                   <p>왼쪽 사이드바에서 표시할 성경 번역본을 체크해 주세요.</p>
                 </div>
               ) : (
-                <div className="flex h-full overflow-hidden bg-slate-100 relative">
+                <div className="flex h-full overflow-hidden bg-[#FAF9F5] relative">
                   {/* Left Pane (Main) */}
                   <div 
-                    className={`flex flex-col bg-white shadow-inner relative z-10 ${isDualView ? 'border-r border-slate-200' : 'w-full'}`}
+                    className={`flex flex-col bg-[#FAF9F5] relative z-10 ${isDualView ? 'border-r border-[#E7E5DF]' : 'w-full'}`}
                     style={{ width: isDualView ? `${splitPosition}%` : '100%' }}
                   >
                     <BibleNavBar 
@@ -851,17 +860,17 @@ const MainApp: React.FC = () => {
                       onTouchStart={() => {
                         setIsResizing(true);
                       }}
-                      className="absolute top-0 bottom-0 z-30 w-8 -ml-4 cursor-col-resize group flex items-center justify-center transition-all hover:bg-red-500/10 active:bg-red-500/20 touch-none"
+                      className="absolute top-0 bottom-0 z-30 w-6 -ml-3 cursor-col-resize group flex items-center justify-center transition-all hover:bg-[#C96442]/10 active:bg-[#C96442]/20 touch-none"
                       style={{ left: `${splitPosition}%` }}
                     >
-                      <div className="w-1.5 h-full bg-slate-400 group-hover:bg-red-50 transition-colors opacity-50 group-hover:opacity-100" />
+                      <div className="w-1 h-full bg-[#E7E5DF] group-hover:bg-[#C96442] transition-colors opacity-70 group-hover:opacity-100 rounded-full" />
                     </div>
                   )}
 
                   {/* Right Pane (Reference) */}
                   {isDualView && (
                     <div 
-                      className="flex flex-col bg-white relative z-0 border-l border-slate-200"
+                      className="flex flex-col bg-[#FAF9F5] relative z-0 border-l border-[#E7E5DF]"
                       style={{ width: `${100 - splitPosition}%` }}
                     >
                       <BibleNavBar 
@@ -876,7 +885,7 @@ const MainApp: React.FC = () => {
                         currentVersionId={rightSelectedVersionId}
                         onVersionChange={setRightSelectedVersionId}
                       />
-                      <div className="flex-1 overflow-hidden bg-slate-50/30">
+                      <div className="flex-1 overflow-hidden bg-[#F5F3ED]/30">
                         <BibleViewer 
                           key={`right-${rightNav.bookId}-${rightNav.chapter}-${rightNav.verse}-${rightNav.scrollTrigger}-${rightSelectedVersionId}`}
                           selectedVersions={versions.filter(v => v.id === rightSelectedVersionId)} 
@@ -887,12 +896,12 @@ const MainApp: React.FC = () => {
                           lineHeight={lineHeight}
                           isMainPane={false}
                           headerRightNode={
-                            <div className="flex items-center gap-2">
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tight">참고번역</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-semibold text-[#A3A19B] uppercase tracking-tight">참고번역</span>
                               <select 
                                 value={rightSelectedVersionId}
                                 onChange={(e) => setRightSelectedVersionId(e.target.value)}
-                                className="bg-red-50 text-[10px] font-black text-red-600 px-2 py-1 rounded-md border border-red-100 outline-none cursor-pointer hover:bg-red-100 transition-colors"
+                                className="bg-[#FAF0EB] text-xs font-semibold text-[#C96442] px-2 py-0.5 rounded-lg border border-[#F1D3C6] outline-none cursor-pointer hover:bg-[#F5E2DA] transition-colors"
                               >
                                 {versions.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                               </select>
@@ -918,33 +927,34 @@ const MainApp: React.FC = () => {
 
         {/* Search Side Panel */}
         {isSearchOpen && (
-          <aside className="search-side-panel w-[350px] shrink-0">
-            <div className="search-panel-header">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                  <Search className="w-5 h-5 text-red-600" />
-                  성경 검색
+          <aside className="search-side-panel w-[350px] shrink-0 border-l border-[#E7E5DF] bg-[#FAF9F5]">
+            <div className="search-panel-header bg-[#FAF9F5]/95 border-b border-[#E7E5DF]">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-base font-serif font-bold text-[#2C2B29] flex items-center gap-2">
+                  <Search className="w-4 h-4 text-[#C96442] stroke-[1.5px]" />
+                  <span>성경 검색</span>
                 </h2>
                 <button 
                   onClick={() => setIsSearchOpen(false)}
-                  className="p-2 hover:bg-slate-100 rounded-lg text-slate-400"
+                  className="p-1.5 hover:bg-[#F5F3ED] rounded-xl text-[#A3A19B] hover:text-[#2C2B29] transition-colors"
+                  title="검색 닫기"
                 >
-                  <X className="w-5 h-5" />
+                  <X className="w-4 h-4 stroke-[1.5px]" />
                 </button>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 shadow-inner w-3/5">
+                  <div className="flex bg-[#F5F3ED] p-0.5 rounded-xl border border-[#E7E5DF] shadow-2xs w-3/5">
                     <button
                       onClick={() => setSearchMode('standard')}
-                      className={`flex-1 py-1.5 rounded-md text-[10px] font-black transition-all ${searchMode === 'standard' ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500'}`}
+                      className={`flex-1 py-1 rounded-lg text-xs font-semibold transition-all ${searchMode === 'standard' ? 'bg-white text-[#C96442] shadow-2xs' : 'text-[#6A6864] hover:text-[#2C2B29]'}`}
                     >
                       일반 검색
                     </button>
                     <button
                       onClick={() => setSearchMode('semantic')}
-                      className={`flex-1 py-1.5 rounded-md text-[10px] font-black transition-all ${searchMode === 'semantic' ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500'}`}
+                      className={`flex-1 py-1 rounded-lg text-xs font-semibold transition-all ${searchMode === 'semantic' ? 'bg-white text-[#C96442] shadow-2xs' : 'text-[#6A6864] hover:text-[#2C2B29]'}`}
                     >
                       유사 구절
                     </button>
@@ -952,27 +962,27 @@ const MainApp: React.FC = () => {
                   <select 
                     value={searchRange}
                     onChange={(e) => setSearchRange(e.target.value as SearchRange)}
-                    className="flex-1 bg-slate-100 border border-slate-200 text-[11px] font-bold px-3 py-1.5 rounded-lg text-slate-700 outline-none h-full"
+                    className="flex-1 bg-white border border-[#E7E5DF] text-xs font-semibold px-2.5 py-1.5 rounded-xl text-[#2C2B29] outline-none h-full shadow-2xs cursor-pointer hover:bg-[#F5F3ED] transition-colors"
                   >
                     <option value="all">전체 범위</option>
                     <option value="ot">구약 전체</option>
                     <option value="nt">신약 전체</option>
-                    <option value="book">현재 (해당 권만)</option>
+                    <option value="book">현재 권만</option>
                   </select>
                 </div>
 
                 {searchMode === 'standard' && (
-                  <div className="search-options-grid">
+                  <div className="search-options-grid bg-[#F5F3ED] border border-[#E7E5DF] rounded-xl p-2.5">
                     <div className="col-span-2 flex items-center gap-2 mb-1">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">검색 옵션</span>
+                      <span className="text-[10px] font-bold text-[#A3A19B] uppercase tracking-wider">검색 옵션</span>
                     </div>
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <input type="checkbox" checked={logicMode === 'AND'} onChange={() => setLogicMode(logicMode === 'AND' ? 'OR' : 'AND')} className="accent-red-600" />
-                      <span className="text-xs font-bold text-slate-600 group-hover:text-red-600">모든 단어 (AND)</span>
+                    <label className="flex items-center gap-2 cursor-pointer group select-none">
+                      <input type="checkbox" checked={logicMode === 'AND'} onChange={() => setLogicMode(logicMode === 'AND' ? 'OR' : 'AND')} className="accent-[#C96442] rounded" />
+                      <span className="text-xs font-medium text-[#6A6864] group-hover:text-[#2C2B29]">모든 단어 (AND)</span>
                     </label>
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <input type="checkbox" checked={matchMode === 'exact'} onChange={() => setMatchMode(matchMode === 'exact' ? 'partial' : 'exact')} className="accent-red-600" />
-                      <span className="text-xs font-bold text-slate-600 group-hover:text-red-600">완전 일치</span>
+                    <label className="flex items-center gap-2 cursor-pointer group select-none">
+                      <input type="checkbox" checked={matchMode === 'exact'} onChange={() => setMatchMode(matchMode === 'exact' ? 'partial' : 'exact')} className="accent-[#C96442] rounded" />
+                      <span className="text-xs font-medium text-[#6A6864] group-hover:text-[#2C2B29]">완전 일치</span>
                     </label>
                   </div>
                 )}
@@ -981,15 +991,15 @@ const MainApp: React.FC = () => {
                   <SearchInput 
                     value={searchQuery}
                     onChange={setSearchQuery}
-                    placeholder={searchMode === 'standard' ? "검색어 입력 (예: 아브라함 이삭 야곱)" : "비슷한 표현 늬앙스 검색"}
-                    className="w-full h-11 bg-slate-50 border-2 border-slate-100 rounded-xl pl-4 pr-10 text-sm focus:outline-none focus:bg-white focus:border-red-400 focus:ring-4 focus:ring-red-500/5 transition-all font-medium text-slate-800"
+                    placeholder={searchMode === 'standard' ? "검색어 입력 (예: 아브라함 이삭)" : "비슷한 표현 늬앙스 검색"}
+                    className="w-full h-10 bg-white border border-[#E7E5DF] rounded-xl pl-3.5 pr-9 text-xs focus:outline-none focus:bg-white focus:border-[#C96442] focus:ring-2 focus:ring-[#C96442]/10 transition-all font-medium text-[#2C2B29] placeholder:text-[#A3A19B] shadow-2xs"
                   />
-                  <Search className="w-5 h-5 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-red-500 transition-colors" />
+                  <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-[#A3A19B] stroke-[1.5px] group-focus-within:text-[#C96442] transition-colors" />
                 </div>
               </div>
             </div>
 
-            <div className="search-result-list custom-scrollbar">
+            <div className="search-result-list custom-scrollbar bg-[#FAF9F5]">
               {searchResults.length > 0 ? (() => {
                 const versionMap = new Map(versions.map(v => [v.id, v.name]));
                 return searchResults.map((res, i) => (
@@ -1004,16 +1014,16 @@ const MainApp: React.FC = () => {
                         verse: res.verse
                       });
                     }}
-                    className="search-result-item group"
+                    className="search-result-item group bg-white border border-[#E7E5DF] rounded-xl p-3 mb-2 shadow-2xs hover:border-[#C96442] hover:bg-[#FAF0EB]/40 transition-all cursor-pointer"
                   >
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="text-xs font-extrabold text-red-600 bg-red-50 px-2 py-0.5 rounded-lg">{res.bookName} {res.chapter}:{res.verse}</span>
-                      <span className="text-[10px] font-bold text-slate-400 group-hover:text-slate-600">
+                    <div className="flex justify-between items-start mb-1.5">
+                      <span className="text-xs font-bold text-[#C96442] bg-[#FAF0EB] px-2 py-0.5 rounded-lg border border-[#F1D3C6]">{res.bookName} {res.chapter}:{res.verse}</span>
+                      <span className="text-[10px] font-semibold text-[#A3A19B] group-hover:text-[#6A6864]">
                         {versionMap.get(res.versionId) || 'Unknown'}
                       </span>
                     </div>
                     <p 
-                      className="text-slate-700 leading-relaxed font-medium"
+                      className="text-[#2C2B29] font-serif leading-relaxed"
                       style={{ fontSize: `${searchFontSize}px` }}
                     >
                       {res.content}

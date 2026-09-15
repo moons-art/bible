@@ -35,22 +35,22 @@ const VerseItem = React.memo<{
   onIconClick: (v: number, type: 'note' | 'crossRef' | 'sermon', e: React.MouseEvent) => void;
 }>(({ verse, isSelected, isHighlighted, hasNote, hasCrossRef, hasSermon, showAnnotations, fontSize, lineHeight, onClick, onIconClick }) => {
   const itemStyles = isSelected 
-    ? 'bg-red-50 border-l-red-500' 
+    ? 'bg-[#FAF0EB] border-l-[#C96442] shadow-xs' 
     : isHighlighted 
-      ? 'bg-sky-50 border-l-sky-500' 
-      : 'hover:bg-slate-50 border-l-transparent';
+      ? 'bg-[#FEF9EE] border-l-[#D97706]' 
+      : 'hover:bg-[#F5F3ED]/70 border-l-transparent';
 
   const numStyles = isSelected 
-    ? 'text-red-600' 
+    ? 'text-[#C96442] font-bold' 
     : isHighlighted 
-      ? 'text-sky-600' 
-      : 'text-slate-400';
+      ? 'text-[#D97706] font-bold' 
+      : 'text-[#A3A19B] group-hover:text-[#6A6864]';
 
   const textStyles = isSelected 
-    ? 'text-slate-900 font-medium' 
+    ? 'text-[#1F1E1D] font-medium' 
     : isHighlighted 
-      ? 'text-slate-900 font-medium' 
-      : 'text-slate-700';
+      ? 'text-[#1F1E1D] font-medium' 
+      : 'text-[#2C2B29]';
 
   return (
     <div
@@ -58,32 +58,57 @@ const VerseItem = React.memo<{
       onClick={() => onClick(verse.verse)}
       style={{ scrollMarginTop: '44px' }}
       className={`
-        verse-item group cursor-pointer rounded-md transition-colors relative pl-1
+        verse-item group cursor-pointer rounded-xl transition-all relative pl-1 my-0.5 border-l-[3px]
         ${itemStyles}
       `}
     >
-      <div className="flex gap-3 items-start px-2">
-        <span className={`text-[11px] font-bold mt-1.5 w-6 shrink-0 text-center ${numStyles}`}>
+      <div className="flex gap-2.5 items-start px-2 py-0.5">
+        <span className={`text-[11px] font-semibold mt-1 w-5 shrink-0 text-right select-none transition-colors ${numStyles}`}>
           {verse.verse}
         </span>
         <div className="flex-1 min-w-0 pb-1">
           {verse.title && (
-            <div className={`mb-1 font-extrabold text-[0.85em] tracking-tight ${isSelected || isHighlighted ? 'text-red-700' : 'text-red-700/60'}`}>
-              &lt;{verse.title}&gt;
+            <div className={`mt-2 mb-1.5 font-bold text-[0.88em] tracking-tight flex items-center gap-1.5 ${isSelected || isHighlighted ? 'text-[#C96442]' : 'text-[#C96442]/90'}`}>
+              <span className="w-1.5 h-3 bg-[#C96442] rounded-full inline-block shrink-0"></span>
+              <span>{verse.title}</span>
             </div>
           )}
           <p 
-            className={`leading-relaxed whitespace-pre-wrap inline ${textStyles}`}
+            className={`font-serif tracking-normal leading-[1.88] whitespace-pre-wrap inline ${textStyles}`}
             style={{ fontSize: `${fontSize}px`, lineHeight: lineHeight }}
           >
             {verse.content}
           </p>
           
           {showAnnotations && (hasNote || hasCrossRef || hasSermon) && (
-            <span className="inline-flex items-center gap-2 ml-2 align-middle relative -top-px">
-              {hasNote && <MessageSquare onClick={(e) => {e.stopPropagation(); onIconClick(verse.verse, 'note', e)}} className="w-3.5 h-3.5 text-yellow-500 cursor-pointer hover:scale-125 transition-transform" title="주석 보기" />}
-              {hasCrossRef && <Link2 onClick={(e) => {e.stopPropagation(); onIconClick(verse.verse, 'crossRef', e)}} className="w-3.5 h-3.5 text-blue-500 cursor-pointer hover:scale-125 transition-transform" title="관주 보기" />}
-              {hasSermon && <FileEdit onClick={(e) => {e.stopPropagation(); onIconClick(verse.verse, 'sermon', e)}} className="w-3.5 h-3.5 text-indigo-500 cursor-pointer hover:scale-125 transition-transform" title="설교 메모 보기" />}
+            <span className="inline-flex items-center gap-1.5 ml-2 align-middle relative -top-px">
+              {hasNote && (
+                <button 
+                  onClick={(e) => {e.stopPropagation(); onIconClick(verse.verse, 'note', e)}} 
+                  className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#FEF3C7] text-[#78350F] hover:scale-125 transition-transform" 
+                  title="주석 보기"
+                >
+                  <MessageSquare className="w-2.5 h-2.5 stroke-[2px]" />
+                </button>
+              )}
+              {hasCrossRef && (
+                <button 
+                  onClick={(e) => {e.stopPropagation(); onIconClick(verse.verse, 'crossRef', e)}} 
+                  className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#E0F2FE] text-[#0369A1] hover:scale-125 transition-transform" 
+                  title="관주 보기"
+                >
+                  <Link2 className="w-2.5 h-2.5 stroke-[2px]" />
+                </button>
+              )}
+              {hasSermon && (
+                <button 
+                  onClick={(e) => {e.stopPropagation(); onIconClick(verse.verse, 'sermon', e)}} 
+                  className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#FAF0EB] text-[#C96442] hover:scale-125 transition-transform" 
+                  title="설교 메모 보기"
+                >
+                  <FileEdit className="w-2.5 h-2.5 stroke-[2px]" />
+                </button>
+              )}
             </span>
           )}
         </div>
@@ -340,49 +365,70 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
 
   if (selectedVersions.length === 0) return null;
 
+  const currentBookName = BIBLE_LIST.find(b => b.id === currentBookId)?.name || currentBookId;
+
   return (
-    <div className="h-full flex overflow-hidden bg-white relative">
+    <div className="h-full flex overflow-hidden bg-[#FAF9F5] relative">
       {displayData.map((data, idx: number) => (
         <div 
           key={data.id} 
-          className="flex-1 flex flex-col border-r border-slate-200 last:border-r-0 relative bg-white"
+          className="flex-1 flex flex-col border-r border-[#E7E5DF] last:border-r-0 relative bg-[#FAF9F5]"
         >
           {/* Version Header */}
-          <div className="h-10 flex items-center px-4 bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
-            <span className="text-[10px] font-bold text-red-600 tracking-widest uppercase mr-2 bg-red-50 px-1.5 py-0.5 rounded">VER</span>
+          <div className="h-9 flex items-center px-4 bg-[#F5F3ED] border-b border-[#E7E5DF] sticky top-0 z-10">
+            <span className="text-[10px] font-bold text-[#C96442] tracking-wider uppercase mr-2 bg-[#FAF0EB] px-1.5 py-0.5 rounded-md">VER</span>
             {headerRightNode ? (
               headerRightNode
             ) : (
-              <span className="text-xs font-bold text-slate-700 truncate">{data.name}</span>
+              <span className="text-xs font-semibold text-[#6A6864] truncate">{data.name}</span>
             )}
           </div>
   
           <div 
             ref={el => { scrollContainerRefs.current[idx] = el; }}
             onScroll={(e) => handleScroll(idx, e)}
-            className="flex-1 overflow-y-auto custom-scrollbar px-4 py-2 space-y-px pb-32"
+            className="flex-1 overflow-y-auto custom-scrollbar px-4 sm:px-6 py-4 space-y-0.5 pb-32"
           >
             {data.verses.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-slate-300 text-xs italic">
+              <div className="flex flex-col items-center justify-center h-full text-[#A3A19B] text-xs italic">
                 해당 장의 본문이 없습니다.
               </div>
             ) : (
-              data.verses.map((v: Verse) => (
-                <VerseItem
-                  key={`${v.bookId}-${v.chapter}-${v.verse}`}
-                  verse={v}
-                  isSelected={selectedVerses.has(v.verse)}
-                  isHighlighted={v.verse === highlightVerse}
-                  hasNote={!!verseData[`${currentBookId}_${currentChapter}_${v.verse}`]?.note}
-                  hasCrossRef={!!verseData[`${currentBookId}_${currentChapter}_${v.verse}`]?.crossRef}
-                  hasSermon={!!verseData[`${currentBookId}_${currentChapter}_${v.verse}`]?.sermon}
-                  showAnnotations={showAnnotations}
-                  fontSize={fontSize}
-                  lineHeight={lineHeight}
-                  onClick={toggleVerse}
-                  onIconClick={handleIconClick}
-                />
-              ))
+              <>
+                {/* Claude Chapter Hero Banner */}
+                {idx === 0 && (
+                  <div className="py-5 px-4 mb-4 rounded-2xl bg-gradient-to-b from-[#F5F3ED]/80 to-transparent border border-[#E7E5DF]/70 text-center flex flex-col items-center shadow-xs">
+                    <span className="text-[10px] font-bold text-[#C96442] tracking-widest uppercase bg-[#FAF0EB] px-2.5 py-0.5 rounded-full mb-1.5">
+                      {currentBookName}
+                    </span>
+                    <h2 className="font-serif text-2xl sm:text-3xl font-bold text-[#2C2B29] tracking-tight">
+                      {currentBookName} {currentChapter}장
+                    </h2>
+                    <div className="flex items-center gap-2.5 mt-2 text-xs text-[#A3A19B]">
+                      <span>총 {data.verses.length}개 절</span>
+                      <span>•</span>
+                      <span>완독 약 {Math.max(1, Math.round(data.verses.length * 0.15))}분</span>
+                    </div>
+                  </div>
+                )}
+
+                {data.verses.map((v: Verse) => (
+                  <VerseItem
+                    key={`${v.bookId}-${v.chapter}-${v.verse}`}
+                    verse={v}
+                    isSelected={selectedVerses.has(v.verse)}
+                    isHighlighted={v.verse === highlightVerse}
+                    hasNote={!!verseData[`${currentBookId}_${currentChapter}_${v.verse}`]?.note}
+                    hasCrossRef={!!verseData[`${currentBookId}_${currentChapter}_${v.verse}`]?.crossRef}
+                    hasSermon={!!verseData[`${currentBookId}_${currentChapter}_${v.verse}`]?.sermon}
+                    showAnnotations={showAnnotations}
+                    fontSize={fontSize}
+                    lineHeight={lineHeight}
+                    onClick={toggleVerse}
+                    onIconClick={handleIconClick}
+                  />
+                ))}
+              </>
             )}
           </div>
         </div>
@@ -396,97 +442,97 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
               initial={{ y: 50, opacity: 0, x: "-50%" }}
               animate={{ y: 0, opacity: 1, x: "-50%" }}
               exit={{ y: 50, opacity: 0, x: "-50%" }}
-              className="fixed bottom-6 left-1/2 bg-slate-900 shadow-2xl rounded-2xl px-2 py-1.5 flex items-center gap-1 z-[999999] border border-slate-700/50 backdrop-blur-md overflow-x-auto max-w-[95vw] custom-scrollbar"
+              className="fixed bottom-6 left-1/2 bg-[#2C2B29]/95 text-white shadow-2xl rounded-2xl px-3 py-1.5 flex items-center gap-1.5 z-[999999] border border-[#E7E5DF]/20 backdrop-blur-md overflow-x-auto max-w-[95vw] custom-scrollbar"
             >
-            <div className="flex items-center gap-2 px-3 shrink-0">
-              <span className="text-white font-black text-sm tracking-tight">{selectedVerses.size}절</span>
-            </div>
-            
-            <div className="w-px h-4 bg-slate-700 mx-1 shrink-0"></div>
-            
-            <div className="flex items-center gap-1">
-              <button 
-                onClick={() => copyMode === 'default' ? handleCopy() : handleAdvancedCopy()}
-                className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-slate-800 rounded-lg transition-colors text-sm font-semibold whitespace-nowrap shrink-0 text-white"
-              >
-                <Copy className="w-4 h-4 text-slate-300" /> 복사
-              </button>
-            </div>
-            
-            {selectedVerses.size === 1 && (
-              <>
-                <div className="w-px h-4 bg-slate-700 mx-1 shrink-0"></div>
-                <div className="flex items-center gap-1">
-                  <button 
-                    onClick={(e) => {
-                      const firstVerse = Array.from(selectedVerses).sort((a,b)=>a-b)[0];
-                      handleIconClick(firstVerse, 'note', e);
-                      setShowAnnotations(true);
-                      setSelectedVerses(new Set());
-                    }}
-                    className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-800 rounded-lg transition-colors text-sm font-semibold text-yellow-400 whitespace-nowrap shrink-0"
-                  >
-                    <MessageSquare className="w-4 h-4" /> 주석
-                  </button>
-                  <button 
-                    onClick={(e) => {
-                      const firstVerse = Array.from(selectedVerses).sort((a,b)=>a-b)[0];
-                      handleIconClick(firstVerse, 'crossRef', e);
-                      setShowAnnotations(true);
-                      setSelectedVerses(new Set());
-                    }}
-                    className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-800 rounded-lg transition-colors text-sm font-semibold text-blue-400 whitespace-nowrap shrink-0"
-                  >
-                    <Link2 className="w-4 h-4" /> 관주
-                  </button>
-                  <button 
-                    onClick={(e) => {
-                      const firstVerse = Array.from(selectedVerses).sort((a,b)=>a-b)[0];
-                      handleIconClick(firstVerse, 'sermon', e);
-                      setShowAnnotations(true);
-                      setSelectedVerses(new Set());
-                    }}
-                    className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-800 rounded-lg transition-colors text-sm font-semibold text-indigo-400 whitespace-nowrap shrink-0"
-                  >
-                    <FileEdit className="w-4 h-4" /> 노트
-                  </button>
-                </div>
-              </>
-            )}
-            
-            <div className="w-px h-4 bg-slate-700 mx-1 shrink-0"></div>
-            
-            <div className="flex items-center gap-1">
-              {onCopyToSermon && (
+              <div className="flex items-center gap-1.5 px-2.5 shrink-0">
+                <span className="text-[#FAF0EB] font-bold text-xs tracking-tight">{selectedVerses.size}개 구절</span>
+              </div>
+              
+              <div className="w-px h-4 bg-[#4A4844] mx-0.5 shrink-0"></div>
+              
+              <div className="flex items-center gap-1">
                 <button 
-                  onClick={() => {
-                    const sortedVerses = Array.from(selectedVerses).sort((a,b)=>a-b);
-                    const bookName = BIBLE_LIST.find(b => b.id === currentBookId)?.name || currentBookId;
-                    const texts = sortedVerses.map(v => {
-                      const verseObj = displayData[0]?.verses.find(x => x.verse === v);
-                      return `${bookName} ${currentChapter}:${v} ${verseObj?.content || ''}`;
-                    });
-                    onCopyToSermon(texts.join('\n'));
-                    setSelectedVerses(new Set());
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-slate-800 rounded-lg transition-colors text-sm font-semibold text-emerald-400 whitespace-nowrap shrink-0"
+                  onClick={() => copyMode === 'default' ? handleCopy() : handleAdvancedCopy()}
+                  className="flex items-center gap-1 px-3 py-1.5 hover:bg-[#3D3B38] rounded-xl transition-colors text-xs font-semibold whitespace-nowrap shrink-0 text-white"
                 >
-                  <FileEdit className="w-4 h-4" /> 설교로 복사
+                  <Copy className="w-3.5 h-3.5 stroke-[1.5px] text-[#A3A19B]" /> 복사
                 </button>
+              </div>
+              
+              {selectedVerses.size === 1 && (
+                <>
+                  <div className="w-px h-4 bg-[#4A4844] mx-0.5 shrink-0"></div>
+                  <div className="flex items-center gap-1">
+                    <button 
+                      onClick={(e) => {
+                        const firstVerse = Array.from(selectedVerses).sort((a,b)=>a-b)[0];
+                        handleIconClick(firstVerse, 'note', e);
+                        setShowAnnotations(true);
+                        setSelectedVerses(new Set());
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-[#3D3B38] rounded-xl transition-colors text-xs font-semibold text-[#FBBF24] whitespace-nowrap shrink-0"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 stroke-[1.5px]" /> 주석
+                    </button>
+                    <button 
+                      onClick={(e) => {
+                        const firstVerse = Array.from(selectedVerses).sort((a,b)=>a-b)[0];
+                        handleIconClick(firstVerse, 'crossRef', e);
+                        setShowAnnotations(true);
+                        setSelectedVerses(new Set());
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-[#3D3B38] rounded-xl transition-colors text-xs font-semibold text-[#38BDF8] whitespace-nowrap shrink-0"
+                    >
+                      <Link2 className="w-3.5 h-3.5 stroke-[1.5px]" /> 관주
+                    </button>
+                    <button 
+                      onClick={(e) => {
+                        const firstVerse = Array.from(selectedVerses).sort((a,b)=>a-b)[0];
+                        handleIconClick(firstVerse, 'sermon', e);
+                        setShowAnnotations(true);
+                        setSelectedVerses(new Set());
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-[#3D3B38] rounded-xl transition-colors text-xs font-semibold text-[#FB923C] whitespace-nowrap shrink-0"
+                    >
+                      <FileEdit className="w-3.5 h-3.5 stroke-[1.5px]" /> 노트
+                    </button>
+                  </div>
+                </>
               )}
+              
+              <div className="w-px h-4 bg-[#4A4844] mx-0.5 shrink-0"></div>
+              
+              <div className="flex items-center gap-1">
+                {onCopyToSermon && (
+                  <button 
+                    onClick={() => {
+                      const sortedVerses = Array.from(selectedVerses).sort((a,b)=>a-b);
+                      const bookName = BIBLE_LIST.find(b => b.id === currentBookId)?.name || currentBookId;
+                      const texts = sortedVerses.map(v => {
+                        const verseObj = displayData[0]?.verses.find(x => x.verse === v);
+                        return `${bookName} ${currentChapter}:${v} ${verseObj?.content || ''}`;
+                      });
+                      onCopyToSermon(texts.join('\n'));
+                      setSelectedVerses(new Set());
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 hover:bg-[#3D3B38] rounded-xl transition-colors text-xs font-semibold text-[#34D399] whitespace-nowrap shrink-0"
+                  >
+                    <FileEdit className="w-3.5 h-3.5 stroke-[1.5px]" /> 설교로 복사
+                  </button>
+                )}
 
-              <button 
-                onClick={() => setSelectedVerses(new Set())}
-                className="p-1.5 hover:bg-slate-800 rounded-lg transition-colors shrink-0"
-                title="선택 해제"
-              >
-                <X className="w-4 h-4 text-slate-500" />
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>,
-      document.body
+                <button 
+                  onClick={() => setSelectedVerses(new Set())}
+                  className="p-1.5 hover:bg-[#3D3B38] rounded-xl transition-colors shrink-0 text-[#A3A19B] hover:text-white"
+                  title="선택 해제"
+                >
+                  <X className="w-3.5 h-3.5 stroke-[1.5px]" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
       )}
 
       {/* Portal for Popups */}

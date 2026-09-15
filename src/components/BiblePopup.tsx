@@ -159,7 +159,7 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
       
       {/* Header */}
       <div 
-        className="flex items-center justify-between p-3 border-b border-slate-100 bg-slate-50/50 rounded-t-2xl cursor-move select-none"
+        className="flex items-center justify-between p-3 border-b border-[#E7E5DF] bg-[#F5F3ED] rounded-t-2xl cursor-move select-none"
         onMouseDown={(e) => {
           dragStartRef.current = { x: e.clientX, y: e.clientY, initX: 0, initY: 0 };
           setIsDragging(true);
@@ -169,23 +169,24 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
           setIsDragging(true);
         }}
       >
-        <div className="flex items-center gap-2 text-indigo-600">
-          {panel === 'note' && <MessageSquare className="w-4 h-4" />}
-          {panel === 'crossRef' && <Link2 className="w-4 h-4" />}
-          {panel === 'sermon' && <FileEdit className="w-4 h-4" />}
-          {panel === 'read' && <BookOpen className="w-4 h-4" />}
-          <span className="font-extrabold text-sm text-slate-800">
+        <div className="flex items-center gap-2">
+          {panel === 'note' && <MessageSquare className="w-4 h-4 text-[#D97706] stroke-[1.5px]" />}
+          {panel === 'crossRef' && <Link2 className="w-4 h-4 text-[#3B6D8C] stroke-[1.5px]" />}
+          {panel === 'sermon' && <FileEdit className="w-4 h-4 text-[#C96442] stroke-[1.5px]" />}
+          {panel === 'read' && <BookOpen className="w-4 h-4 text-[#2C2B29] stroke-[1.5px]" />}
+          <span className="font-serif font-bold text-sm text-[#2C2B29]">
             {BIBLE_LIST.find(b => b.id === bookId)?.name} {chapter}장 {verse}{popup.endVerse ? `-${popup.endVerse}` : ''}절
             {panel === 'note' && ' 주석'}
             {panel === 'crossRef' && ' 관주'}
             {panel === 'sermon' && ' 구절노트'}
-            {panel === 'read' && ' 성경 확인'}
+            {panel === 'read' && ' 성경 본문'}
           </span>
         </div>
         <div className="flex items-center gap-1 z-[10002]">
           {panel !== 'read' && (
             <button 
-              className="p-1.5 hover:bg-red-100 rounded-full transition-colors text-red-500"
+              className="p-1.5 hover:bg-[#FAF0EB] rounded-lg transition-colors text-[#A3A19B] hover:text-[#C96442]"
+              title="삭제"
               onClick={(e) => {
                 e.stopPropagation();
                 const key = `${bookId}_${chapter}_${verse}`;
@@ -211,44 +212,45 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
                 onClose(id);
               }}
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="w-3.5 h-3.5 stroke-[1.5px]" />
             </button>
           )}
           <button 
             onClick={(e) => { e.stopPropagation(); onClose(id); }}
-            className="p-1.5 hover:bg-slate-200 rounded-full transition-colors text-slate-500"
+            className="p-1.5 hover:bg-[#FAF0EB] rounded-lg transition-colors text-[#A3A19B] hover:text-[#2C2B29]"
+            title="닫기"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4 stroke-[1.5px]" />
           </button>
         </div>
       </div>
       
       {/* Editor Body */}
-      <div className="p-2 bg-white flex flex-col gap-1.5 h-full relative" onMouseDown={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-2 py-1 bg-slate-50 border border-slate-200 rounded-xl mb-1">
+      <div className="p-2.5 bg-[#FAF9F5] flex flex-col gap-1.5 h-full relative rounded-b-2xl" onMouseDown={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-2.5 py-1 bg-white border border-[#E7E5DF] rounded-xl mb-1 shadow-2xs">
           <div className="flex items-center gap-1">
             {panel !== 'read' ? (
               <>
-                <button onClick={() => handleFontSizeChange(-1, panel)} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 transition-colors">
-                  <div className="flex items-center"><Type className="w-3 h-3" /><Minus className="w-2.5 h-2.5" /></div>
+                <button onClick={() => handleFontSizeChange(-1, panel)} className="p-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] transition-colors" title="글자 작게">
+                  <div className="flex items-center"><Type className="w-3 h-3 stroke-[1.5px]" /><Minus className="w-2.5 h-2.5 stroke-[1.5px]" /></div>
                 </button>
-                <span className="text-xs font-bold text-slate-400 min-w-4 text-center">{currentFontSize}</span>
-                <button onClick={() => handleFontSizeChange(1, panel)} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 transition-colors">
-                  <div className="flex items-center"><Type className="w-4 h-4" /><Plus className="w-3 h-3" /></div>
+                <span className="text-xs font-semibold text-[#A3A19B] min-w-4 text-center">{currentFontSize}</span>
+                <button onClick={() => handleFontSizeChange(1, panel)} className="p-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] transition-colors" title="글자 크게">
+                  <div className="flex items-center"><Type className="w-3.5 h-3.5 stroke-[1.5px]" /><Plus className="w-2.5 h-2.5 stroke-[1.5px]" /></div>
                 </button>
               </>
             ) : <div />}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {panel === 'read' && onNavigateToDualView && (
               <button 
                 onClick={() => {
                   onNavigateToDualView(bookId, chapter, verse);
                   onClose(id);
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-slate-200 rounded-lg text-indigo-600 transition-colors text-xs font-bold border border-indigo-100"
+                className="flex items-center gap-1 px-2.5 py-1 hover:bg-[#FAF0EB] rounded-lg text-[#C96442] transition-colors text-xs font-semibold border border-[#F1D3C6]"
               >
-                바로가기
+                본문 바로가기
               </button>
             )}
             <button 
@@ -256,9 +258,9 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
                 const text = panel === 'read' ? readContent : (verseData[`${bookId}_${chapter}_${verse}`]?.[panel] || '');
                 if (text) { navigator.clipboard.writeText(text); alert('복사되었습니다.'); }
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-slate-200 rounded-lg text-slate-600 transition-colors text-xs font-bold"
+              className="flex items-center gap-1 px-2.5 py-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] hover:text-[#2C2B29] transition-colors text-xs font-semibold"
             >
-              <Copy className="w-3.5 h-3.5" /> 복사
+              <Copy className="w-3.5 h-3.5 stroke-[1.5px]" /> 복사
             </button>
             {panel === 'sermon' && onSendToSermon && (
               <button 
@@ -266,9 +268,9 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
                   const text = verseData[`${bookId}_${chapter}_${verse}`]?.sermon || '';
                   if (text.trim()) { onSendToSermon(text); onClose(id); }
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors text-xs font-bold shadow-sm"
+                className="flex items-center gap-1 px-3 py-1 bg-[#C96442] hover:bg-[#B55434] text-white rounded-lg transition-colors text-xs font-semibold shadow-2xs"
               >
-                <Send className="w-3 h-3" /> 보내기
+                <Send className="w-3 h-3 stroke-[1.5px]" /> 보내기
               </button>
             )}
           </div>
@@ -279,7 +281,7 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
           const parsed = parseBibleReferences(text);
           if (parsed.length > 0) {
             return (
-              <div className="flex flex-wrap gap-1.5 px-2 py-1">
+              <div className="flex flex-wrap gap-1.5 px-1 py-1">
                 {parsed.map((p, i) => (
                   <button
                     key={i}
@@ -288,9 +290,9 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
                         onOpenPopup(p.bookId, p.chapter, p.verse, 'read', p.endVerse);
                       }
                     }}
-                    className="flex items-center gap-1 px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md text-[11px] font-bold transition-colors border border-indigo-100 shadow-sm"
+                    className="flex items-center gap-1 px-2 py-0.5 bg-white hover:bg-[#F5F3ED] text-[#3B6D8C] rounded-lg text-xs font-semibold transition-colors border border-[#E7E5DF] shadow-2xs"
                   >
-                    <BookOpen className="w-3 h-3" />
+                    <BookOpen className="w-3 h-3 stroke-[1.5px]" />
                     {p.bookName} {p.chapter}:{p.verse}{p.endVerse ? `-${p.endVerse}` : ''}
                   </button>
                 ))}
@@ -303,9 +305,9 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
         {panel === 'read' ? (
           <div 
             style={{ fontSize: `${currentFontSize}px` }}
-            className="w-full flex-1 p-4 text-slate-900 bg-white font-medium border border-slate-200 rounded-xl overflow-y-auto custom-scrollbar leading-relaxed"
+            className="w-full flex-1 p-3.5 text-[#2C2B29] bg-white font-serif border border-[#E7E5DF] rounded-xl overflow-y-auto custom-scrollbar leading-relaxed"
           >
-            <div className="font-bold text-sm text-indigo-600 mb-2 border-b border-indigo-100 pb-2">
+            <div className="font-bold text-xs text-[#C96442] mb-2 border-b border-[#E7E5DF] pb-1.5 font-sans">
               [{activeVersionName}] {BIBLE_LIST.find(b => b.id === bookId)?.name} {chapter}장 {verse}{popup.endVerse ? `-${popup.endVerse}` : ''}절
             </div>
             <div className="whitespace-pre-wrap">{readContent}</div>
@@ -316,7 +318,7 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
               autoFocus
               disabled={!isAuthenticated}
               style={{ fontSize: `${currentFontSize}px` }}
-              className={`w-full flex-1 p-3 font-medium border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-400/20 transition-all resize-none custom-scrollbar ${!isAuthenticated ? 'bg-slate-100 text-slate-400 cursor-not-allowed opacity-80' : 'bg-slate-50 text-slate-900'}`}
+              className={`w-full flex-1 p-3 font-serif border border-[#E7E5DF] rounded-xl outline-none focus:ring-2 focus:ring-[#C96442]/10 focus:border-[#C96442] transition-all resize-none custom-scrollbar ${!isAuthenticated ? 'bg-[#F5F3ED] text-[#A3A19B] cursor-not-allowed opacity-80' : 'bg-white text-[#2C2B29]'}`}
               value={verseData[`${bookId}_${chapter}_${verse}`]?.[panel] || ''}
               onChange={(e) => {
                 const val = e.target.value;
@@ -342,11 +344,11 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
               }}
             />
             {!isAuthenticated && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-50/50 backdrop-blur-[1px] rounded-xl text-slate-500 font-bold z-10 p-4 text-center border border-slate-200 shadow-inner">
-                <div className="w-10 h-10 bg-slate-200 rounded-full flex items-center justify-center mb-3">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#FAF9F5]/90 backdrop-blur-[1px] rounded-xl text-[#6A6864] font-medium z-10 p-4 text-center border border-[#E7E5DF] shadow-inner">
+                <div className="w-9 h-9 bg-[#F5F3ED] rounded-full flex items-center justify-center mb-2">
+                  <BookOpen className="w-4 h-4 text-[#C96442] stroke-[1.5px]" />
                 </div>
-                <p className="text-sm">로그인 후 노트와 관주를 작성하고<br/>클라우드에 영구 저장하세요.</p>
+                <p className="text-xs">Google 계정으로 로그인 후<br/>노트와 관주를 클라우드에 영구 저장하세요.</p>
               </div>
             )}
           </div>
