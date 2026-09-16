@@ -21,12 +21,12 @@ export const LeaderViewer: React.FC<LeaderViewerProps> = ({ onClose, onOpenLibra
   
   // 공동체 명칭 상태: localStorage에서 읽어오고 없으면 기본값 사용
   const [communityName, setCommunityName] = useState(() => {
-    return localStorage.getItem('ceum-community-name') || '세움CHURCH';
+    return localStorage.getItem('nations-community-name') || localStorage.getItem('ceum-community-name') || 'NATIONS CHURCH';
   });
 
   // 명칭 변경 시 localStorage에 즉시 저장
   useEffect(() => {
-    localStorage.setItem('ceum-community-name', communityName);
+    localStorage.setItem('nations-community-name', communityName);
   }, [communityName]);
   
   // 인도자용 뷰어에 표시할 항목 (화면에 배치된 항목들만)

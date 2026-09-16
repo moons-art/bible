@@ -15,6 +15,7 @@ interface BibleViewerProps {
   highlightVerse?: number;
   fontSize?: number;
   lineHeight: number;
+  verseSpacing?: number;
   isMainPane?: boolean;
   headerRightNode?: React.ReactNode;
   onCopyToSermon?: (text: string) => void;
@@ -31,9 +32,10 @@ const VerseItem = React.memo<{
   showAnnotations: boolean;
   fontSize: number;
   lineHeight: number;
+  verseSpacing?: number;
   onClick: (v: number) => void;
   onIconClick: (v: number, type: 'note' | 'crossRef' | 'sermon', e: React.MouseEvent) => void;
-}>(({ verse, isSelected, isHighlighted, hasNote, hasCrossRef, hasSermon, showAnnotations, fontSize, lineHeight, onClick, onIconClick }) => {
+}>(({ verse, isSelected, isHighlighted, hasNote, hasCrossRef, hasSermon, showAnnotations, fontSize, lineHeight, verseSpacing = 6, onClick, onIconClick }) => {
   const itemStyles = isSelected 
     ? 'bg-[#FAF0EB] border-l-[#C96442] shadow-xs' 
     : isHighlighted 
@@ -56,25 +58,34 @@ const VerseItem = React.memo<{
     <div
       data-verse={verse.verse}
       onClick={() => onClick(verse.verse)}
-      style={{ scrollMarginTop: '44px' }}
+      style={{ scrollMarginTop: '44px', marginBottom: `${verseSpacing}px` }}
       className={`
-        verse-item group cursor-pointer rounded-xl transition-all relative pl-1 my-0.5 border-l-[3px]
+        verse-item group cursor-pointer rounded-xl transition-all relative border-l-[3px]
         ${itemStyles}
       `}
     >
-      <div className="flex gap-2.5 items-start px-2 py-0.5">
-        <span className={`text-[11px] font-semibold mt-1 w-5 shrink-0 text-right select-none transition-colors ${numStyles}`}>
+      {/* 제목이 있을 경우: 구절 번호보다 위에 단독 헤더로 표시 */}
+      {verse.title && (
+        <div className={`pt-2.5 pb-1.5 font-bold text-[0.92em] tracking-tight flex items-center gap-1.5 pl-8 ${isSelected || isHighlighted ? 'text-[#C96442]' : 'text-[#C96442]/90'}`}>
+          <span className="w-1.5 h-3.5 bg-[#C96442] rounded-full inline-block shrink-0"></span>
+          <span>{verse.title}</span>
+        </div>
+      )}
+
+      {/* 구절 번호 및 본문: 제목 아래에 나란히 배치 */}
+      <div className="flex gap-2.5 items-start px-1.5 py-0.5">
+        <span 
+          style={{ 
+            lineHeight: lineHeight, 
+            fontSize: `${Math.max(11, Math.round(fontSize * 0.68))}px` 
+          }}
+          className={`font-semibold w-5 shrink-0 text-right select-none transition-colors ${numStyles}`}
+        >
           {verse.verse}
         </span>
-        <div className="flex-1 min-w-0 pb-1">
-          {verse.title && (
-            <div className={`mt-2 mb-1.5 font-bold text-[0.88em] tracking-tight flex items-center gap-1.5 ${isSelected || isHighlighted ? 'text-[#C96442]' : 'text-[#C96442]/90'}`}>
-              <span className="w-1.5 h-3 bg-[#C96442] rounded-full inline-block shrink-0"></span>
-              <span>{verse.title}</span>
-            </div>
-          )}
+        <div className="flex-1 min-w-0">
           <p 
-            className={`font-serif tracking-normal leading-[1.88] whitespace-pre-wrap inline ${textStyles}`}
+            className={`font-serif tracking-normal whitespace-pre-wrap inline ${textStyles}`}
             style={{ fontSize: `${fontSize}px`, lineHeight: lineHeight }}
           >
             {verse.content}
@@ -118,7 +129,7 @@ const VerseItem = React.memo<{
 });
 
 export const BibleViewer = React.memo<BibleViewerProps>(({ 
-  selectedVersions, currentBookId, currentChapter = 1, highlightVerse, fontSize = 16, lineHeight, isMainPane = true, headerRightNode, onCopyToSermon, onNavigateToDualView
+  selectedVersions, currentBookId, currentChapter = 1, highlightVerse, fontSize = 16, lineHeight, verseSpacing = 3, isMainPane = true, headerRightNode, onCopyToSermon, onNavigateToDualView
 }) => {
   const scrollContainerRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [selectedVerses, setSelectedVerses] = useState<Set<number>>(new Set());
@@ -424,6 +435,7 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
                     showAnnotations={showAnnotations}
                     fontSize={fontSize}
                     lineHeight={lineHeight}
+                    verseSpacing={verseSpacing}
                     onClick={toggleVerse}
                     onIconClick={handleIconClick}
                   />

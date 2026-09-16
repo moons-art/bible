@@ -36,7 +36,7 @@
                         const { gdriveWebService } = await import('./api/gdriveWebService');
                         await gdriveWebService.uploadBibleFile(`${v.name}.txt`, rawContent);
                         console.log(`[Bible Sync] Upload complete`);
-                        alert('성경번역본이 구글 드라이브(CEUM_Bible_Data)에 안전하게 보관되었습니다!');
+                        alert('성경번역본이 구글 드라이브(Nations Bible)에 안전하게 보관되었습니다!');
                       } catch (e: any) {
                         console.error('Failed to backup bible to drive', e);
                         alert(`구글 드라이브 업로드 실패: ${e?.message || e}`);

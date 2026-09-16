@@ -191,6 +191,24 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return v;
       }));
 
+      // 저장된 번역본 순서 적용
+      const savedOrderStr = localStorage.getItem('bible-version-order');
+      if (savedOrderStr) {
+        try {
+          const savedOrder: string[] = JSON.parse(savedOrderStr);
+          hydratedVersions.sort((a, b) => {
+            const indexA = savedOrder.indexOf(a.id);
+            const indexB = savedOrder.indexOf(b.id);
+            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+            if (indexA !== -1) return -1;
+            if (indexB !== -1) return 1;
+            return 0;
+          });
+        } catch (e) {
+          console.error("Order parse failed", e);
+        }
+      }
+
       setVersions(hydratedVersions);
       setSelectedVersionIds(['built-in-krv']);
       setIsInitialized(true); // ✅ 초기 1회성 비동기 로딩 완료 선언
@@ -317,11 +335,40 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await bibleDB.deleteVersion(id);
   };
 
+  const moveVersion = (id: string, direction: 'up' | 'down') => {
+    setVersions(prev => {
+      const index = prev.findIndex(v => v.id === id);
+      if (index === -1) return prev;
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [item] = next.splice(index, 1);
+      next.splice(targetIndex, 0, item);
+      try {
+        localStorage.setItem('bible-version-order', JSON.stringify(next.map(v => v.id)));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+  };
+
+  const reorderVersions = (newVersions: BibleVersion[]) => {
+    setVersions(newVersions);
+    try {
+      localStorage.setItem('bible-version-order', JSON.stringify(newVersions.map(v => v.id)));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   return (
     <BibleContext.Provider value={{ 
       versions, selectedVersionIds, copyMode, showVersionInCopy,
       addVersion, removeVersion, 
       renameVersion: (id, name) => setVersions(prev => prev.map(v => v.id === id ? { ...v, name } : v)),
+      reorderVersions,
+      moveVersion,
       clearAllVersions: async () => {
         const builtIns = versions.filter(v => v.isBuiltIn);
         setVersions(builtIns);
@@ -344,7 +391,10 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       },
       toggleVersion: (id) => setSelectedVersionIds(prev => {
-        if (prev.includes(id)) return prev.filter(vid => vid !== id);
+        if (prev.includes(id)) {
+          if (prev.length <= 1) return prev; // 최소 1개 번역본 활성화 유지
+          return prev.filter(vid => vid !== id);
+        }
         return prev.length >= 5 ? prev : [...prev, id];
       }),
       setCopyMode, setShowVersionInCopy,

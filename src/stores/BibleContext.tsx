@@ -13,6 +13,8 @@ export interface BibleContextType {
   addVersion: (version: BibleVersion) => void;
   removeVersion: (id: string) => void;
   renameVersion: (id: string, newName: string) => void;
+  reorderVersions: (newVersions: BibleVersion[]) => void;
+  moveVersion: (id: string, direction: 'up' | 'down') => void;
   clearAllVersions: () => void;
   toggleVersion: (id: string) => void;
   setCopyMode: (mode: CopyMode) => void;

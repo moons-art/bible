@@ -69,8 +69,8 @@ export const uploadImageToGDrive = async (blob: Blob, fileName: string, parentFo
   };
   
   try {
-    // parentFolderId가 없으면 'CEUM_ccm_data' 폴더를 자동 생성/가져와서 기본 저장소로 사용
-    const targetFolderId = parentFolderId || await gdriveWebService.getOrCreateFolder('CEUM_ccm_data');
+    // parentFolderId가 없으면 'Nations Studio' 폴더를 자동 생성/가져와서 기본 저장소로 사용
+    const targetFolderId = parentFolderId || await gdriveWebService.getAppFolderId('Nations Studio');
     metadata.parents = [targetFolderId];
   } catch (e) {
     console.warn('Failed to get or create default folder, uploading to root drive', e);

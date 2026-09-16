@@ -101,7 +101,7 @@ export const MobilePdfLayout: React.FC = () => {
 
           {/* Footer */}
           <div className="mt-4 pt-2 flex justify-center items-center text-[7px] font-bold text-slate-300 uppercase tracking-widest border-t border-slate-50">
-            <span>{data.footer || 'CEUM CCM MOBILE SERVICE 🕊️'}</span>
+            <span>{data.footer || 'NATIONS CCM MOBILE SERVICE 🕊️'}</span>
           </div>
         </div>
       ))}

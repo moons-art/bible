@@ -142,7 +142,7 @@ export const HymnalSidebar: React.FC = () => {
 
       setIsSyncing(true);
       
-      // 2. 신규 악보만 구글 드라이브에 업로드 (CEUM_ccm_data 폴더에 저장됨)
+      // 2. 신규 악보만 구글 드라이브에 업로드 (Nations Studio 폴더에 저장됨)
       const newSongs = await hymnalApi.uploadSingleImagesToGDrive(filesToUpload, (processed, total) => {
         // progress callback
       });

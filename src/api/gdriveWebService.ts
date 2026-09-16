@@ -1,7 +1,9 @@
 // src/api/gdriveWebService.ts
 import { imageCache } from '../utils/imageCache';
+import { auth, googleProvider } from './firebaseConfig';
+import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 
-const GAPI_CLIENT_ID = '786503545807-v0340nhgjnd3rg3i3k03i9r7jrpdnr0h.apps.googleusercontent.com';
+const GAPI_CLIENT_ID = '841079778199-c1mcpat74r1f53v07cgitqebaj537nu4.apps.googleusercontent.com';
 
 // ✅ 로컬 개발 전용 구글 계정 우회 플래그 (배포 시 false로 변경)
 export const IS_LOCAL_DEV = false;
@@ -254,53 +256,117 @@ export const gdriveWebService = {
   getAccessToken: () => accessToken,
 
   // 로그인 요청
-  login: () => {
+  login: async (): Promise<boolean> => {
     if (IS_LOCAL_DEV) {
       console.log('[gdriveWebService] 🛠️ Local dev mode: Bypassing login popup');
       accessToken = 'mock_local_token_123';
       setTimeout(() => { window.dispatchEvent(new Event('gdrive_authenticated')); }, 100);
-      return Promise.resolve(true);
+      return true;
     }
 
-    return new Promise((resolve, reject) => {
-      if (!tokenClient) {
-        resolve(false);
-        return;
+    // 이미 복원된 유효 토큰 세션이 있다면 구글 팝업 생략하고 성공 처리
+    if (accessToken && accessToken !== 'offline_token') {
+      return true;
+    }
+
+    try {
+      // 1. 구글 드라이브 및 프로필 스코프 지정
+      googleProvider.addScope('https://www.googleapis.com/auth/drive.file');
+      googleProvider.addScope('https://www.googleapis.com/auth/drive.appdata');
+      googleProvider.addScope('https://www.googleapis.com/auth/userinfo.profile');
+      googleProvider.addScope('https://www.googleapis.com/auth/userinfo.email');
+
+      // 2. Firebase Auth 팝업 로그인 실행 (origin_mismatch 원천 차단)
+      const userCredential = await signInWithPopup(auth, googleProvider);
+      const credential = GoogleAuthProvider.credentialFromResult(userCredential);
+      const token = credential?.accessToken;
+
+      if (!token) {
+        throw new Error('구글 드라이브 연동을 위한 액세스 토큰을 획득하지 못했습니다.');
       }
-      
-      // 이미 복원된 유효 토큰 세션이 있다면 구글 팝업 생략하고 성공 처리
-      if (accessToken) {
-        resolve(true);
-        return;
-      }
-      
-      tokenClient.callback = (response: any) => {
-        if (response.error !== undefined) {
-          console.error('[gdriveWebService] GSI auth error callback:', response.error);
-          alert('구글 인증 실패: ' + response.error);
-          resolve(false);
-          return;
-        }
-        
-        accessToken = response.access_token;
-        applyTokenToGapiClient(response.access_token); // ✅ login() 콜백에서도 gapi.client 주입
-        try {
-          const expiresAt = Date.now() + (response.expires_in * 1000);
-          localStorage.setItem('gdrive_token', response.access_token);
-          localStorage.setItem('gdrive_token_expires_at', expiresAt.toString());
-        } catch (e) {}
-        
-        console.log('[gdriveWebService] Successfully authenticated with Google Drive via callback');
-        window.dispatchEvent(new Event('gdrive_authenticated'));
-        resolve(true);
-      };
-      
+
+      accessToken = token;
+      applyTokenToGapiClient(token);
+
+      // 토큰 및 만료 절대시간(1시간) 로컬스토리지 저장
       try {
-        tokenClient.requestAccessToken();
-      } catch (err) {
-        reject(err);
+        const expiresAt = Date.now() + 3600 * 1000;
+        localStorage.setItem('gdrive_token', token);
+        localStorage.setItem('gdrive_token_expires_at', expiresAt.toString());
+      } catch (e) {}
+
+      // 사용자 프로필 로컬 캐싱
+      try {
+        const profile: GoogleUserProfile = {
+          id: userCredential.user.uid,
+          name: userCredential.user.displayName || '',
+          email: userCredential.user.email || '',
+          picture: userCredential.user.photoURL || ''
+        };
+        localStorage.setItem('offline_user_profile', JSON.stringify(profile));
+      } catch (e) {}
+
+      console.log('[gdriveWebService] Successfully authenticated with Google Drive via Firebase Auth popup.');
+      window.dispatchEvent(new Event('gdrive_authenticated'));
+      return true;
+    } catch (err: any) {
+      console.warn('[gdriveWebService] Firebase signInWithPopup error:', err);
+      // 사용자가 팝업을 직접 닫은 경우 조용히 취소
+      if (err?.code === 'auth/popup-closed-by-user') {
+        return false;
       }
-    });
+
+      // 만약 GSI tokenClient fallback이 가능하면 시도
+      if (tokenClient) {
+        console.log('[gdriveWebService] Attempting fallback to GSI tokenClient...');
+        return new Promise<boolean>((resolve) => {
+          tokenClient.callback = (response: any) => {
+            if (response.error !== undefined) {
+              console.error('[gdriveWebService] GSI auth error callback:', response.error);
+              alert('구글 인증 실패: ' + response.error);
+              resolve(false);
+              return;
+            }
+
+            accessToken = response.access_token;
+            applyTokenToGapiClient(response.access_token);
+            try {
+              const expiresAt = Date.now() + (response.expires_in * 1000);
+              localStorage.setItem('gdrive_token', response.access_token);
+              localStorage.setItem('gdrive_token_expires_at', expiresAt.toString());
+            } catch (e) {}
+
+            console.log('[gdriveWebService] Successfully authenticated with Google Drive via fallback');
+            window.dispatchEvent(new Event('gdrive_authenticated'));
+            resolve(true);
+          };
+
+          try {
+            tokenClient.requestAccessToken();
+          } catch (e) {
+            resolve(false);
+          }
+        });
+      }
+
+      alert('구글 로그인 오류: ' + (err?.message || err));
+      return false;
+    }
+  },
+
+  // 로그아웃 요청
+  logout: async () => {
+    try {
+      await signOut(auth);
+    } catch (e) {}
+    accessToken = null;
+    gdriveWebService._folderIdCache.clear();
+    gdriveWebService._inFlightFolderPromises.clear();
+    try {
+      localStorage.removeItem('gdrive_token');
+      localStorage.removeItem('gdrive_token_expires_at');
+      localStorage.removeItem('offline_user_profile');
+    } catch (e) {}
   },
 
   // 파일 다운로드 (JSON)
@@ -365,12 +431,17 @@ export const gdriveWebService = {
     let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
     let method = 'POST';
 
+    const metadata: any = { name: fileName, mimeType: 'application/json' };
+
     if (files && files.length > 0) {
       url = `https://www.googleapis.com/upload/drive/v3/files/${files[0].id}?uploadType=multipart`;
       method = 'PATCH';
+    } else {
+      try {
+        const folderId = await gdriveWebService.getAppFolderId('Nations Bible');
+        metadata.parents = [folderId];
+      } catch (e) {}
     }
-
-    const metadata = { name: fileName, mimeType: 'application/json' };
     const boundary = '-------314159265358979323846';
     const delimiter = `\r\n--${boundary}\r\n`;
     const close_delim = `\r\n--${boundary}--`;
@@ -402,22 +473,40 @@ export const gdriveWebService = {
   },
 
   // -----------------------------------------
-  // Folder & General Sync Methods
+  // Nations Solution Master Hierarchy & Folder Methods
   // -----------------------------------------
   
-  // 이름으로 폴더를 조회하여 ID 반환 (없으면 null 반환)
-  getFolderId: async (folderName: string): Promise<string | null> => {
+  // 폴더 ID 인메모리 캐시 (불필요한 중복 검색 방지)
+  _folderIdCache: new Map<string, string>(),
+
+  // 진행 중인 폴더 생성/조회 Promise 캐시 (동시성 중복 폴더 생성 완벽 방지)
+  _inFlightFolderPromises: new Map<string, Promise<string>>(),
+
+  // 이름 및 부모 폴더 ID로 폴더를 조회하여 ID 반환 (없으면 null 반환)
+  getFolderId: async (folderName: string, parentFolderId?: string): Promise<string | null> => {
     if (!accessToken) return null;
+    const cacheKey = `${parentFolderId || 'root'}_${folderName}`;
+    if (gdriveWebService._folderIdCache.has(cacheKey)) {
+      return gdriveWebService._folderIdCache.get(cacheKey)!;
+    }
+
     try {
-      const q = encodeURIComponent(`name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-      const res = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
+      let queryStr = `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+      if (parentFolderId) {
+        queryStr += ` and '${parentFolderId}' in parents`;
+      }
+      const q = encodeURIComponent(queryStr);
+      // orderBy=createdTime: 중복 폴더가 존재하더라도 가장 먼저 생성된 원본 폴더를 일관되게 선택
+      const res = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,createdTime)&orderBy=createdTime`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
       if (!res.ok) return null;
       const data = await res.json();
       const files = data.files;
       if (files && files.length > 0) {
-        return files[0].id;
+        const id = files[0].id;
+        gdriveWebService._folderIdCache.set(cacheKey, id);
+        return id;
       }
       return null;
     } catch (err) {
@@ -426,58 +515,116 @@ export const gdriveWebService = {
     }
   },
 
-  // 이름으로 폴더를 찾고, 없으면 생성 후 ID 반환
-  getOrCreateFolder: async (folderName: string): Promise<string> => {
+  // 이름과 부모 폴더로 폴더를 찾고, 없으면 생성 후 ID 반환 (동시 호출 시 동일 Promise 공유)
+  getOrCreateFolder: async (folderName: string, parentFolderId?: string): Promise<string> => {
     if (!accessToken) throw new Error('Not authenticated');
-    
-    // 1. 폴더 존재 여부 확인 (fetch 기반)
-    const q = encodeURIComponent(`name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-    const searchRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    
-    if (searchRes.ok) {
-      const searchData = await searchRes.json();
-      const files = searchData.files;
-      if (files && files.length > 0) {
-        return files[0].id;
-      }
+    const cacheKey = `${parentFolderId || 'root'}_${folderName}`;
+    if (gdriveWebService._folderIdCache.has(cacheKey)) {
+      return gdriveWebService._folderIdCache.get(cacheKey)!;
     }
-    
-    // 2. 없으면 새로 생성
-    const metadata = {
-      name: folderName,
-      mimeType: 'application/vnd.google-apps.folder',
-    };
-    
-    const createRes = await gdriveFetch('https://www.googleapis.com/drive/v3/files', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(metadata)
-    });
-    
-    if (!createRes.ok) throw new Error(`Failed to create folder ${folderName}`);
-    const createdFolder = await createRes.json();
-    return createdFolder.id;
+
+    // 이미 동일 폴더에 대한 조회/생성 비동기 요청이 진행 중인 경우, 그 Promise를 함께 대기하여 중복 생성 원천 방지
+    if (gdriveWebService._inFlightFolderPromises.has(cacheKey)) {
+      return await gdriveWebService._inFlightFolderPromises.get(cacheKey)!;
+    }
+
+    const task = (async () => {
+      // 1. 기존 폴더 검색
+      const existingId = await gdriveWebService.getFolderId(folderName, parentFolderId);
+      if (existingId) {
+        gdriveWebService._folderIdCache.set(cacheKey, existingId);
+        return existingId;
+      }
+      
+      // 2. 없으면 새로 생성
+      const metadata: any = {
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder',
+      };
+      if (parentFolderId) {
+        metadata.parents = [parentFolderId];
+      }
+      
+      const createRes = await gdriveFetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(metadata)
+      });
+      
+      if (!createRes.ok) throw new Error(`Failed to create folder ${folderName}`);
+      const createdFolder = await createRes.json();
+      const newId = createdFolder.id;
+      gdriveWebService._folderIdCache.set(cacheKey, newId);
+      return newId;
+    })();
+
+    gdriveWebService._inFlightFolderPromises.set(cacheKey, task);
+    try {
+      return await task;
+    } finally {
+      gdriveWebService._inFlightFolderPromises.delete(cacheKey);
+    }
+  },
+
+  // 1. 최상위 마스터 폴더 'Nations Solution'
+  getNationsRootFolderId: async (): Promise<string> => {
+    return gdriveWebService.getOrCreateFolder('Nations Solution');
+  },
+
+  // 2. 앱별 독립 폴더 (Nations Bible, Nations Studio, Nations Vote 등)
+  getAppFolderId: async (appName: 'Nations Bible' | 'Nations Studio' | 'Nations Vote' | string): Promise<string> => {
+    const rootId = await gdriveWebService.getNationsRootFolderId();
+    return gdriveWebService.getOrCreateFolder(appName, rootId);
+  },
+
+  // 3. 기본 폴더 구조 일괄 확인 및 사전 자동 생성 (Nations Solution > Nations Bible)
+  ensureNationsFolders: async (): Promise<void> => {
+    if (!accessToken || accessToken === 'offline_token') return;
+    try {
+      // 1. 최상위 마스터 폴더 'Nations Solution'
+      const rootId = await gdriveWebService.getNationsRootFolderId();
+      // 2. 하위 성경 폴더 'Nations Bible'
+      await gdriveWebService.getAppFolderId('Nations Bible');
+      console.log('[gdriveWebService] Nations Solution > Nations Bible folder hierarchy verified/created.');
+    } catch (e) {
+      console.warn('[gdriveWebService] Error ensuring Nations folders:', e);
+    }
   },
 
   // -----------------------------------------
-  // Bible Sync Methods (Visible Folder)
+  // Bible Sync Methods (Nations Bible Folder)
   // -----------------------------------------
   listBibleFiles: async () => {
     if (!accessToken) throw new Error('Not authenticated');
-    const folderId = await gdriveWebService.getOrCreateFolder('CEUM_Bible_Data');
+    // 1. Nations Solution > Nations Bible 폴더 우선
+    const bibleFolderId = await gdriveWebService.getAppFolderId('Nations Bible');
     
-    const q = encodeURIComponent(`'${folderId}' in parents and mimeType='text/plain' and trashed=false`);
-    const res = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
+    let q = encodeURIComponent(`'${bibleFolderId}' in parents and mimeType='text/plain' and trashed=false`);
+    let res = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
       headers: { 'Authorization': `Bearer ${accessToken}` }
     });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.files || [];
+    if (res.ok) {
+      const data = await res.json();
+      if (data.files && data.files.length > 0) return data.files;
+    }
+
+    // 2. 하위 호환: 기존 CEUM_Bible_Data 폴더 폴백
+    const legacyFolderId = await gdriveWebService.getFolderId('CEUM_Bible_Data');
+    if (legacyFolderId) {
+      q = encodeURIComponent(`'${legacyFolderId}' in parents and mimeType='text/plain' and trashed=false`);
+      res = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.files || [];
+      }
+    }
+
+    return [];
   },
 
   downloadBibleFile: async (fileId: string) => {
@@ -500,7 +647,8 @@ export const gdriveWebService = {
 
   uploadBibleFile: async (fileName: string, textData: string) => {
     if (!accessToken) throw new Error('Not authenticated');
-    const folderId = await gdriveWebService.getOrCreateFolder('CEUM_Bible_Data');
+    // Nations Solution > Nations Bible 폴더에 안전하게 저장
+    const folderId = await gdriveWebService.getAppFolderId('Nations Bible');
 
     const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
     const searchRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
@@ -627,7 +775,7 @@ export const gdriveWebService = {
 
   // 하위 호환성 유지용 listCcmFiles 메소드
   listCcmFiles: async (): Promise<any[]> => {
-    return gdriveWebService.listFolderFiles('CEUM_ccm_data');
+    return gdriveWebService.listFolderFiles('Nations Studio');
   },
 
   renameFolder: async (oldName: string, newName: string) => {
@@ -663,8 +811,9 @@ export const gdriveWebService = {
   uploadPdfFile: async (fileName: string, pdfBlob: Blob): Promise<{ id: string; webViewLink: string }> => {
     if (!accessToken) throw new Error('Not authenticated');
     
-    // CEUM_PDF_Library 폴더가 없을 경우 자동 생성 및 ID 조회
-    const folderId = await gdriveWebService.getOrCreateFolder('CEUM_PDF_Library');
+    // Nations Bible > PDF_Library 폴더 자동 생성 및 ID 조회
+    const bibleFolderId = await gdriveWebService.getAppFolderId('Nations Bible');
+    const folderId = await gdriveWebService.getOrCreateFolder('PDF_Library', bibleFolderId);
 
     const metadata = {
       name: fileName,

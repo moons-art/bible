@@ -62,7 +62,11 @@
   /* Claude 5px Ultra-slim Rounded Scrollbar */
   .custom-scrollbar::-webkit-scrollbar {
     width: 5px;
-    height: 5px;
+    height: 0px;
+  }
+  .custom-scrollbar::-webkit-scrollbar:horizontal {
+    display: none;
+    height: 0px;
   }
   .custom-scrollbar::-webkit-scrollbar-track {
     background: transparent;
@@ -75,14 +79,23 @@
     background: rgba(160, 155, 145, 0.75);
   }
 
+  /* Scrollbar hiding utilities */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
   /* Scripture Reading & Verse Styling */
   .verse-item {
-    padding: 0.35rem 0.75rem;
+    padding: 0.15rem 0.5rem;
     border-left-width: 3px;
     border-left-color: transparent;
     border-radius: 0.625rem;
-    margin-top: 0.125rem;
-    margin-bottom: 0.125rem;
+    margin-top: 0px;
+    margin-bottom: 0px;
     transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .verse-item:hover {

@@ -4,7 +4,7 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: "AIzaSyA6hBoSPjoeYbxrEYfRB-HmFjoDFT0vahQ",
-  authDomain: "ym-bible.firebaseapp.com",
+  authDomain: "bible.thenations.kr",
   projectId: "ym-bible",
   storageBucket: "ym-bible.firebasestorage.app",
   messagingSenderId: "841079778199",

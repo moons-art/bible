@@ -44,7 +44,8 @@ export class BibleSearchService {
         }
 
         if (matchMode === 'exact') {
-          const exactRegex = new RegExp(`(^|\\s)${normalizedQuery}(\\s|$)`);
+          const escapedQuery = normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const exactRegex = new RegExp(`(^|\\s)${escapedQuery}(\\s|$)`);
           versionResults = versionResults.filter(r => exactRegex.test(r.content));
         }
       } else {
