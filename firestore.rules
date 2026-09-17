@@ -1,11 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 각 사용자는 자신의 데이터에만 접근 가능
-    match /users/{userId}/{document=**} {
-      allow read, write: if true;
-    }
-    match /activity_logs/{logId} {
+    // 개발/운영 단계: 모든 읽기/쓰기 허용 (추후 보안 규칙 강화 예정)
+    match /{document=**} {
       allow read, write: if true;
     }
   }

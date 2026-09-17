@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileEdit, Plus, Calendar, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2 } from 'lucide-react';
-import { db } from '../api/firebaseConfig';
+import { X, FileEdit, Plus, Calendar, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers } from 'lucide-react';
+import { db, auth } from '../api/firebaseConfig';
 import { doc, collection, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
-
-import { fetchUserProfile } from '../api/gdriveWebService';
 
 
 interface Sermon {
@@ -26,6 +24,8 @@ interface SermonSidebarProps {
   onDockPositionChange: (pos: DockPosition) => void;
   isCollapsed: boolean;
   onCollapseChange: (collapsed: boolean) => void;
+  isOverlay?: boolean;
+  onOverlayChange?: (overlay: boolean) => void;
   sidebarWidth: number;
   onSidebarWidthChange: (width: number) => void;
   sidebarHeight: number;
@@ -46,6 +46,8 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   onDockPositionChange,
   isCollapsed,
   onCollapseChange,
+  isOverlay = false,
+  onOverlayChange,
   sidebarWidth,
   onSidebarWidthChange,
   sidebarHeight,
@@ -72,20 +74,21 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   };
 
   useEffect(() => {
-    const handleAuth = async () => {
-      const { gdriveWebService } = await import('../api/gdriveWebService');
-      const token = gdriveWebService.getAccessToken();
-      if (!token || token === 'mock_local_token_123') return;
-      const profile = await fetchUserProfile(token);
-      if (profile && profile.id) {
-        setGoogleUserId(profile.id);
-        subscribeToSermons(profile.id);
+    const unsubAuth = auth.onAuthStateChanged((user) => {
+      if (user) {
+        setGoogleUserId(user.uid);
+        subscribeToSermons(user.uid);
+      } else {
+        setGoogleUserId(null);
+        setSermons([]);
+        if (unsubscribeSermonsRef.current) {
+          unsubscribeSermonsRef.current();
+          unsubscribeSermonsRef.current = null;
+        }
       }
-    };
-    window.addEventListener('gdrive_authenticated', handleAuth);
-    handleAuth();
+    });
     return () => {
-      window.removeEventListener('gdrive_authenticated', handleAuth);
+      unsubAuth();
       if (unsubscribeSermonsRef.current) unsubscribeSermonsRef.current();
     };
   }, []);
@@ -171,6 +174,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   useImperativeHandle(ref, () => ({
     resetToRightAndOpen: () => {
       onDockPositionChange('right');
+      onOverlayChange?.(false);
       onCollapseChange(false);
     },
     isFullyOpenOnRight: () => {
@@ -306,9 +310,9 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
 
   const getContainerClasses = () => {
     switch (dockPosition) {
-      case 'right': return 'fixed top-0 right-0 border-l border-slate-200 shadow-[-10px_0_40px_rgba(0,0,0,0.15)]';
-      case 'bottom': return 'fixed bottom-0 left-0 border-t border-slate-200 shadow-[0_-10px_40px_rgba(0,0,0,0.15)]';
-      case 'free': return 'fixed bottom-6 left-1/2 rounded-2xl shadow-2xl border border-slate-200 ';
+      case 'right': return `fixed top-0 right-0 border-l border-[#EBE6DF] ${isOverlay ? 'shadow-[-16px_0_45px_rgba(0,0,0,0.18)]' : 'shadow-[-10px_0_40px_rgba(0,0,0,0.1)]'}`;
+      case 'bottom': return `fixed bottom-0 left-0 border-t border-[#EBE6DF] ${isOverlay ? 'shadow-[0_-16px_45px_rgba(0,0,0,0.18)]' : 'shadow-[0_-10px_40px_rgba(0,0,0,0.1)]'}`;
+      case 'free': return 'fixed bottom-6 left-1/2 rounded-2xl shadow-2xl border border-[#EBE6DF] ';
     }
   };
 
@@ -346,16 +350,29 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     return { x: 0, y: 0 };
   };
 
-  const renderTabIcon = () => {
-    if (dockPosition === 'right') return isCollapsed ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />;
-    if (dockPosition === 'bottom') return isCollapsed ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />;
+  const getTabContainerClasses = () => {
+    switch (dockPosition) {
+      case 'right': return 'absolute left-0 top-1/2 -translate-x-full -translate-y-1/2 flex flex-col gap-1.5 z-50';
+      case 'bottom': return 'absolute top-0 left-1/2 -translate-y-full -translate-x-1/2 flex flex-row gap-1.5 z-50';
+      case 'free': return 'hidden';
+    }
   };
 
-  const getTabClasses = () => {
-    switch (dockPosition) {
-      case 'right': return 'absolute left-0 top-1/2 -translate-x-full -translate-y-1/2 rounded-l-xl border-y border-l py-8 px-1.5';
-      case 'bottom': return 'absolute top-0 left-1/2 -translate-y-full -translate-x-1/2 rounded-t-xl border-x border-t px-8 py-1.5';
-      case 'free': return 'hidden';
+  // 1. 열고닫는 버튼: 사이드바 열림/닫힘(접기/펼치기)만 제어 (현재 덮기/밀기 모드는 그대로 유지)
+  const handleToggleCollapse = () => {
+    if (isResizing) return;
+    onCollapseChange(!isCollapsed);
+  };
+
+  // 2. 덮는 버튼: 사이드바를 닫지 않고, 현재 위치에서 덮기(Overlay) <-> 밀기(Push) 모드만 전환
+  const handleToggleOverlay = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isResizing) return;
+    if (isCollapsed) {
+      onOverlayChange?.(true);
+      onCollapseChange(false);
+    } else {
+      onOverlayChange?.(!isOverlay);
     }
   };
 
@@ -363,7 +380,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     <>
       {/* Drag overlay to capture mouse movement smoothly */}
       {isResizing && (
-        <div className="fixed inset-0 z-[99999] cursor-ew-resize select-none" />
+        <div className={`fixed inset-0 z-[99999] ${dockPosition === 'bottom' ? 'cursor-row-resize' : 'cursor-col-resize'} select-none`} />
       )}
       <AnimatePresence>
         {isOpen && (
@@ -379,39 +396,92 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
             className={`bg-[#FAF9F5] z-50 flex flex-col overflow-visible ${getContainerClasses()}`}
             style={{ zIndex: dockPosition === 'free' ? sermonZIndex : undefined, ...getContainerStyle() }}
           >
-            {/* Drag Resize Handle (Left for right-dock, Top for bottom-dock) */}
+            {/* Drag Resize Handle (왼쪽 사이드바와 동일하게 얇은 0.5 두께, #D97757 샌드 컬러 및 cursor-col-resize 적용) */}
             {dockPosition === 'right' && (
               <div 
                 onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setIsResizing(true); }}
                 onTouchStart={(e) => { e.stopPropagation(); setIsResizing(true); }}
-                className="absolute -left-2 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-[#C96442]/20 active:bg-[#C96442]/30 transition-colors z-[100] group flex items-center justify-center"
-                title="드래그하여 크기 조절"
+                className={`
+                  absolute -left-2 top-0 bottom-0 w-4 z-[100] cursor-col-resize flex items-center justify-center group/resizer transition-all
+                  ${isResizing ? 'opacity-100' : 'opacity-0 hover:opacity-100'}
+                `}
+                title="드래그하여 너비 조절"
               >
-                <div className="w-1 h-16 bg-[#E7E5DF] group-hover:bg-[#C96442] rounded-full transition-colors shadow-2xs" />
+                {/* Hover/Drag Highlight Line */}
+                <div className={`w-0.5 h-full transition-colors ${isResizing ? 'bg-[#D97757]' : 'bg-[#D97757]/70 group-hover/resizer:bg-[#D97757]'}`} />
               </div>
             )}
             {dockPosition === 'bottom' && (
               <div 
                 onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setIsResizing(true); }}
                 onTouchStart={(e) => { e.stopPropagation(); setIsResizing(true); }}
-                className="absolute -top-2 left-0 right-0 h-4 cursor-ns-resize hover:bg-[#C96442]/20 active:bg-[#C96442]/30 transition-colors z-[100] group flex items-center justify-center"
-                title="드래그하여 크기 조절"
+                className={`
+                  absolute -top-2 left-0 right-0 h-4 z-[100] cursor-row-resize flex items-center justify-center group/resizer transition-all
+                  ${isResizing ? 'opacity-100' : 'opacity-0 hover:opacity-100'}
+                `}
+                title="드래그하여 높이 조절"
               >
-                <div className="h-1 w-16 bg-[#E7E5DF] group-hover:bg-[#C96442] rounded-full transition-colors shadow-2xs" />
+                <div className={`h-0.5 w-full transition-colors ${isResizing ? 'bg-[#D97757]' : 'bg-[#D97757]/70 group-hover/resizer:bg-[#D97757]'}`} />
               </div>
             )}
 
-          {/* Toggle Tab (Visible even when collapsed) */}
-          <button
-            onClick={() => onCollapseChange(!isCollapsed)}
-            className={`
-              ${getTabClasses()} 
-              bg-[#FAF0EB] text-[#C96442] border-[#F1D3C6] shadow-md hover:bg-[#F5E2DA] transition-all z-50
-            `}
-            title={isCollapsed ? "설교노트 열기" : "설교노트 숨기기"}
-          >
-            {renderTabIcon()}
-          </button>
+          {/* Dual Toggle Tabs: 1. 열고닫는 탭 (마우스 호버로 열기/닫기) & 2. 덮는 탭 (클릭으로 덮기/밀기 모드 전환) */}
+          {dockPosition !== 'free' && (
+            <div className={getTabContainerClasses()}>
+              {/* 1. 열고닫는 탭 (마우스를 올리면 항상 사이드바를 밀어 닫거나, 현재 위치/모드 그대로 엶) */}
+              <button
+                type="button"
+                onClick={handleToggleCollapse}
+                onMouseEnter={handleToggleCollapse}
+                className={`
+                  ${dockPosition === 'right' 
+                    ? 'rounded-l-xl border-y border-l px-1.5 py-4 flex items-center justify-center' 
+                    : 'rounded-t-xl border-x border-t px-4 py-1.5 flex items-center justify-center'
+                  }
+                  ${!isCollapsed
+                    ? 'bg-[#F2DDD1] text-[#B85332] border-[#E8B49E] shadow-md ring-1 ring-[#C96442]/30 font-semibold' 
+                    : 'bg-[#FAF0EB] text-[#C96442] border-[#F1D3C6] shadow-sm hover:bg-[#F5E2DA] transition-all'
+                  }
+                  z-50 cursor-pointer select-none
+                `}
+                title={!isCollapsed ? "설교노트 닫기 (마우스를 올리면 닫힙니다)" : "설교노트 열기 (마우스를 올리면 현재 위치로 열립니다)"}
+              >
+                {dockPosition === 'right' ? (
+                  !isCollapsed ? (
+                    <ChevronRight className="w-4 h-4 stroke-[2px]" />
+                  ) : (
+                    <ChevronLeft className="w-4 h-4 stroke-[2px]" />
+                  )
+                ) : (
+                  !isCollapsed ? (
+                    <ChevronDown className="w-4 h-4 stroke-[2px]" />
+                  ) : (
+                    <ChevronUp className="w-4 h-4 stroke-[2px]" />
+                  )
+                )}
+              </button>
+
+              {/* 2. 덮는 탭 (닫지 않고, 현재 위치에서 메인창을 덮거나 밀거나 전환) */}
+              <button
+                type="button"
+                onClick={handleToggleOverlay}
+                className={`
+                  ${dockPosition === 'right' 
+                    ? 'rounded-l-xl border-y border-l px-1.5 py-4 flex items-center justify-center' 
+                    : 'rounded-t-xl border-x border-t px-4 py-1.5 flex items-center justify-center'
+                  }
+                  ${isOverlay
+                    ? 'bg-[#F2DDD1] text-[#B85332] border-[#E8B49E] shadow-md ring-1 ring-[#C96442]/30 font-semibold' 
+                    : 'bg-[#FAF0EB] text-[#C96442] border-[#F1D3C6] shadow-sm hover:bg-[#F5E2DA] transition-all'
+                  }
+                  z-50 cursor-pointer select-none
+                `}
+                title={isOverlay ? "메인창 밀기 (클릭하면 메인창을 밀어냅니다)" : "메인창 덮기 (클릭하면 메인창 위로 덮습니다)"}
+              >
+                <Layers className="w-4 h-4 stroke-[1.8px]" />
+              </button>
+            </div>
+          )}
           
           {/* Free Mode Resizers */}
           {dockPosition === 'free' && (
@@ -628,7 +698,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                     </div>
                     <h3 className="text-[#2C2B29] font-bold text-sm mb-1.5">로그인이 필요한 기능입니다</h3>
                     <p className="text-xs text-[#6A6864] font-medium leading-relaxed">
-                      왼쪽 사이드바의 <strong>[Google 로그인]</strong> 버튼을 눌러<br/>로그인하시면 설교노트를 영구적으로 저장할 수 있습니다.
+                      왼쪽 사이드바의 <strong>[로그인 / 간편가입]</strong> 버튼을 눌러<br/>가입 후 로그인하시면 설교노트를 영구적으로 저장할 수 있습니다.
                     </p>
                   </div>
                 )}

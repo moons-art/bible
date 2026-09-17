@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { BibleVersion, Verse } from '../types/bible';
 import { useBible } from '../stores/BibleContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, X, MessageSquare, Link2, FileEdit, Trash2, Send, Type, Plus, Minus } from 'lucide-react';
+import { Copy, X, MessageSquare, Link2, FileEdit, Trash2, Send, Type, Plus, Minus, Sparkles } from 'lucide-react';
 import { BIBLE_LIST } from '../constants/bibleMeta';
 import { BiblePopup } from './BiblePopup';
 import type { PopupState } from './BiblePopup';
@@ -20,6 +20,8 @@ interface BibleViewerProps {
   headerRightNode?: React.ReactNode;
   onCopyToSermon?: (text: string) => void;
   onNavigateToDualView?: (bookId: string, chapter: number, verse: number) => void;
+  onVerseSelect?: (verse: number, text: string) => void;
+  onOpenAiCommentary?: (verse: number, text: string) => void;
 }
 
 const VerseItem = React.memo<{
@@ -129,7 +131,7 @@ const VerseItem = React.memo<{
 });
 
 export const BibleViewer = React.memo<BibleViewerProps>(({ 
-  selectedVersions, currentBookId, currentChapter = 1, highlightVerse, fontSize = 16, lineHeight, verseSpacing = 3, isMainPane = true, headerRightNode, onCopyToSermon, onNavigateToDualView
+  selectedVersions, currentBookId, currentChapter = 1, highlightVerse, fontSize = 16, lineHeight, verseSpacing = 3, isMainPane = true, headerRightNode, onCopyToSermon, onNavigateToDualView, onVerseSelect, onOpenAiCommentary
 }) => {
   const scrollContainerRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [selectedVerses, setSelectedVerses] = useState<Set<number>>(new Set());
@@ -243,7 +245,13 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
       }
       return newSelected;
     });
-  }, []);
+
+    if (onVerseSelect) {
+      const verseObj = displayData[0]?.verses?.find(v => v.verse === verseNum);
+      const text = verseObj?.text || (verseObj as any)?.content || '';
+      onVerseSelect(verseNum, text);
+    }
+  }, [displayData, onVerseSelect]);
 
   
 
@@ -415,11 +423,6 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
                     <h2 className="font-serif text-2xl sm:text-3xl font-bold text-[#2C2B29] tracking-tight">
                       {currentBookName} {currentChapter}장
                     </h2>
-                    <div className="flex items-center gap-2.5 mt-2 text-xs text-[#A3A19B]">
-                      <span>총 {data.verses.length}개 절</span>
-                      <span>•</span>
-                      <span>완독 약 {Math.max(1, Math.round(data.verses.length * 0.15))}분</span>
-                    </div>
                   </div>
                 )}
 
@@ -508,6 +511,20 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
                     >
                       <FileEdit className="w-3.5 h-3.5 stroke-[1.5px]" /> 노트
                     </button>
+                    {onOpenAiCommentary && (
+                      <button 
+                        onClick={() => {
+                          const firstVerse = Array.from(selectedVerses).sort((a,b)=>a-b)[0];
+                          const verseObj = displayData[0]?.verses.find(x => x.verse === firstVerse);
+                          const text = verseObj?.text || (verseObj as any)?.content || '';
+                          onOpenAiCommentary(firstVerse, text);
+                          setSelectedVerses(new Set());
+                        }}
+                        className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-[#3D3B38] rounded-xl transition-colors text-xs font-semibold text-[#C46A40] whitespace-nowrap shrink-0"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 stroke-[1.5px]" /> AI 주석
+                      </button>
+                    )}
                   </div>
                 </>
               )}

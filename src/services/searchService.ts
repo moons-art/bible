@@ -1,3 +1,32 @@
+import type { BibleVersion, Verse } from '../types/bible';
+import { OT_BOOKS, NT_BOOKS } from '../constants/bibleMeta';
+import { BIBLE_SYNONYMS } from '../constants/bibleSynonyms';
+
+export type MatchMode = 'exact' | 'partial';
+export type LogicMode = 'AND' | 'OR';
+export type SearchRange = 'all' | 'ot' | 'nt' | 'book';
+
+// 한글 조사 제거 및 핵심 검색 키워드 추출
+function extractKeywords(text: string): string[] {
+  const clean = text.replace(/[.,/#!$%^&*;:{}=\-_`~()?"'<>]/g, ' ');
+  const words = clean.split(/\s+/).filter(w => w.length > 0);
+  const keywords: string[] = [];
+  const particles = ['에게서', '에게', '에서', '으로', '부터', '까지', '은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '로', '만'];
+
+  for (const w of words) {
+    keywords.push(w);
+    for (const p of particles) {
+      if (w.endsWith(p) && w.length > p.length + 1) {
+        const stripped = w.slice(0, -p.length);
+        if (stripped.length >= 2 && !keywords.includes(stripped)) {
+          keywords.push(stripped);
+        }
+      }
+    }
+  }
+  return Array.from(new Set(keywords));
+}
+
 export class BibleSearchService {
   private versionsMap: Map<string, BibleVersion> = new Map();
 

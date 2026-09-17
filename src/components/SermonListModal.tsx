@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { X, FileEdit, Plus, Calendar, Search, Trash2 } from 'lucide-react';
-import { db } from '../api/firebaseConfig';
+import { db, auth } from '../api/firebaseConfig';
 import { doc, collection, onSnapshot, deleteDoc } from 'firebase/firestore';
 
 interface Sermon {
@@ -11,8 +11,6 @@ interface Sermon {
   content?: string;
 }
 
-import { fetchUserProfile } from '../api/gdriveWebService';
-
 export const SermonListModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [sermons, setSermons] = useState<Sermon[]>([]);
   const [googleUserId, setGoogleUserId] = useState<string | null>(null);
@@ -20,34 +18,34 @@ export const SermonListModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const handleAuth = async () => {
-      const { gdriveWebService } = await import('../api/gdriveWebService');
-      const token = gdriveWebService.getAccessToken();
-      if (!token || token === 'mock_local_token_123') return;
-      const profile = await fetchUserProfile(token);
-      if (!profile || !profile.id) return;
-      setGoogleUserId(profile.id);
-
-      if (unsubscribeRef.current) unsubscribeRef.current();
-      const sermonsCol = collection(db, 'users', profile.id, 'sermons');
-      const unsubscribe = onSnapshot(sermonsCol, (snapshot) => {
-        const data: Sermon[] = [];
-        snapshot.forEach(docSnap => {
-          data.push({ id: docSnap.id, ...docSnap.data() } as Sermon);
+    const unsubAuth = auth.onAuthStateChanged((user) => {
+      if (user) {
+        setGoogleUserId(user.uid);
+        if (unsubscribeRef.current) unsubscribeRef.current();
+        const sermonsCol = collection(db, 'users', user.uid, 'sermons');
+        const unsubscribe = onSnapshot(sermonsCol, (snapshot) => {
+          const data: Sermon[] = [];
+          snapshot.forEach(docSnap => {
+            data.push({ id: docSnap.id, ...docSnap.data() } as Sermon);
+          });
+          data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          setSermons(data);
+        }, (err) => {
+          console.warn('[SermonListModal] Firestore offline:', err.code);
         });
-        data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        setSermons(data);
-      }, (err) => {
-        console.warn('[SermonListModal] Firestore offline:', err.code);
-      });
-      unsubscribeRef.current = unsubscribe;
-    };
-
-    window.addEventListener('gdrive_authenticated', handleAuth);
-    handleAuth();
+        unsubscribeRef.current = unsubscribe;
+      } else {
+        setGoogleUserId(null);
+        setSermons([]);
+        if (unsubscribeRef.current) {
+          unsubscribeRef.current();
+          unsubscribeRef.current = null;
+        }
+      }
+    });
 
     return () => {
-      window.removeEventListener('gdrive_authenticated', handleAuth);
+      unsubAuth();
       if (unsubscribeRef.current) unsubscribeRef.current();
     };
   }, []);

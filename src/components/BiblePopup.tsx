@@ -5,6 +5,7 @@ import { BIBLE_LIST } from '../constants/bibleMeta';
 import { parseBibleReferences, syncBidirectionalCrossRefs } from '../utils/crossRefParser';
 
 import { useBible } from '../stores/BibleContext';
+import { auth } from '../api/firebaseConfig';
 
 export interface PopupState {
   id: string;
@@ -40,11 +41,88 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
   const { id, bookId, chapter, verse, panel, pos, size, zIndex, endVerse } = popup;
   const currentFontSize = fontSizes[panel] || 15;
   const { versions } = useBible();
-  const isAuthenticated = !!localStorage.getItem('gdrive_token');
+
+  // Firebase Auth 기반 로그인 상태 실시간 감지
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !!auth.currentUser);
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged((user) => {
+      setIsAuthenticated(!!user);
+    });
+    return () => unsub();
+  }, []);
   
   const [isResizing, setIsResizing] = useState<'left' | 'right' | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0, initX: 0, initY: 0, initW: 0, initH: 0 });
+
+  const verseKey = `${bookId}_${chapter}_${verse}`;
+  const externalText = panel !== 'read' ? (verseData[verseKey]?.[panel] || '') : '';
+
+  // 한글 IME 조합 중복 입력 방지를 위한 로컬 버퍼 상태
+  const [localText, setLocalText] = useState(externalText);
+  const localTextRef = useRef(localText);
+  localTextRef.current = localText;
+  const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 외부 데이터 변경 시 동기화 (구절 전환 등)
+  useEffect(() => {
+    setLocalText(externalText);
+  }, [verseKey, panel, externalText]);
+
+  // 상위 전역 상태 동기화 함수
+  const syncToParent = (val: string) => {
+    setVerseData((prev: any) => {
+      const oldVal = prev[verseKey]?.[panel] || '';
+      if (oldVal === val) return prev;
+      
+      let next = {
+        ...prev,
+        [verseKey]: {
+          ...prev[verseKey],
+          [panel]: val
+        }
+      };
+
+      if (panel === 'crossRef') {
+        const currentBookName = BIBLE_LIST.find(b => b.id === bookId)?.name || '';
+        next = syncBidirectionalCrossRefs(verseKey, currentBookName, chapter, verse, val, oldVal, next);
+      }
+
+      return next;
+    });
+  };
+
+  // 텍스트 변경 핸들러 (로컬 즉시 반영 + 250ms 디바운스 동기화)
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setLocalText(val);
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+
+    saveTimerRef.current = setTimeout(() => {
+      syncToParent(val);
+    }, 250);
+  };
+
+  // 포커스 벗어날 때 즉시 동기화
+  const handleBlur = () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+    syncToParent(localTextRef.current);
+  };
+
+  // 언마운트 시 미저장 텍스트 동기화
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+      syncToParent(localTextRef.current);
+    };
+  }, [verseKey, panel]);
 
   let readContent = '';
   let activeVersionName = '';
@@ -125,9 +203,9 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
       }}
       className="fixed bottom-6 left-1/2 bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col"
     >
-      {/* Resizers - Enlarged for easier touch */}
+      {/* Resizers - 영역을 기존의 절반(w-8 h-8)으로 슬림화 */}
       <div 
-        className="absolute top-0 left-0 w-16 h-16 cursor-nwse-resize z-[10001] bg-slate-900/0 hover:bg-indigo-500/10 rounded-tl-2xl flex items-start justify-start p-2"
+        className="absolute top-0 left-0 w-8 h-8 cursor-nwse-resize z-[10001] bg-slate-900/0 hover:bg-[#C46A40]/10 rounded-tl-2xl flex items-start justify-start p-1.5"
         onMouseDown={(e) => { 
           e.preventDefault(); e.stopPropagation(); 
           dragStartRef.current = { ...dragStartRef.current, x: e.clientX, y: e.clientY, initW: size.width, initH: size.height };
@@ -138,11 +216,12 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
           dragStartRef.current = { ...dragStartRef.current, x: e.touches[0].clientX, y: e.touches[0].clientY, initW: size.width, initH: size.height };
           setIsResizing('left'); 
         }}
+        title="크기 조절"
       >
-        <div className="w-5 h-5 border-t-[3px] border-l-[3px] border-slate-400 rounded-tl-sm pointer-events-none mt-1 ml-1 opacity-50"></div>
+        <div className="w-2.5 h-2.5 border-t-2 border-l-2 border-[#A39E94] rounded-tl-xs pointer-events-none mt-0.5 ml-0.5 opacity-60"></div>
       </div>
       <div 
-        className="absolute top-0 right-0 w-16 h-16 cursor-nesw-resize z-[10001] bg-slate-900/0 hover:bg-indigo-500/10 rounded-tr-2xl flex items-start justify-end p-2"
+        className="absolute top-0 right-0 w-8 h-8 cursor-nesw-resize z-[10001] bg-slate-900/0 hover:bg-[#C46A40]/10 rounded-tr-2xl flex items-start justify-end p-1.5"
         onMouseDown={(e) => { 
           e.preventDefault(); e.stopPropagation(); 
           dragStartRef.current = { ...dragStartRef.current, x: e.clientX, y: e.clientY, initW: size.width, initH: size.height };
@@ -153,8 +232,9 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
           dragStartRef.current = { ...dragStartRef.current, x: e.touches[0].clientX, y: e.touches[0].clientY, initW: size.width, initH: size.height };
           setIsResizing('right'); 
         }}
+        title="크기 조절"
       >
-        <div className="w-5 h-5 border-t-[3px] border-r-[3px] border-slate-400 rounded-tr-sm pointer-events-none mt-1 mr-1 opacity-50"></div>
+        <div className="w-2.5 h-2.5 border-t-2 border-r-2 border-[#A39E94] rounded-tr-xs pointer-events-none mt-0.5 mr-0.5 opacity-60"></div>
       </div>
       
       {/* Header */}
@@ -189,6 +269,10 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
               title="삭제"
               onClick={(e) => {
                 e.stopPropagation();
+                if (saveTimerRef.current) {
+                  clearTimeout(saveTimerRef.current);
+                }
+                setLocalText('');
                 const key = `${bookId}_${chapter}_${verse}`;
                 setVerseData((prev: any) => {
                   let next = { ...prev };
@@ -228,17 +312,27 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
       {/* Editor Body */}
       <div className="p-2.5 bg-[#FAF9F5] flex flex-col gap-1.5 h-full relative rounded-b-2xl" onMouseDown={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-2.5 py-1 bg-white border border-[#E7E5DF] rounded-xl mb-1 shadow-2xs">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             {panel !== 'read' ? (
-              <>
-                <button onClick={() => handleFontSizeChange(-1, panel)} className="p-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] transition-colors" title="글자 작게">
-                  <div className="flex items-center"><Type className="w-3 h-3 stroke-[1.5px]" /><Minus className="w-2.5 h-2.5 stroke-[1.5px]" /></div>
-                </button>
-                <span className="text-xs font-semibold text-[#A3A19B] min-w-4 text-center">{currentFontSize}</span>
-                <button onClick={() => handleFontSizeChange(1, panel)} className="p-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] transition-colors" title="글자 크게">
-                  <div className="flex items-center"><Type className="w-3.5 h-3.5 stroke-[1.5px]" /><Plus className="w-2.5 h-2.5 stroke-[1.5px]" /></div>
-                </button>
-              </>
+              <div className="flex items-center gap-1.5" title={`글자 크기: ${currentFontSize}px`}>
+                <Type className="w-3.5 h-3.5 text-[#8C877D] stroke-[1.8px] shrink-0" />
+                <input 
+                  type="range"
+                  min={12}
+                  max={28}
+                  step={1}
+                  value={currentFontSize}
+                  onChange={(e) => {
+                    const nextVal = parseInt(e.target.value, 10);
+                    handleFontSizeChange(nextVal - currentFontSize, panel);
+                  }}
+                  className="w-20 sm:w-24 h-1.5 bg-[#EAE4D6] rounded-lg appearance-none cursor-pointer accent-[#C46A40]"
+                  title="가로 바로 글자 크기 조절"
+                />
+                <span className="text-[11px] font-semibold text-[#6E6A63] min-w-4 text-center font-mono">
+                  {currentFontSize}
+                </span>
+              </div>
             ) : <div />}
           </div>
           <div className="flex items-center gap-1.5">
@@ -255,7 +349,7 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
             )}
             <button 
               onClick={() => {
-                const text = panel === 'read' ? readContent : (verseData[`${bookId}_${chapter}_${verse}`]?.[panel] || '');
+                const text = panel === 'read' ? readContent : localText;
                 if (text) { navigator.clipboard.writeText(text); alert('복사되었습니다.'); }
               }}
               className="flex items-center gap-1 px-2.5 py-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] hover:text-[#2C2B29] transition-colors text-xs font-semibold"
@@ -265,8 +359,12 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
             {panel === 'sermon' && onSendToSermon && (
               <button 
                 onClick={() => {
-                  const text = verseData[`${bookId}_${chapter}_${verse}`]?.sermon || '';
-                  if (text.trim()) { onSendToSermon(text); onClose(id); }
+                  const text = localText || '';
+                  if (text.trim()) { 
+                    syncToParent(text);
+                    onSendToSermon(text); 
+                    onClose(id); 
+                  }
                 }}
                 className="flex items-center gap-1 px-3 py-1 bg-[#C96442] hover:bg-[#B55434] text-white rounded-lg transition-colors text-xs font-semibold shadow-2xs"
               >
@@ -277,7 +375,7 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
         </div>
         
         {panel === 'crossRef' && (() => {
-          const text = verseData[`${bookId}_${chapter}_${verse}`]?.[panel] || '';
+          const text = localText;
           const parsed = parseBibleReferences(text);
           if (parsed.length > 0) {
             return (
@@ -319,38 +417,25 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
               disabled={!isAuthenticated}
               style={{ fontSize: `${currentFontSize}px` }}
               className={`w-full flex-1 p-3 font-serif border border-[#E7E5DF] rounded-xl outline-none focus:ring-2 focus:ring-[#C96442]/10 focus:border-[#C96442] transition-all resize-none custom-scrollbar ${!isAuthenticated ? 'bg-[#F5F3ED] text-[#A3A19B] cursor-not-allowed opacity-80' : 'bg-white text-[#2C2B29]'}`}
-              value={verseData[`${bookId}_${chapter}_${verse}`]?.[panel] || ''}
-              onChange={(e) => {
-                const val = e.target.value;
-                const oldVal = verseData[`${bookId}_${chapter}_${verse}`]?.[panel] || '';
-                const key = `${bookId}_${chapter}_${verse}`;
-                
-                setVerseData((prev: any) => {
-                  let next = {
-                    ...prev,
-                    [key]: {
-                      ...prev[key],
-                      [panel]: val
-                    }
-                  };
-
-                  if (panel === 'crossRef') {
-                    const currentBookName = BIBLE_LIST.find(b => b.id === bookId)?.name || '';
-                    next = syncBidirectionalCrossRefs(key, currentBookName, chapter, verse, val, oldVal, next);
-                  }
-
-                  return next;
-                });
-              }}
+              value={localText}
+              onChange={handleTextChange}
+              onBlur={handleBlur}
             />
             {!isAuthenticated && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#FAF9F5]/90 backdrop-blur-[1px] rounded-xl text-[#6A6864] font-medium z-10 p-4 text-center border border-[#E7E5DF] shadow-inner">
                 <div className="w-9 h-9 bg-[#F5F3ED] rounded-full flex items-center justify-center mb-2">
                   <BookOpen className="w-4 h-4 text-[#C96442] stroke-[1.5px]" />
                 </div>
-                <p className="text-xs">Google 계정으로 로그인 후<br/>노트와 관주를 클라우드에 영구 저장하세요.</p>
+                <p className="text-xs">가입 후 로그인하여<br/>노트와 관주를 클라우드에 영구 저장하세요.</p>
               </div>
             )}
+
+            {/* 노트창 하단 고정 안내 문구 */}
+            <div className="text-center pt-1.5 shrink-0 select-none">
+              <p className="text-[10px] text-[#A39E94] font-normal tracking-tight">
+                노트창은 앱의 하단에 고정되어 움직입니다.
+              </p>
+            </div>
           </div>
         )}
       </div>

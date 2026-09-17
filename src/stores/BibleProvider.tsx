@@ -4,22 +4,32 @@ import { searchService } from '../services/searchService';
 import { BibleParser } from '../services/bibleParser';
 import { BibleContext, type CopyMode } from './BibleContext';
 import { bibleDB } from '../utils/indexedDB';
-import { db } from '../api/firebaseConfig';
+import { db, auth } from '../api/firebaseConfig';
 import { doc, collection, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
 import { fetchUserProfile } from '../api/gdriveWebService';
+import { subscribeUserProfile } from '../services/userService';
 
 export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const DEFAULT_KRV: BibleVersion = {
-    id: 'built-in-krv',
-    name: '개역개정',
+  const DEFAULT_KOR: BibleVersion = {
+    id: 'built-in-kor-revised',
+    name: '개역한글',
     verses: [],
     isBuiltIn: true,
     isSystem: true,
     metadata: { uploadedAt: Date.now(), fileType: 'txt' }
   };
 
-  const [versions, setVersions] = useState<BibleVersion[]>([DEFAULT_KRV]);
-  const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>(['built-in-krv']);
+  const DEFAULT_ENG: BibleVersion = {
+    id: 'built-in-eng-nrsv',
+    name: 'NRSV',
+    verses: [],
+    isBuiltIn: true,
+    isSystem: true,
+    metadata: { uploadedAt: Date.now(), fileType: 'txt' }
+  };
+
+  const [versions, setVersions] = useState<BibleVersion[]>([DEFAULT_KOR, DEFAULT_ENG]);
+  const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>(['built-in-kor-revised', 'built-in-eng-nrsv']);
   const [lineHeight, setLineHeight] = useState<number>(1.6);
   const [copyMode, setCopyMode] = useState<CopyMode>('default');
   const [showVersionInCopy, setShowVersionInCopy] = useState<boolean>(true);
@@ -36,7 +46,6 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // ── Firestore verseData 동기화 함수 ─────────────────────────────────────
   const subscribeToVerseData = (uid: string) => {
-    // 기존 구독 해제
     if (unsubscribeVerseDataRef.current) {
       unsubscribeVerseDataRef.current();
     }
@@ -53,33 +62,80 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     unsubscribeVerseDataRef.current = unsubscribe;
   };
 
-  // ── 구글 로그인 이벤트 감지 → 사용자 ID 가져오기 ────────────────────────
+  // ── 관리자가 원격으로 허용한 번역본(개역개정 등) 자동 활성화 ────────────
+  const checkAndHydrateAllowedVersions = async (allowedVersions: string[]) => {
+    if (!allowedVersions || !allowedVersions.includes('built-in-krv')) return;
+
+    setVersions(prev => {
+      const alreadyHas = prev.some(v => v.id === 'built-in-krv' || v.name === '개역개정');
+      if (alreadyHas) return prev;
+
+      // 비동기로 krv.txt 로드하여 IndexedDB 및 state에 추가
+      (async () => {
+        try {
+          const res = await fetch('/data/krv.txt');
+          if (res.ok) {
+            const buf = await res.arrayBuffer();
+            let text;
+            try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+            catch { text = new TextDecoder('euc-kr').decode(buf); }
+            const parsed = await BibleParser.parseTxt('개역개정', text);
+            const krvVersion: BibleVersion = {
+              id: 'built-in-krv',
+              name: '개역개정',
+              verses: parsed.verses,
+              isSystem: true,
+              isBuiltIn: false
+            };
+            await bibleDB.saveVersion(krvVersion);
+            setVersions(curr => {
+              if (curr.some(v => v.id === 'built-in-krv')) return curr;
+              return [...curr, krvVersion];
+            });
+            console.log('[BibleProvider] 관리자 권한으로 개역개정이 자동 활성화되었습니다.');
+          }
+        } catch (e) {
+          console.error('[BibleProvider] 원격 개역개정 로드 실패:', e);
+        }
+      })();
+
+      return prev;
+    });
+  };
+
+  // ── Firebase Auth & 구글 로그인 이벤트 감지 ──────────────────────────
   useEffect(() => {
-    const handleAuth = async () => {
-      const { gdriveWebService } = await import('../api/gdriveWebService');
-      const token = gdriveWebService.getAccessToken();
-      if (!token || token === 'mock_local_token_123') return; // 로컬 개발 모드 제외
+    let unsubProfile: (() => void) | null = null;
 
-      const profile = await fetchUserProfile(token);
-      if (profile && profile.id) {
-        setGoogleUserId(profile.id);
-        subscribeToVerseData(profile.id);
-        console.log('[BibleProvider] ✅ Firestore 연결됨. 사용자 ID:', profile.id);
+    const unsubAuth = auth.onAuthStateChanged((user) => {
+      if (user) {
+        setGoogleUserId(user.uid);
+        subscribeToVerseData(user.uid);
+        console.log('[BibleProvider] ✅ Firebase Auth 연결됨. 사용자 ID:', user.uid);
+
+        // 관리자가 허용한 특별 번역본 실시간 감지
+        if (unsubProfile) unsubProfile();
+        unsubProfile = subscribeUserProfile(user.uid, (profile) => {
+          if (profile && profile.allowedVersions) {
+            checkAndHydrateAllowedVersions(profile.allowedVersions);
+          }
+        });
       } else {
-        console.warn('[BibleProvider] ⚠️ 구글 프로필 권한 누락으로 인한 강제 재로그인 요청');
-        localStorage.removeItem('gdrive_token');
-        localStorage.removeItem('gdrive_token_expires_at');
-        alert('앱의 클라우드 저장 기능 권한이 업데이트되었습니다. 원활한 저장을 위해 다시 한 번 [구글 계정으로 시작하기]를 눌러 로그인해 주세요.');
-        window.location.reload();
+        setGoogleUserId(null);
+        if (unsubscribeVerseDataRef.current) {
+          unsubscribeVerseDataRef.current();
+          unsubscribeVerseDataRef.current = null;
+        }
+        if (unsubProfile) {
+          unsubProfile();
+          unsubProfile = null;
+        }
       }
-    };
-
-    window.addEventListener('gdrive_authenticated', handleAuth);
-    // 이미 로그인된 경우 토큰이 존재하면 즉시 실행
-    handleAuth();
+    });
 
     return () => {
-      window.removeEventListener('gdrive_authenticated', handleAuth);
+      unsubAuth();
+      if (unsubProfile) unsubProfile();
       if (unsubscribeVerseDataRef.current) {
         unsubscribeVerseDataRef.current();
       }
@@ -150,21 +206,54 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       } catch (e) { console.error("DB Load failed", e); }
 
-      let krvEntry = loaded.find(v => v.name === '개역개정' || v.id === 'built-in-krv');
-      if (!krvEntry) {
-        krvEntry = { ...DEFAULT_KRV };
-        loaded.unshift(krvEntry);
+      // 0) 개역개정 빌트인 제거 (저작권 분쟁 방지: 사용자가 직접 파일 업로드할 때만 사용)
+      loaded = loaded.filter(v => v.id !== 'built-in-krv');
+      try {
+        bibleDB.deleteVersion('built-in-krv').catch(() => {});
+      } catch (e) {}
+
+      // 1) 개역한글 (저작권 만료 퍼블릭 도메인) 빌트인 보장
+      let korEntry = loaded.find(v => v.name === '개역한글' || v.id === 'built-in-kor-revised');
+      if (!korEntry) {
+        korEntry = { ...DEFAULT_KOR };
+        loaded.unshift(korEntry);
       } else {
-        loaded = [krvEntry, ...loaded.filter(v => v.id !== krvEntry!.id)];
+        korEntry.isSystem = true;
+        korEntry.isBuiltIn = true;
+        korEntry.id = 'built-in-kor-revised';
+        loaded = [korEntry, ...loaded.filter(v => v.id !== korEntry!.id)];
       }
-      krvEntry.isSystem = true;
-      krvEntry.isBuiltIn = true;
-      krvEntry.id = 'built-in-krv';
+
+      // 2) NRSV (무료 표준 영어 성경) 빌트인 보장
+      let engEntry = loaded.find(v => v.name === 'NRSV' || v.name === 'NRSV (영어)' || v.id === 'built-in-eng-nrsv');
+      if (!engEntry) {
+        engEntry = { ...DEFAULT_ENG };
+        loaded.splice(1, 0, engEntry);
+      } else {
+        engEntry.name = 'NRSV'; // 기존 캐시의 (영어) 접미사 자동 제거
+        engEntry.isSystem = true;
+        engEntry.isBuiltIn = true;
+        engEntry.id = 'built-in-eng-nrsv';
+        // 구버전 캐시 감지 (모든 절이 GEN으로 잘못 들어간 경우 자동 재파싱 유도)
+        if (engEntry.verses && engEntry.verses.length > 0) {
+          const hasExo = engEntry.verses.some(v => v.bookId === 'EXO');
+          if (!hasExo) {
+            console.log('[BibleProvider] 구버전 NRSV 캐시 감지 (66권 분리 누락). 66권 전체로 재파싱합니다.');
+            engEntry.verses = [];
+          }
+        }
+      }
 
       const hydratedVersions = await Promise.all(loaded.map(async (v) => {
         if (v.isBuiltIn && (!v.verses || v.verses.length === 0)) {
           try {
-            const fileName = v.name === '개역개정' ? 'krv.txt' : null;
+            let fileName: string | null = null;
+            if (v.name === '개역한글') {
+              fileName = 'korean_revised.txt';
+            } else if (v.name === 'NRSV' || v.name === 'NRSV (영어)' || v.id === 'built-in-eng-nrsv') {
+              fileName = 'nrsv.txt';
+            }
+
             if (fileName) {
               const response = await fetch(`/data/${fileName}`);
               if (response.ok) {
@@ -176,6 +265,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   content = new TextDecoder('euc-kr').decode(buffer);
                 }
                 const fullVersion = await BibleParser.parseTxt(v.name, content);
+                // IndexedDB에 최신 파싱 데이터 저장
+                await bibleDB.saveVersion({ ...v, verses: fullVersion.verses });
                 return { ...v, verses: fullVersion.verses };
               }
             }
@@ -210,7 +301,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       setVersions(hydratedVersions);
-      setSelectedVersionIds(['built-in-krv']);
+      // 앱을 열 때마다 개역한글과 NRSV를 기본으로 표시
+      setSelectedVersionIds(['built-in-kor-revised', 'built-in-eng-nrsv']);
       setIsInitialized(true); // ✅ 초기 1회성 비동기 로딩 완료 선언
 
       // ✅ 2. 구글 드라이브(appDataFolder) 백그라운드 동기화 로직

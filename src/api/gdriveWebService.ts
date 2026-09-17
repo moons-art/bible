@@ -482,21 +482,44 @@ export const gdriveWebService = {
   // 진행 중인 폴더 생성/조회 Promise 캐시 (동시성 중복 폴더 생성 완벽 방지)
   _inFlightFolderPromises: new Map<string, Promise<string>>(),
 
-  // 이름 및 부모 폴더 ID로 폴더를 조회하여 ID 반환 (없으면 null 반환)
-  getFolderId: async (folderName: string, parentFolderId?: string): Promise<string | null> => {
+  // 이름 목록(동의어/한영 병기) 및 부모 폴더 ID로 폴더를 조회하여 ID 반환 (없으면 null 반환)
+  getFolderId: async (folderNames: string | string[], parentFolderId?: string): Promise<string | null> => {
     if (!accessToken) return null;
-    const cacheKey = `${parentFolderId || 'root'}_${folderName}`;
-    if (gdriveWebService._folderIdCache.has(cacheKey)) {
-      return gdriveWebService._folderIdCache.get(cacheKey)!;
+    const names = Array.isArray(folderNames) ? folderNames : [folderNames];
+    const primaryName = names[0];
+    const cacheKey = `gdrive_folder_${parentFolderId || 'root'}_${primaryName}`;
+
+    // 1. LocalStorage 및 인메모리 캐시 확인 및 실시간 Direct Get 검증
+    const cachedId = gdriveWebService._folderIdCache.get(cacheKey) || localStorage.getItem(cacheKey);
+    if (cachedId) {
+      try {
+        const verifyRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${cachedId}?fields=id,name,trashed`, {
+          headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        if (verifyRes.ok) {
+          const fileData = await verifyRes.json();
+          if (fileData && !fileData.trashed) {
+            gdriveWebService._folderIdCache.set(cacheKey, cachedId);
+            localStorage.setItem(cacheKey, cachedId);
+            return cachedId;
+          }
+        }
+      } catch (e) {
+        // 캐시된 ID가 무효한 경우 캐시 정리
+        localStorage.removeItem(cacheKey);
+        gdriveWebService._folderIdCache.delete(cacheKey);
+      }
     }
 
     try {
-      let queryStr = `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+      // 2. 한글명 및 영문명 OR 조건 검색 (중복 생성 방지)
+      const nameQueries = names.map(n => `name='${n}'`).join(' or ');
+      let queryStr = `(${nameQueries}) and mimeType='application/vnd.google-apps.folder' and trashed=false`;
       if (parentFolderId) {
         queryStr += ` and '${parentFolderId}' in parents`;
       }
       const q = encodeURIComponent(queryStr);
-      // orderBy=createdTime: 중복 폴더가 존재하더라도 가장 먼저 생성된 원본 폴더를 일관되게 선택
+      // orderBy=createdTime: 이미 중복 폴더가 존재하더라도 가장 먼저 생성된 원본 폴더를 일관되게 선택
       const res = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,createdTime)&orderBy=createdTime`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
@@ -506,19 +529,23 @@ export const gdriveWebService = {
       if (files && files.length > 0) {
         const id = files[0].id;
         gdriveWebService._folderIdCache.set(cacheKey, id);
+        localStorage.setItem(cacheKey, id);
         return id;
       }
       return null;
     } catch (err) {
-      console.error(`[gdriveWebService] getFolderId failed for ${folderName}`, err);
+      console.error(`[gdriveWebService] getFolderId failed for ${primaryName}`, err);
       return null;
     }
   },
 
   // 이름과 부모 폴더로 폴더를 찾고, 없으면 생성 후 ID 반환 (동시 호출 시 동일 Promise 공유)
-  getOrCreateFolder: async (folderName: string, parentFolderId?: string): Promise<string> => {
+  getOrCreateFolder: async (folderNames: string | string[], parentFolderId?: string): Promise<string> => {
     if (!accessToken) throw new Error('Not authenticated');
-    const cacheKey = `${parentFolderId || 'root'}_${folderName}`;
+    const names = Array.isArray(folderNames) ? folderNames : [folderNames];
+    const primaryName = names[0];
+    const cacheKey = `gdrive_folder_${parentFolderId || 'root'}_${primaryName}`;
+
     if (gdriveWebService._folderIdCache.has(cacheKey)) {
       return gdriveWebService._folderIdCache.get(cacheKey)!;
     }
@@ -529,16 +556,17 @@ export const gdriveWebService = {
     }
 
     const task = (async () => {
-      // 1. 기존 폴더 검색
-      const existingId = await gdriveWebService.getFolderId(folderName, parentFolderId);
+      // 1. 기존 폴더 검색 (한영 동의어 검색 포함)
+      const existingId = await gdriveWebService.getFolderId(names, parentFolderId);
       if (existingId) {
         gdriveWebService._folderIdCache.set(cacheKey, existingId);
+        localStorage.setItem(cacheKey, existingId);
         return existingId;
       }
       
-      // 2. 없으면 새로 생성
+      // 2. 없을 때만 단 1회 새로 생성
       const metadata: any = {
-        name: folderName,
+        name: primaryName,
         mimeType: 'application/vnd.google-apps.folder',
       };
       if (parentFolderId) {
@@ -554,10 +582,11 @@ export const gdriveWebService = {
         body: JSON.stringify(metadata)
       });
       
-      if (!createRes.ok) throw new Error(`Failed to create folder ${folderName}`);
+      if (!createRes.ok) throw new Error(`Failed to create folder ${primaryName}`);
       const createdFolder = await createRes.json();
       const newId = createdFolder.id;
       gdriveWebService._folderIdCache.set(cacheKey, newId);
+      localStorage.setItem(cacheKey, newId);
       return newId;
     })();
 
@@ -569,26 +598,32 @@ export const gdriveWebService = {
     }
   },
 
-  // 1. 최상위 마스터 폴더 'Nations Solution'
+  // 1. 최상위 마스터 폴더 '네이션스 솔루션' (Nations Solution과 상호 호환)
   getNationsRootFolderId: async (): Promise<string> => {
-    return gdriveWebService.getOrCreateFolder('Nations Solution');
+    return gdriveWebService.getOrCreateFolder(['네이션스 솔루션', 'Nations Solution']);
   },
 
-  // 2. 앱별 독립 폴더 (Nations Bible, Nations Studio, Nations Vote 등)
-  getAppFolderId: async (appName: 'Nations Bible' | 'Nations Studio' | 'Nations Vote' | string): Promise<string> => {
+  // 2. 앱별 독립 폴더 (네이션스 바이블, 네이션스 스튜디오 등)
+  getAppFolderId: async (appName: string): Promise<string> => {
     const rootId = await gdriveWebService.getNationsRootFolderId();
+    if (appName === 'Nations Bible' || appName === '네이션스 바이블') {
+      return gdriveWebService.getOrCreateFolder(['네이션스 바이블', 'Nations Bible'], rootId);
+    }
+    if (appName === 'Nations Studio' || appName === '네이션스 스튜디오') {
+      return gdriveWebService.getOrCreateFolder(['네이션스 스튜디오', 'Nations Studio'], rootId);
+    }
     return gdriveWebService.getOrCreateFolder(appName, rootId);
   },
 
-  // 3. 기본 폴더 구조 일괄 확인 및 사전 자동 생성 (Nations Solution > Nations Bible)
+  // 3. 기본 폴더 구조 일괄 확인 및 사전 자동 생성 (네이션스 솔루션 > 네이션스 바이블)
   ensureNationsFolders: async (): Promise<void> => {
     if (!accessToken || accessToken === 'offline_token') return;
     try {
-      // 1. 최상위 마스터 폴더 'Nations Solution'
+      // 1. 최상위 마스터 폴더 '네이션스 솔루션' (없으면 생성, 있으면 재사용)
       const rootId = await gdriveWebService.getNationsRootFolderId();
-      // 2. 하위 성경 폴더 'Nations Bible'
-      await gdriveWebService.getAppFolderId('Nations Bible');
-      console.log('[gdriveWebService] Nations Solution > Nations Bible folder hierarchy verified/created.');
+      // 2. 하위 바이블 폴더 '네이션스 바이블' (없으면 생성, 있으면 재사용)
+      await gdriveWebService.getAppFolderId('네이션스 바이블');
+      console.log('[gdriveWebService] 네이션스 솔루션 > 네이션스 바이블 폴더 계층이 단회 검증/연결되었습니다.');
     } catch (e) {
       console.warn('[gdriveWebService] Error ensuring Nations folders:', e);
     }

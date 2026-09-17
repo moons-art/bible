@@ -76,7 +76,14 @@ export class BibleParser {
               bookName = bookName.slice(0, -1);
             }
 
-            const bookId = BIBLE_BOOKS[bookName] || BIBLE_BOOKS[bookName.charAt(0).toUpperCase() + bookName.slice(1).toLowerCase()] || BIBLE_BOOKS[bookName.toUpperCase()];
+            let bookId = BIBLE_BOOKS[bookName] || 
+                         BIBLE_BOOKS[bookName.charAt(0).toUpperCase() + bookName.slice(1).toLowerCase()] || 
+                         BIBLE_BOOKS[bookName.toUpperCase()];
+            if (!bookId) {
+              const lower = bookName.toLowerCase();
+              const foundKey = Object.keys(BIBLE_BOOKS).find(k => k.toLowerCase() === lower);
+              if (foundKey) bookId = BIBLE_BOOKS[foundKey];
+            }
             if (bookId) {
               lastBookId = bookId;
               lastBookName = bookName;
