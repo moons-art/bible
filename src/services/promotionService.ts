@@ -25,8 +25,8 @@ export interface PromotionSettings {
 
 export const DEFAULT_PROMOTION_SETTINGS: PromotionSettings = {
   enabled: true,
-  name: '신규 가입 특별 프로모션',
-  description: '지금 가입하시면 AI 연구 횟수를 보너스로 추가 충전해 드립니다.',
+  name: '가입 시 AI 연구 크레딧 10회 제공',
+  description: '특별혜택기간: 200 크래딧 제공',
   bonusCredits: 200,
 };
 
@@ -46,7 +46,8 @@ export interface ReferralRequest {
   referrerName: string;
   referrerEmail: string;
   referrerUid?: string;
-  friendEmail: string;
+  friendName?: string;
+  friendEmail?: string;
   bonusCredits: number;
   status: 'pending' | 'approved' | 'rejected';
   createdAt: number;
@@ -113,18 +114,21 @@ export async function submitReferralRequest(params: {
   referrerName: string;
   referrerEmail: string;
   referrerUid?: string;
-  friendEmail: string;
+  friendName?: string;
+  friendEmail?: string;
   bonusCredits: number;
 }): Promise<string> {
   const col = collection(db, 'referral_requests');
-  const cleanFriendEmail = params.friendEmail.trim().toLowerCase();
+  const cleanFriendName = (params.friendName || '').trim();
+  const cleanFriendEmail = (params.friendEmail || '').trim().toLowerCase();
   const cleanReferrerEmail = params.referrerEmail.trim().toLowerCase();
 
   const docRef = await addDoc(col, {
     referrerName: params.referrerName.trim(),
     referrerEmail: cleanReferrerEmail,
     referrerUid: params.referrerUid || '',
-    friendEmail: cleanFriendEmail,
+    friendName: cleanFriendName,
+    friendEmail: cleanFriendEmail || cleanFriendName,
     bonusCredits: params.bonusCredits,
     status: 'pending',
     createdAt: Date.now(),

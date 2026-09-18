@@ -90,6 +90,21 @@ export type SyncUserInput = {
   photoURL?: string | null;
 };
 
+function cleanUndefined<T extends Record<string, any>>(obj: T): T {
+  const result: any = Array.isArray(obj) ? [] : {};
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (val !== undefined) {
+      if (val !== null && typeof val === 'object' && !(val instanceof Date)) {
+        result[key] = cleanUndefined(val);
+      } else {
+        result[key] = val;
+      }
+    }
+  }
+  return result;
+}
+
 /**
  * 로그인 시 사용자 프로필 동기화 및 생성 (Firebase User 또는 GoogleProfile 공용 지원)
  */
@@ -170,7 +185,7 @@ export async function syncUserProfile(
         isNewSignUp: true,
       };
 
-      await setDoc(userRef, newProfile);
+      await setDoc(userRef, cleanUndefined(newProfile));
       
       // 클라이언트 UI 및 로컬 스토리지 즉각 동기화 (0초 반영)
       try {
@@ -241,7 +256,7 @@ export async function syncUserProfile(
       if (extraStats?.noteCount !== undefined) updated.noteCount = extraStats.noteCount;
       if (extraStats?.sermonCount !== undefined) updated.sermonCount = extraStats.sermonCount;
 
-      await updateDoc(userRef, updated);
+      await updateDoc(userRef, cleanUndefined(updated));
       const finalProfile = { ...existing, ...updated } as UserProfile;
 
       // 클라이언트 UI 및 로컬 스토리지 즉각 동기화 (0초 반영)

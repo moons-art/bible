@@ -204,7 +204,7 @@ const MainApp: React.FC = () => {
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showAdminDashboardModal, setShowAdminDashboardModal] = useState(false);
-  const [promoSettings, setPromoSettings] = useState<{ enabled: boolean; bonusCredits: number; name: string } | null>(null);
+  const [promoSettings, setPromoSettings] = useState<{ enabled: boolean; bonusCredits: number; name: string; description?: string } | null>(null);
   const [welcomeModalInfo, setWelcomeModalInfo] = useState<{
     isOpen: boolean;
     bonusCredits: number;
@@ -1017,10 +1017,10 @@ const MainApp: React.FC = () => {
                       <div className="text-[11px] leading-snug space-y-1">
                         <div className="flex items-center gap-1.5 text-[#4A4741]">
                           <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#C46A40] shrink-0" />
-                          <span>가입 시 AI 연구 크레딧 <strong>10회</strong> 제공</span>
+                          <span>{promoSettings?.enabled && promoSettings.name ? promoSettings.name : '가입 시 AI 연구 크레딧 10회 제공'}</span>
                         </div>
                         <div className="text-[11px] font-bold text-[#C46A40] pl-5">
-                          현재 특별혜택으로 가입시 {promoSettings?.enabled && promoSettings.bonusCredits > 0 ? promoSettings.bonusCredits : 200} 크래딧 제공
+                          {promoSettings?.enabled && promoSettings.description ? promoSettings.description : '특별혜택기간: 200 크래딧 제공'}
                         </div>
                       </div>
                       <div className="mt-1.5 pt-1.5 border-t border-[#F1D3C6]/60 flex items-center justify-between text-[10px] text-[#C46A40]">

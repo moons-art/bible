@@ -92,11 +92,16 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   }, [initialTab]);
 
   // 외부 요청에 따른 충전 모달 오픈
+  // 외부 요청에 따른 충전 모달 오픈 (로그인 상태일 때만)
   useEffect(() => {
     if (openRechargeTrigger && openRechargeTrigger > 0) {
+      if (!isLoggedIn) {
+        if (onOpenAuthModal) onOpenAuthModal();
+        return;
+      }
       setShowRechargeModal(true);
     }
-  }, [openRechargeTrigger]);
+  }, [openRechargeTrigger, isLoggedIn, onOpenAuthModal]);
 
   // 신규 가입 프로모션 상태
   const [promoSettings, setPromoSettings] = useState<{ enabled: boolean; bonusCredits: number; name: string; description?: string } | null>(null);
@@ -109,7 +114,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   const [referralBonusCount, setReferralBonusCount] = useState<number>(50);
   const [isReferralFormOpen, setIsReferralFormOpen] = useState(false);
   const [referrerNameInput, setReferrerNameInput] = useState('');
-  const [friendEmailInput, setFriendEmailInput] = useState('');
+  const [friendNameInput, setFriendNameInput] = useState('');
   const [isSubmittingReferral, setIsSubmittingReferral] = useState(false);
   const [referralFeedback, setReferralFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -125,28 +130,29 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
     }
   }, [showRechargeModal]);
 
-  // 추천 신청 제출 핸들러
+  // 추천 신청 제출 핸들러 (성명 기반)
   const handleSubmitReferral = async (e: React.FormEvent) => {
     e.preventDefault();
     setReferralFeedback(null);
 
     const cleanName = referrerNameInput.trim();
-    const cleanFriend = friendEmailInput.trim().toLowerCase();
+    const cleanFriend = friendNameInput.trim();
 
     if (!cleanName) {
-      setReferralFeedback({ type: 'error', message: '추천인 본인의 성명을 입력해주세요.' });
+      setReferralFeedback({ type: 'error', message: '추천인(나)의 성명(가입한 본명)을 입력해주세요.' });
       return;
     }
-    if (!cleanFriend || !cleanFriend.includes('@')) {
-      setReferralFeedback({ type: 'error', message: '올바른 친구 가입자의 이메일을 입력해주세요.' });
+    if (!cleanFriend) {
+      setReferralFeedback({ type: 'error', message: '친구(상대방) 가입자의 성명(가입한 본명)을 입력해주세요.' });
+      return;
+    }
+
+    if (cleanName.toLowerCase() === cleanFriend.toLowerCase()) {
+      setReferralFeedback({ type: 'error', message: '본인 성명은 추천 대상으로 입력할 수 없습니다.' });
       return;
     }
 
     const myEmail = (auth.currentUser?.email || '').trim().toLowerCase();
-    if (myEmail && myEmail === cleanFriend) {
-      setReferralFeedback({ type: 'error', message: '본인 이메일은 추천 대상으로 입력할 수 없습니다.' });
-      return;
-    }
 
     setIsSubmittingReferral(true);
     try {
@@ -154,6 +160,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
         referrerName: cleanName,
         referrerEmail: myEmail || cleanName,
         referrerUid: auth.currentUser?.uid,
+        friendName: cleanFriend,
         friendEmail: cleanFriend,
         bonusCredits: referralBonusCount
       });
@@ -161,7 +168,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
         type: 'success',
         message: `추천 신청이 정상 접수되었습니다! 관리자 확인 후 AI ${referralBonusCount}회가 충전됩니다.`
       });
-      setFriendEmailInput('');
+      setFriendNameInput('');
     } catch (err: any) {
       console.error('Failed to submit referral:', err);
       setReferralFeedback({ type: 'error', message: '신청 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.' });
@@ -211,6 +218,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
 
     // 2. 잔여 크레딧 확인
     if (!isAvailable) {
+      if (!isLoggedIn) return;
       setShowRechargeModal(true);
       return;
     }
@@ -899,7 +907,20 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
               )}
             </div>
 
-            {historyList.length === 0 ? (
+            {!isLoggedIn ? (
+              <div className="py-12 text-center text-[#8C877D] space-y-2">
+                <History className="w-8 h-8 mx-auto text-[#A39E94] stroke-[1.5]" />
+                <p className="text-xs font-semibold text-[#2C2B29]">로그인 후 주석 기록을 확인하실 수 있습니다.</p>
+                <p className="text-[11px] text-[#9E9991]">로그인하시면 분석했던 주석 기록이 30일간 안전하게 보관됩니다.</p>
+                <button
+                  type="button"
+                  onClick={() => onOpenAuthModal ? onOpenAuthModal() : undefined}
+                  className="mt-2 px-4 py-2 bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-bold rounded-xl cursor-pointer shadow-xs transition-colors"
+                >
+                  로그인하기
+                </button>
+              </div>
+            ) : historyList.length === 0 ? (
               <div className="py-12 text-center text-[#8C877D] space-y-2">
                 <History className="w-8 h-8 mx-auto text-[#A39E94] stroke-[1.5]" />
                 <p className="text-xs">최근 30일간 분석하여 저장된 주석이 없습니다.</p>
@@ -987,7 +1008,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
 
                 {/* 로그인 / 이용하기 메인 버튼 */}
                 <button
-                  onClick={() => onOpenAuthModal ? onOpenAuthModal() : setShowRechargeModal(true)}
+                  onClick={() => onOpenAuthModal ? onOpenAuthModal() : undefined}
                   className="w-full py-3 px-4 rounded-xl bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold text-xs shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <LogIn className="w-4 h-4" />
@@ -1002,10 +1023,10 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   <div className="text-xs leading-relaxed space-y-1">
                     <div className="flex items-center gap-1.5 text-[#5A564F]">
                       <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#C46A40] shrink-0" />
-                      <span>가입 시 AI 연구 크래딧 <strong>매월 10회</strong> 제공</span>
+                      <span>{promoSettings?.enabled && promoSettings.name ? promoSettings.name : '가입 시 AI 연구 크래딧 매월 10회 제공'}</span>
                     </div>
                     <div className="text-xs font-bold text-[#C46A40] pl-5">
-                      현재 특별혜택으로 가입시 {promoSettings?.enabled && promoSettings.bonusCredits > 0 ? promoSettings.bonusCredits : 200} 크래딧 제공
+                      {promoSettings?.enabled && promoSettings.description ? promoSettings.description : '특별혜택기간: 200 크래딧 제공'}
                     </div>
                   </div>
 
@@ -1957,10 +1978,10 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   )}
 
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-[#5A564F]">추천인(나)의 성명</label>
+                    <label className="block text-[11px] font-semibold text-[#5A564F]">추천인(나)의 성명: 가입한 본명</label>
                     <input
                       type="text"
-                      placeholder="추천인(나)의 성명 입력"
+                      placeholder="본인 본명 입력"
                       value={referrerNameInput}
                       onChange={(e) => setReferrerNameInput(e.target.value)}
                       className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-1 focus:ring-[#C46A40]"
@@ -1969,12 +1990,12 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-[#5A564F]">친구(상대방)가입자 이메일</label>
+                    <label className="block text-[11px] font-semibold text-[#5A564F]">친구(상대방)가입자 성명: 가입한 본명</label>
                     <input
-                      type="email"
-                      placeholder="친구(상대방)가입자 이메일 (예: friend@gmail.com)"
-                      value={friendEmailInput}
-                      onChange={(e) => setFriendEmailInput(e.target.value)}
+                      type="text"
+                      placeholder="친구 본명 입력"
+                      value={friendNameInput}
+                      onChange={(e) => setFriendNameInput(e.target.value)}
                       className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-1 focus:ring-[#C46A40]"
                       required
                     />

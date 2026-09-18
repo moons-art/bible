@@ -25,7 +25,7 @@ export function getCommentaryHistory(): CommentaryHistoryItem[] {
     const items: CommentaryHistoryItem[] = JSON.parse(raw);
     const now = Date.now();
 
-    // 10일 이내의 유효한 기록만 필터링 (10일 경과 항목 자동 폐기)
+    // 30일 이내의 유효한 기록만 필터링 (30일 경과 항목 자동 폐기)
     const validItems = items.filter(item => item.expiresAt > now);
 
     // 만료된 항목이 제거된 경우 스토리지 즉시 동기화

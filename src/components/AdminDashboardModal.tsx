@@ -3,8 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, ShieldCheck, Users, Sparkles, RefreshCw, Search, 
   BookOpen, Clock, Laptop, Check, AlertCircle, Award, 
-  Activity, Trash2, FileText, Database, Gift, Tag, UserPlus, CheckCircle2
+  Activity, Trash2, FileText, Database, Gift, Tag, UserPlus, CheckCircle2,
+  KeyRound
 } from 'lucide-react';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { doc, deleteDoc } from 'firebase/firestore';
 import { 
   ADMIN_EMAIL, 
   isAdminUser, 
@@ -32,7 +35,7 @@ import {
   DEFAULT_PROMOTION_SETTINGS,
   DEFAULT_REFERRAL_SETTINGS
 } from '../services/promotionService';
-import { auth } from '../api/firebaseConfig';
+import { auth, db } from '../api/firebaseConfig';
 
 interface AdminDashboardModalProps {
   isOpen: boolean;
@@ -68,6 +71,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [referralRequests, setReferralRequests] = useState<ReferralRequest[]>([]);
   const [isSavingPromo, setIsSavingPromo] = useState(false);
   const [isSavingReferral, setIsSavingReferral] = useState(false);
+  const [customReferralInput, setCustomReferralInput] = useState<string>('');
   const [manualReferrerEmail, setManualReferrerEmail] = useState('');
   const [manualFriendEmail, setManualFriendEmail] = useState('');
   const [manualBonusCount, setManualBonusCount] = useState<number>(50);
@@ -168,6 +172,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
   // 2. 추천인 혜택 설정 저장
   const handleSaveReferral = async (credits: number) => {
+    if (credits <= 0) {
+      alert('지급 횟수는 1회 이상이어야 합니다.');
+      return;
+    }
     setIsSavingReferral(true);
     try {
       await saveReferralSettings({ bonusCredits: credits });
@@ -183,7 +191,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
   // 3. 추천 신청 승인 및 즉시 혜택 지급
   const handleApproveReferral = async (req: ReferralRequest) => {
-    if (!confirm(`${req.referrerName} (${req.referrerEmail}) 회원에게 친구(${req.friendEmail}) 추천 보너스 ${req.bonusCredits}회를 지급하시겠습니까?`)) {
+    const friendDisplayName = req.friendName || req.friendEmail;
+    if (!confirm(`${req.referrerName} (${req.referrerEmail}) 회원에게 친구(${friendDisplayName}) 추천 보너스 ${req.bonusCredits}회를 지급하시겠습니까?`)) {
       return;
     }
     setActionLoadingUid(req.id);
@@ -220,6 +229,60 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     } catch (err) {
       console.error('Failed to delete referral request:', err);
       alert('삭제 중 오류가 발생했습니다.');
+    }
+  };
+
+  // 5. 회원 계정 영구 삭제 핸들러
+  const handleDeleteUser = async (user: UserProfile) => {
+    const userName = user.displayName || user.email || '회원';
+    if (!confirm(`[주의] 정말 "${userName}" (${user.email || user.uid}) 회원의 데이터를 삭제하시겠습니까?\n\n이 작업은 Firestore 데이터베이스에서 해당 회원의 프로필 및 크레딧 데이터를 영구 삭제합니다.`)) {
+      return;
+    }
+    // 이중 확인
+    const check = prompt(`정말 삭제하시려면 삭제할 회원의 이름 또는 이메일 ("${userName}")을 입력해주세요:`);
+    if (!check || (check.trim() !== userName.trim() && check.trim() !== (user.email || '').trim())) {
+      alert('입력값이 일치하지 않아 회원 삭제가 취소되었습니다.');
+      return;
+    }
+
+    setActionLoadingUid(`delete_${user.uid}`);
+    try {
+      await deleteDoc(doc(db, 'users', user.uid));
+      setUsers(prev => prev.filter(u => u.uid !== user.uid));
+      showToast(`"${userName}" 회원의 데이터가 영구 삭제되었습니다.`);
+    } catch (err: any) {
+      console.error('Failed to delete user:', err);
+      alert('회원 삭제 중 오류가 발생했습니다: ' + (err?.message || '권한 오류'));
+    } finally {
+      setActionLoadingUid(null);
+    }
+  };
+
+  // 6. 특정 회원의 비밀번호 초기화 메일 발송
+  const handleResetPassword = async (user: UserProfile) => {
+    if (!user.email) {
+      alert('해당 회원은 이메일 주소가 등록되어 있지 않아 비밀번호 재설정 메일을 보낼 수 없습니다.');
+      return;
+    }
+    const userName = user.displayName || user.email;
+    if (!confirm(`"${userName}" (${user.email}) 회원에게 비밀번호 재설정 이메일을 발송하시겠습니까?\n\n회원이 이메일에 포함된 공식 링크를 클릭하면 새 비밀번호를 직접 설정하고 즉시 로그인할 수 있습니다.`)) {
+      return;
+    }
+
+    setActionLoadingUid(`reset_${user.uid}`);
+    try {
+      await sendPasswordResetEmail(auth, user.email);
+      showToast(`비밀번호 재설정 이메일 발송 완료! (${user.email})`);
+    } catch (err: any) {
+      console.error('Failed to send password reset email:', err);
+      const code = err?.code || '';
+      if (code === 'auth/user-not-found') {
+        alert('Firebase 인증 시스템에 등록되지 않은 이메일이거나 구글 간편로그인 전용 계정입니다.');
+      } else {
+        alert('비밀번호 재설정 메일 발송 실패: ' + (err?.message || code));
+      }
+    } finally {
+      setActionLoadingUid(null);
     }
   };
 
@@ -466,8 +529,54 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
           </div>
         )}
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col gap-5 custom-scrollbar">
+        {/* 대시보드 메인 탭 네비게이션 (헤더 아래 상단 고정 배치: 스크롤 시 겹침 및 가려짐 완벽 해결) */}
+        {isAuthorized && (
+          <div className="px-4 sm:px-6 py-2.5 bg-[#FAF9F5] border-b border-[#E7E5DF] flex items-center gap-2 overflow-x-auto custom-scrollbar shrink-0">
+            <button
+              onClick={() => setActiveTab('users')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                activeTab === 'users'
+                  ? 'bg-[#C46A40] text-white shadow-xs'
+                  : 'bg-white text-[#6E6A63] border border-[#DDD8CE] hover:bg-[#F5F3ED]'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span>회원 관리 및 AI 크레딧 ({totalUsers}명)</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('promotions')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                activeTab === 'promotions'
+                  ? 'bg-[#C46A40] text-white shadow-xs'
+                  : 'bg-white text-[#6E6A63] border border-[#DDD8CE] hover:bg-[#F5F3ED]'
+              }`}
+            >
+              <Gift className="w-4 h-4" />
+              <span>프로모션 & 추천인 관리</span>
+              {referralRequests.filter(r => r.status === 'pending').length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                  {referralRequests.filter(r => r.status === 'pending').length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('logs')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                activeTab === 'logs'
+                  ? 'bg-[#C46A40] text-white shadow-xs'
+                  : 'bg-white text-[#6E6A63] border border-[#DDD8CE] hover:bg-[#F5F3ED]'
+              }`}
+            >
+              <Activity className="w-4 h-4" />
+              <span>실시간 접속 및 활동 로그 ({totalLogsCount}건)</span>
+            </button>
+          </div>
+        )}
+
+        {/* Body (본문 스크롤 영역) */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col gap-5 custom-scrollbar min-h-0">
           {!isAuthorized ? (
             <div className="p-12 text-center flex flex-col items-center justify-center">
               <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mb-3">
@@ -533,50 +642,6 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 </div>
               </div>
 
-              {/* 2. 대시보드 메인 탭 네비게이션 */}
-              <div className="flex items-center gap-2 border-b border-[#E7E5DF] pb-2 overflow-x-auto custom-scrollbar">
-                <button
-                  onClick={() => setActiveTab('users')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
-                    activeTab === 'users'
-                      ? 'bg-[#C46A40] text-white shadow-xs'
-                      : 'bg-white text-[#6E6A63] border border-[#DDD8CE] hover:bg-[#F5F3ED]'
-                  }`}
-                >
-                  <Users className="w-4 h-4" />
-                  <span>회원 관리 및 AI 크레딧 ({totalUsers}명)</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('promotions')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
-                    activeTab === 'promotions'
-                      ? 'bg-[#C46A40] text-white shadow-xs'
-                      : 'bg-white text-[#6E6A63] border border-[#DDD8CE] hover:bg-[#F5F3ED]'
-                  }`}
-                >
-                  <Gift className="w-4 h-4" />
-                  <span>프로모션 & 추천인 관리</span>
-                  {referralRequests.filter(r => r.status === 'pending').length > 0 && (
-                    <span className="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-bold">
-                      {referralRequests.filter(r => r.status === 'pending').length}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('logs')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
-                    activeTab === 'logs'
-                      ? 'bg-[#C46A40] text-white shadow-xs'
-                      : 'bg-white text-[#6E6A63] border border-[#DDD8CE] hover:bg-[#F5F3ED]'
-                  }`}
-                >
-                  <Activity className="w-4 h-4" />
-                  <span>실시간 접속 및 활동 로그 ({totalLogsCount}건)</span>
-                </button>
-              </div>
-
               {/* ── [탭 1] 회원 관리 화면 ────────────────────────────────────────── */}
               {activeTab === 'users' && (
                 <div className="flex flex-col gap-4">
@@ -629,17 +694,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         <thead>
                           <tr className="bg-[#F7F5F0] border-b border-[#E7E5DF] text-[#6E6A63]">
                             <th className="py-3 px-4 font-bold">회원 정보</th>
-                            <th className="py-3 px-4 font-bold">최근 접속 & 활동 통계</th>
-                            <th className="py-3 px-3 font-bold text-center">작성 자료 (주석/설교)</th>
+                            <th className="py-3 px-4 font-bold">최근 접속 & 활동</th>
+                            <th className="py-3 px-3 font-bold text-center">작성 자료</th>
                             <th className="py-3 px-4 font-bold text-center">AI 잔여 횟수</th>
                             <th className="py-3 px-4 font-bold text-center">보너스 충전</th>
-                            <th className="py-3 px-4 font-bold text-center">특별 번역본 (개역개정 / NIV)</th>
+                            <th className="py-3 px-4 font-bold text-center">특별 번역본</th>
+                            <th className="py-3 px-3 font-bold text-center">계정 관리</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#EFECE6]">
                           {filteredUsers.length === 0 ? (
                             <tr>
-                              <td colSpan={6} className="py-12 text-center">
+                              <td colSpan={7} className="py-12 text-center">
                                 {fetchError ? (
                                   <div className="flex flex-col items-center gap-2 text-red-500">
                                     <AlertCircle className="w-8 h-8" />
@@ -741,22 +807,30 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                     </div>
                                   </td>
 
-                                  {/* 보너스 충전 (50회/100회/직접입력) */}
-                                  <td className="py-3 px-4 text-center">
-                                    <div className="flex items-center justify-center gap-1.5">
+                                  {/* 보너스 충전 (10회/50회/100회/직접입력) */}
+                                  <td className="py-3 px-3 text-center">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <button
+                                        onClick={() => handleAddCredits(user, 10)}
+                                        disabled={isBusy}
+                                        className="px-2 py-1 bg-white hover:bg-[#FAF0EB] active:bg-[#F5E2DA] border border-[#DDD8CE] hover:border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                                        title="10회 보너스 충전"
+                                      >
+                                        +10회
+                                      </button>
                                       <button
                                         onClick={() => handleAddCredits(user, 50)}
                                         disabled={isBusy}
-                                        className="px-2.5 py-1 bg-white hover:bg-[#FAF0EB] active:bg-[#F5E2DA] border border-[#DDD8CE] hover:border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                                        title="50회 충전"
+                                        className="px-2 py-1 bg-white hover:bg-[#FAF0EB] active:bg-[#F5E2DA] border border-[#DDD8CE] hover:border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                                        title="50회 보너스 충전"
                                       >
                                         +50회
                                       </button>
                                       <button
                                         onClick={() => handleAddCredits(user, 100)}
                                         disabled={isBusy}
-                                        className="px-2.5 py-1 bg-[#FAF0EB] hover:bg-[#F5E2DA] active:bg-[#EDD1C4] border border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                                        title="100회 충전"
+                                        className="px-2 py-1 bg-[#FAF0EB] hover:bg-[#F5E2DA] active:bg-[#EDD1C4] border border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                                        title="100회 보너스 충전"
                                       >
                                         +100회
                                       </button>
@@ -769,7 +843,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                           }
                                         }}
                                         disabled={isBusy}
-                                        className="p-1 hover:bg-[#F5F3ED] text-[#8C877D] hover:text-[#2C2B29] rounded-lg text-[10px] font-semibold transition-colors cursor-pointer border border-transparent hover:border-[#DDD8CE]"
+                                        className="px-2 py-1 hover:bg-[#F5F3ED] text-[#8C877D] hover:text-[#2C2B29] rounded-lg text-[10px] font-semibold transition-colors cursor-pointer border border-[#DDD8CE]"
                                         title="직접 숫자 입력 충전"
                                       >
                                         직접
@@ -778,13 +852,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                   </td>
 
                                   {/* 원격 특별 번역본 권한 부여 (개역개정 / NIV) */}
-                                  <td className="py-3 px-4 text-center">
+                                  <td className="py-3 px-3 text-center">
                                     <div className="flex items-center justify-center gap-1.5 flex-wrap">
                                       {/* 개역개정 */}
                                       <button
                                         onClick={() => handleToggleVersion(user, 'built-in-krv', '개역개정')}
                                         disabled={isBusy}
-                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all border shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
+                                        className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-all border shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
                                           isAllowedKrv 
                                             ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100' 
                                             : 'bg-[#FAF9F5] text-[#8C877D] border-[#DDD8CE] hover:bg-[#F5F3ED]'
@@ -799,7 +873,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                       <button
                                         onClick={() => handleToggleVersion(user, 'built-in-niv', 'NIV')}
                                         disabled={isBusy}
-                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all border shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
+                                        className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-all border shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
                                           isAllowedNiv 
                                             ? 'bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100' 
                                             : 'bg-[#FAF9F5] text-[#8C877D] border-[#DDD8CE] hover:bg-[#F5F3ED]'
@@ -808,6 +882,30 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                       >
                                         <BookOpen className="w-3 h-3" />
                                         <span>{isAllowedNiv ? 'NIV ✓' : 'NIV'}</span>
+                                      </button>
+                                    </div>
+                                  </td>
+
+                                  {/* 계정 관리 (비번 초기화 이메일 발송 & 회원 영구 삭제) */}
+                                  <td className="py-3 px-3 text-center">
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <button
+                                        onClick={() => handleResetPassword(user)}
+                                        disabled={isBusy || !user.email}
+                                        className="px-2 py-1 bg-white hover:bg-amber-50 border border-[#DDD8CE] hover:border-amber-300 text-[#6E6A63] hover:text-amber-800 rounded-lg text-[10px] font-semibold transition-all shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-40"
+                                        title={`${user.email} 주소로 공식 비밀번호 재설정 링크 이메일 발송`}
+                                      >
+                                        <KeyRound className="w-3 h-3 text-amber-600" />
+                                        <span>비번 초기화</span>
+                                      </button>
+
+                                      <button
+                                        onClick={() => handleDeleteUser(user)}
+                                        disabled={isBusy}
+                                        className="p-1.5 bg-white hover:bg-red-50 border border-[#DDD8CE] hover:border-red-300 text-[#8C877D] hover:text-red-600 rounded-lg transition-all shadow-2xs cursor-pointer disabled:opacity-40"
+                                        title="회원 데이터 영구 삭제"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
                                       </button>
                                     </div>
                                   </td>
@@ -959,7 +1057,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       </div>
                     </div>
 
-                    {/* 카드 2: 추천인 혜택 설정 및 관리자 수동 지급 */}
+                    {/* 카드 2: 추천인 혜택 설정 (50회, 100회, 직접 입력) */}
                     <div className="p-5 bg-white rounded-2xl border border-[#E7E5DF] shadow-2xs flex flex-col gap-4">
                       <div className="flex items-center justify-between border-b border-[#F0EBE1] pb-3">
                         <div className="flex items-center gap-2.5">
@@ -968,97 +1066,69 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           </div>
                           <div>
                             <h3 className="font-serif font-bold text-sm text-[#2C2B29]">추천인 혜택 설정</h3>
-                            <p className="text-[11px] text-[#78746D]">친구 추천 가입 시 추천인에게 지급할 AI 혜택</p>
+                            <p className="text-[11px] text-[#78746D]">친구 추천 가입 시 추천인에게 지급할 AI 크레딧 혜택</p>
                           </div>
                         </div>
                       </div>
 
-                      {/* 1인당 혜택 설정 (50회 / 100회) */}
-                      <div className="space-y-2">
+                      {/* 1인당 혜택 설정 (50회 / 100회 / 임의 기입 칸) */}
+                      <div className="space-y-3">
                         <label className="block text-[11px] font-semibold text-[#5A564F]">
-                          추천 1인당 지급 혜택 (결제창에 자동 노출)
+                          추천 1인당 지급 혜택 (결제/혜택창에 자동 노출)
                         </label>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                           {[50, 100].map(cnt => (
                             <button
                               key={cnt}
                               type="button"
                               onClick={() => handleSaveReferral(cnt)}
                               disabled={isSavingReferral}
-                              className={`py-2.5 px-3 rounded-xl font-bold text-xs transition-all border cursor-pointer flex items-center justify-center gap-1.5 ${
+                              className={`py-2 px-3 rounded-xl font-bold text-xs transition-all border cursor-pointer flex items-center justify-center gap-1.5 ${
                                 referralSettings.bonusCredits === cnt
                                   ? 'bg-purple-50 text-purple-800 border-purple-300 shadow-2xs ring-1 ring-purple-500'
                                   : 'bg-[#FAF9F5] text-[#6E6A63] border-[#DDD8CE] hover:bg-white'
                               }`}
                             >
                               <Award className="w-3.5 h-3.5 text-purple-600" />
-                              <span>{cnt}회 지급 (설정)</span>
+                              <span>{cnt}회 설정</span>
                             </button>
                           ))}
+
+                          {/* 직접 입력 칸 */}
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              placeholder="직접 입력"
+                              value={customReferralInput}
+                              onChange={(e) => setCustomReferralInput(e.target.value)}
+                              className="w-full px-2 py-1.5 bg-[#FAF9F5] border border-[#DDD8CE] rounded-xl text-xs text-center text-[#2C2B29] outline-none focus:border-purple-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const n = parseInt(customReferralInput, 10);
+                                if (isNaN(n) || n <= 0) {
+                                  alert('올바른 횟수를 입력해주세요.');
+                                  return;
+                                }
+                                handleSaveReferral(n);
+                                setCustomReferralInput('');
+                              }}
+                              disabled={isSavingReferral || !customReferralInput}
+                              className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shrink-0 cursor-pointer disabled:opacity-40 transition-all shadow-2xs"
+                            >
+                              저장
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-purple-50/70 rounded-xl border border-purple-200 text-[11px] text-purple-900 flex items-center justify-between">
+                          <span>현재 설정된 추천 보너스:</span>
+                          <strong className="text-purple-700 font-bold">
+                            친구 1명 추천 시 +{referralSettings.bonusCredits || 50}회 지급
+                          </strong>
                         </div>
                       </div>
-
-                      {/* 관리자 수동 추천 혜택 즉시 충전 */}
-                      <form onSubmit={handleManualGrantReferral} className="mt-1 pt-3 border-t border-[#F0EBE1] space-y-2.5">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-bold text-[#2C2B29] flex items-center gap-1.5">
-                            <UserPlus className="w-3.5 h-3.5 text-[#C46A40]" />
-                            <span>추천 가입자 혜택 수동 즉시 지급</span>
-                          </h4>
-                          <span className="text-[10px] text-[#8C877D]">관리자 직권 충전</span>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <div>
-                            <label className="block text-[10px] font-medium text-[#78746D] mb-0.5">추천인 이메일 (혜택 받을 사람)</label>
-                            <input
-                              type="email"
-                              placeholder="referrer@naver.com"
-                              value={manualReferrerEmail}
-                              onChange={(e) => setManualReferrerEmail(e.target.value)}
-                              className="w-full px-2.5 py-1.5 bg-[#FAF9F5] border border-[#DDD8CE] rounded-lg text-xs outline-none focus:border-[#C46A40]"
-                              required
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-medium text-[#78746D] mb-0.5">추천 가입 친구 이메일</label>
-                            <input
-                              type="email"
-                              placeholder="friend@naver.com"
-                              value={manualFriendEmail}
-                              onChange={(e) => setManualFriendEmail(e.target.value)}
-                              className="w-full px-2.5 py-1.5 bg-[#FAF9F5] border border-[#DDD8CE] rounded-lg text-xs outline-none focus:border-[#C46A40]"
-                              required
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-2 pt-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[11px] text-[#6E6A63]">지급 횟수:</span>
-                            {[50, 100].map(cnt => (
-                              <button
-                                key={cnt}
-                                type="button"
-                                onClick={() => setManualBonusCount(cnt)}
-                                className={`px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors cursor-pointer ${
-                                  manualBonusCount === cnt ? 'bg-purple-100 text-purple-800 border-purple-300' : 'bg-white text-gray-600 border-gray-200'
-                                }`}
-                              >
-                                +{cnt}회
-                              </button>
-                            ))}
-                          </div>
-
-                          <button
-                            type="submit"
-                            disabled={isManualSubmitting}
-                            className="px-4 py-1.5 bg-[#2C2B29] hover:bg-[#1A1918] text-white text-xs font-bold rounded-lg shadow-2xs transition-all cursor-pointer disabled:opacity-50"
-                          >
-                            {isManualSubmitting ? '충전 중...' : '혜택 즉시 충전'}
-                          </button>
-                        </div>
-                      </form>
                     </div>
                   </div>
 
@@ -1087,8 +1157,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         <table className="w-full text-left border-collapse text-xs">
                           <thead>
                             <tr className="bg-[#FAF9F5] border-b border-[#EAE6DE] text-[#8C877D] text-[11px]">
-                              <th className="py-2.5 px-3">추천인 (신청자)</th>
-                              <th className="py-2.5 px-3">친구 가입자 이메일</th>
+                              <th className="py-2.5 px-3">추천인 (신청자 본명/계정)</th>
+                              <th className="py-2.5 px-3">친구(상대방) 성명 / 계정</th>
                               <th className="py-2.5 px-3">친구 가입 여부</th>
                               <th className="py-2.5 px-3">혜택 횟수</th>
                               <th className="py-2.5 px-3">신청 일시</th>
@@ -1098,7 +1168,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           </thead>
                           <tbody className="divide-y divide-[#F0EBE1]">
                             {referralRequests.map(req => {
-                              const isFriendSignedUp = users.some(u => (u.email || '').toLowerCase() === req.friendEmail.toLowerCase());
+                              const isFriendSignedUp = users.some(u => {
+                                const byEmail = req.friendEmail && (u.email || '').toLowerCase() === req.friendEmail.toLowerCase();
+                                const byName = req.friendName && (u.displayName || '').trim().toLowerCase() === req.friendName.trim().toLowerCase();
+                                return byEmail || byName;
+                              });
                               const isPending = req.status === 'pending';
                               const isApproved = req.status === 'approved';
 
@@ -1109,7 +1183,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                     <div className="text-[10px] text-[#8C877D]">{req.referrerEmail}</div>
                                   </td>
                                   <td className="py-2.5 px-3 font-medium text-[#2C2B29]">
-                                    {req.friendEmail}
+                                    <div className="font-bold text-[#2C2B29]">
+                                      {req.friendName ? `${req.friendName} (친구 본명)` : req.friendEmail}
+                                    </div>
+                                    {req.friendName && req.friendEmail && (
+                                      <div className="text-[10px] text-[#8C877D]">{req.friendEmail}</div>
+                                    )}
                                   </td>
                                   <td className="py-2.5 px-3">
                                     {isFriendSignedUp ? (

@@ -1,7 +1,18 @@
-// NATIONS BIBLE AI 주석 생성 서비스 (Gemini 3.6 Flash 기반)
 import { consumeAiCredit, canUseAi } from './aiUsageService';
 import { BIBLE_LIST } from '../constants/bibleMeta';
 import { getCommentaryFromHistory, saveCommentaryToHistory } from './aiHistoryService';
+import { auth } from '../api/firebaseConfig';
+import { consumeCreditInFirestore } from './userService';
+
+// 로컬 및 파이어베이스 Firestore 동시 1회 차감 헬퍼 함수
+function deductCredit(refKey: string) {
+  consumeAiCredit(refKey);
+  if (auth.currentUser) {
+    consumeCreditInFirestore(auth.currentUser.uid, refKey).catch(err => {
+      console.warn('[geminiCommentaryService] consumeCreditInFirestore failed:', err);
+    });
+  }
+}
 
 // 원어 단어 분석 인터페이스
 export interface OriginalWordAnalysis {
@@ -316,8 +327,8 @@ export async function generateBibleAiCommentary(params: {
     // 30일간 로컬 기기 보관소에 저장
     saveCommentaryToHistory(parsedData);
 
-    // 사용 횟수 1회 차감 (새로운 구절 생성 성공 시에만)
-    consumeAiCredit(reference);
+    // 사용 횟수 1회 차감 (로컬 + Firestore DB 원자적 차감)
+    deductCredit(reference);
 
     return parsedData;
   } catch (parseErr) {
@@ -542,8 +553,8 @@ export async function generateWordDeepStudy(params: {
     // 30일간 로컬 기기 보관소에 저장
     saveWordDeepStudyToStorage(result);
 
-    // 크레딧 1회 차감 (새로운 연구 생성 성공 시에만)
-    consumeAiCredit(`${reference}_${word.strongNumber}_etymology`);
+    // 크레딧 1회 차감 (로컬 + Firestore DB 원자적 차감)
+    deductCredit(`${reference}_${word.strongNumber}_etymology`);
 
     return result;
   } catch (parseErr) {
@@ -745,8 +756,8 @@ export async function generatePassageTheologicalStudy(params: {
     // 30일간 로컬 기기 보관소에 저장
     savePassageTheologicalStudyToStorage(result);
 
-    // 크레딧 1회 차감 (새로운 구절 신학 연구 생성 시에만)
-    consumeAiCredit(key);
+    // 크레딧 1회 차감 (로컬 + Firestore DB 원자적 차감)
+    deductCredit(key);
 
     return result;
   } catch (parseErr) {

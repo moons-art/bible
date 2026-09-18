@@ -343,10 +343,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
               <form onSubmit={handleEmailAuth} className="flex flex-col gap-3">
                 {tab === 'signup' && (
                   <div>
-                    <label className="block text-[11px] font-semibold text-[#6E6A63] mb-1">이름</label>
+                    <label className="block text-[11px] font-semibold text-[#6E6A63] mb-1">
+                      이름 <span className="text-[#C46A40] font-bold">(반드시 본명)</span>
+                    </label>
                     <input
                       type="text"
-                      placeholder="홍길동"
+                      placeholder="홍길동 (본명 입력)"
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
                       className="w-full bg-white border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94]"
