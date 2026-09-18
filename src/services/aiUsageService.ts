@@ -155,3 +155,22 @@ export function resetFreeCredits(): void {
   state.monthlyFreeRemaining = MONTHLY_FREE_QUOTA;
   saveAiUsageState(state);
 }
+
+// 로그아웃 시 로컬 AI 사용량 및 기록 완전 삭제
+export function clearAiUsageState(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    window.dispatchEvent(new CustomEvent('ai-usage-updated', {
+      detail: {
+        monthKey: getCurrentMonthKey(),
+        monthlyFreeRemaining: 0,
+        paidRemaining: 0,
+        totalUsed: 0,
+        history: [],
+      }
+    }));
+  } catch (e) {
+    console.error('Failed to clear AI usage state:', e);
+  }
+}
+

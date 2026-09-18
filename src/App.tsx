@@ -204,6 +204,18 @@ const MainApp: React.FC = () => {
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showAdminDashboardModal, setShowAdminDashboardModal] = useState(false);
+  const [promoSettings, setPromoSettings] = useState<{ enabled: boolean; bonusCredits: number; name: string } | null>(null);
+  const [welcomeModalInfo, setWelcomeModalInfo] = useState<{
+    isOpen: boolean;
+    bonusCredits: number;
+    totalCredits: number;
+  } | null>(null);
+
+  React.useEffect(() => {
+    import('./services/promotionService').then(({ getPromotionSettings }) => {
+      getPromotionSettings().then(setPromoSettings).catch(() => {});
+    });
+  }, []);
 
   // Firebase Auth 통합 리스너 (구글 + 일반 이메일 간편가입 지원)
   React.useEffect(() => {
@@ -221,8 +233,29 @@ const MainApp: React.FC = () => {
         let retries = 3;
         while (retries > 0) {
           try {
-            await syncUserProfile(user);
+            const syncedProfile = await syncUserProfile(user);
             console.log('[App] ✅ syncUserProfile 성공 uid:', user.uid);
+
+            // 신규 가입자 또는 가입 보너스 수령자 환영 팝업 체크
+            if (syncedProfile) {
+              const paidBonus = syncedProfile.aiCredits?.paidRemaining || 0;
+              const seenKey = `welcome_bonus_seen_${user.uid}`;
+              const alreadySeen = localStorage.getItem(seenKey) === 'true';
+              if (paidBonus > 0 && !alreadySeen) {
+                setWelcomeModalInfo({
+                  isOpen: true,
+                  bonusCredits: paidBonus,
+                  totalCredits: (syncedProfile.aiCredits?.freeRemaining || 10) + paidBonus,
+                });
+              }
+            }
+
+            try {
+              const { logActivity } = await import('./utils/logger');
+              logActivity('로그인');
+            } catch (logErr) {
+              console.warn('[App] logActivity error:', logErr);
+            }
             break;
           } catch (e: any) {
             retries--;
@@ -255,6 +288,17 @@ const MainApp: React.FC = () => {
         const profile = await fetchUserProfile(token);
         if (profile) {
           setUserProfile(profile);
+          // Firestore users 컬렉션에도 프로필 즉각 동기화/저장
+          try {
+            await syncUserProfile({
+              uid: profile.id,
+              email: profile.email,
+              displayName: profile.name,
+              photoURL: profile.picture
+            });
+          } catch (syncErr) {
+            console.warn('[App] Google drive user profile sync non-fatal:', syncErr);
+          }
           const { logActivity } = await import('./utils/logger');
           logActivity('로그인');
         }
@@ -869,37 +913,46 @@ const MainApp: React.FC = () => {
                             {v.name}
                           </span>
                           
-                          {/* 우측 세로 삼점 (...) 버튼 */}
-                          <div 
-                            className="relative shrink-0" 
-                            onClick={(e) => e.stopPropagation()}
-                            onPointerDown={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              onClick={() => setActiveDropdownVersionId(activeDropdownVersionId === v.id ? null : v.id)}
-                              className="p-1 text-[#8C877D] hover:text-[#2B2927] hover:bg-[#DED8CE]/60 rounded-md transition-all opacity-40 group-hover:opacity-100 cursor-pointer"
-                              title="더보기 (삭제)"
+                          {/* 우측 관리 메뉴: 시스템 번역본(개역한글, NRSV)은 삭제 불가 보호 배지, 사용자 번역본만 삭제 메뉴 제공 */}
+                          {v.isSystem ? (
+                            <div 
+                              className="px-1.5 py-0.5 text-[9px] text-[#A3A19B] bg-[#F5F3ED] border border-[#EAE4DA] rounded font-medium select-none shrink-0" 
+                              title="기본 제공 번역본 (삭제 불가, 선택 해제 가능)"
                             >
-                              <MoreVertical className="w-3.5 h-3.5 stroke-[1.8px]" />
-                            </button>
+                              기본
+                            </div>
+                          ) : (
+                            <div 
+                              className="relative shrink-0" 
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                onClick={() => setActiveDropdownVersionId(activeDropdownVersionId === v.id ? null : v.id)}
+                                className="p-1 text-[#8C877D] hover:text-[#2B2927] hover:bg-[#DED8CE]/60 rounded-md transition-all opacity-40 group-hover:opacity-100 cursor-pointer"
+                                title="더보기 (삭제)"
+                              >
+                                <MoreVertical className="w-3.5 h-3.5 stroke-[1.8px]" />
+                              </button>
 
-                            {/* 삼점 클릭 시 나오는 삭제 팝오버 메뉴 */}
-                            {activeDropdownVersionId === v.id && (
-                              <div className="absolute right-0 top-6 w-24 bg-white border border-[#E5E0D8] rounded-xl shadow-lg py-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
-                                <button
-                                  onClick={() => {
-                                    setActiveDropdownVersionId(null);
-                                    if (confirm(`'${v.name}' 번역본을 목록에서 삭제하시겠습니까?`)) {
-                                      removeVersion(v.id);
-                                    }
-                                  }}
-                                  className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-[#D97757] hover:bg-[#F7EEE9] cursor-pointer font-medium"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5 stroke-[1.8px]" /> 삭제
-                                </button>
-                              </div>
-                            )}
-                          </div>
+                              {/* 삼점 클릭 시 나오는 삭제 팝오버 메뉴 */}
+                              {activeDropdownVersionId === v.id && (
+                                <div className="absolute right-0 top-6 w-24 bg-white border border-[#E5E0D8] rounded-xl shadow-lg py-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+                                  <button
+                                    onClick={() => {
+                                      setActiveDropdownVersionId(null);
+                                      if (confirm(`'${v.name}' 번역본을 목록에서 삭제하시겠습니까?`)) {
+                                        removeVersion(v.id);
+                                      }
+                                    }}
+                                    className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-[#D97757] hover:bg-[#F7EEE9] cursor-pointer font-medium"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5 stroke-[1.8px]" /> 삭제
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </Reorder.Item>
                       ))}
                     </Reorder.Group>
@@ -927,6 +980,10 @@ const MainApp: React.FC = () => {
                   {/* 2. 충전 남은횟수 (아래에 남은 일수 명시) */}
                   <button
                     onClick={() => {
+                      if (!isAuthenticated) {
+                        setShowAuthModal(true);
+                        return;
+                      }
                       setIsAiCommentaryOpen(true);
                       setAiRechargeTrigger(prev => prev + 1);
                       setIsSidebarOpen(false);
@@ -951,26 +1008,43 @@ const MainApp: React.FC = () => {
                     </div>
                   </button>
 
+                  {/* 비로그인 시 충전 남은횟수 및 유효기간 아래: 가입 혜택 안내 카드 */}
+                  {!isAuthenticated && (
+                    <div
+                      onClick={() => setShowAuthModal(true)}
+                      className="mx-0.5 my-1.5 p-2.5 rounded-xl bg-[#FAF0EB]/80 hover:bg-[#FAF0EB] border border-[#F1D3C6] cursor-pointer transition-all shadow-2xs group"
+                    >
+                      <div className="text-[11px] leading-snug space-y-1">
+                        <div className="flex items-center gap-1.5 text-[#4A4741]">
+                          <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#C46A40] shrink-0" />
+                          <span>가입 시 AI 연구 크레딧 <strong>10회</strong> 제공</span>
+                        </div>
+                        <div className="text-[11px] font-bold text-[#C46A40] pl-5">
+                          현재 특별혜택으로 가입시 {promoSettings?.enabled && promoSettings.bonusCredits > 0 ? promoSettings.bonusCredits : 200} 크래딧 제공
+                        </div>
+                      </div>
+                      <div className="mt-1.5 pt-1.5 border-t border-[#F1D3C6]/60 flex items-center justify-between text-[10px] text-[#C46A40]">
+                        <span className="font-normal text-[#8C877D]">지메일로 원클릭 가입</span>
+                        <span className="font-semibold group-hover:underline">혜택 받기 →</span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* 3. 주석기록 30일 보관 */}
                   <button
                     onClick={() => {
+                      if (!isAuthenticated) {
+                        setShowAuthModal(true);
+                        return;
+                      }
                       setAiPanelTab('history');
                       setIsAiCommentaryOpen(true);
                       setIsSidebarOpen(false);
                     }}
-                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-normal transition-all cursor-pointer ${
-                      isAiCommentaryOpen && aiPanelTab === 'history'
-                        ? 'bg-[#FAF0EB] text-[#C46A40] font-medium'
-                        : 'text-[#4A4741] hover:bg-[#F3EFE9]'
-                    }`}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap"
                   >
-                    <div className="flex items-center gap-2">
-                      <History className="w-4 h-4 text-[#6E6A63] stroke-[1.5px]" />
-                      <span>주석기록</span>
-                    </div>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#F0ECE4] text-[#6E6A63] font-medium">
-                      30일 보관
-                    </span>
+                    <History className="w-4 h-4 text-[#6E6A63] stroke-[1.5px] shrink-0" />
+                    <span>주석기록 30일 보관</span>
                   </button>
                 </div>
 
@@ -1023,10 +1097,26 @@ const MainApp: React.FC = () => {
                       </div>
                       <button
                         onClick={async () => {
-                          if (confirm('로그아웃 하시겠습니까?')) {
-                            await signOut(auth);
-                            const { gdriveWebService } = await import('./api/gdriveWebService');
-                            await gdriveWebService.logout();
+                          if (confirm('로그아웃 하시겠습니까?\n모든 개인 데이터와 세션이 초기화됩니다.')) {
+                            try {
+                              await signOut(auth);
+                            } catch (e) {}
+                            try {
+                              const { gdriveWebService } = await import('./api/gdriveWebService');
+                              await gdriveWebService.logout();
+                            } catch (e) {}
+                            try {
+                              const { clearAiUsageState } = await import('./services/aiUsageService');
+                              clearAiUsageState();
+                            } catch (e) {}
+                            // 로컬 스토리지의 모든 개인 데이터 및 세션 완벽 삭제
+                            localStorage.removeItem('offline_user_profile');
+                            localStorage.removeItem('gdrive_token');
+                            localStorage.removeItem('gdrive_token_expires_at');
+                            localStorage.removeItem('nations_ai_commentary_usage_v1');
+                            localStorage.removeItem('commentary_history_v1');
+                            localStorage.removeItem('bible-selected-versions');
+                            sessionStorage.clear();
                             window.location.reload();
                           }
                         }}
@@ -1387,6 +1477,7 @@ const MainApp: React.FC = () => {
                       <AiCommentaryPanel 
                         isOpen={isAiCommentaryOpen}
                         onClose={() => setIsAiCommentaryOpen(false)}
+                        onOpenAuthModal={() => setShowAuthModal(true)}
                         initialTab={aiPanelTab}
                         openRechargeTrigger={aiRechargeTrigger}
                         currentBookName={BIBLE_LIST.find(b => b.id === leftNav.bookId)?.name || leftNav.bookId}
@@ -1984,6 +2075,53 @@ const MainApp: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* 신규 가입 환영 특별 혜택 안내 모달 (아이콘 배제) */}
+      {welcomeModalInfo?.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-sm bg-[#FAF9F5] border border-[#E8E3DA] rounded-2xl p-6 shadow-2xl space-y-4 text-center">
+            <div className="space-y-1.5">
+              <h3 className="text-base font-bold text-[#2C2B29] font-serif tracking-tight">
+                가입을 환영합니다
+              </h3>
+              <p className="text-xs text-[#5A564F] leading-relaxed">
+                신규 가입 특별 혜택으로 AI 연구 크레딧 <strong>{welcomeModalInfo.bonusCredits}회</strong>가 즉시 지급되었습니다.
+              </p>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-xl border border-[#E5DFD5] text-left space-y-2 text-xs text-[#5A564F]">
+              <div className="flex items-center justify-between">
+                <span className="text-[#8C877D]">기본 무료 크레딧</span>
+                <span className="font-semibold text-[#2C2B29]">매월 10회</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#8C877D]">가입 특별 혜택</span>
+                <span className="font-bold text-[#C46A40]">+{welcomeModalInfo.bonusCredits}회</span>
+              </div>
+              <div className="pt-2 border-t border-[#F0EBE1] flex items-center justify-between font-bold">
+                <span className="text-[#2C2B29]">현재 이용 가능 횟수</span>
+                <span className="text-[#C46A40] text-sm">{welcomeModalInfo.totalCredits}회</span>
+              </div>
+              <div className="text-[10px] text-[#A39E94] text-right">
+                (가입 혜택 유효기간: 1년)
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (auth.currentUser) {
+                  localStorage.setItem(`welcome_bonus_seen_${auth.currentUser.uid}`, 'true');
+                }
+                setWelcomeModalInfo(null);
+              }}
+              className="w-full py-2.5 bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+            >
+              확인하고 시작하기
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

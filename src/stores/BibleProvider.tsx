@@ -62,45 +62,92 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     unsubscribeVerseDataRef.current = unsubscribe;
   };
 
-  // ── 관리자가 원격으로 허용한 번역본(개역개정 등) 자동 활성화 ────────────
+  // ── 관리자가 원격으로 허용한 번역본(개역개정, NIV 등) 자동 활성화 및 회수 ────────────
   const checkAndHydrateAllowedVersions = async (allowedVersions: string[]) => {
-    if (!allowedVersions || !allowedVersions.includes('built-in-krv')) return;
+    const allowed = allowedVersions || [];
 
-    setVersions(prev => {
-      const alreadyHas = prev.some(v => v.id === 'built-in-krv' || v.name === '개역개정');
-      if (alreadyHas) return prev;
-
-      // 비동기로 krv.txt 로드하여 IndexedDB 및 state에 추가
-      (async () => {
-        try {
-          const res = await fetch('/data/krv.txt');
-          if (res.ok) {
-            const buf = await res.arrayBuffer();
-            let text;
-            try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
-            catch { text = new TextDecoder('euc-kr').decode(buf); }
-            const parsed = await BibleParser.parseTxt('개역개정', text);
-            const krvVersion: BibleVersion = {
-              id: 'built-in-krv',
-              name: '개역개정',
-              verses: parsed.verses,
-              isSystem: true,
-              isBuiltIn: false
-            };
-            await bibleDB.saveVersion(krvVersion);
-            setVersions(curr => {
-              if (curr.some(v => v.id === 'built-in-krv')) return curr;
-              return [...curr, krvVersion];
-            });
-            console.log('[BibleProvider] 관리자 권한으로 개역개정이 자동 활성화되었습니다.');
+    // 1. 개역개정 (built-in-krv)
+    if (allowed.includes('built-in-krv')) {
+      setVersions(prev => {
+        if (prev.some(v => v.id === 'built-in-krv' || v.name === '개역개정')) return prev;
+        (async () => {
+          try {
+            const res = await fetch('/data/krv.txt');
+            if (res.ok) {
+              const buf = await res.arrayBuffer();
+              let text;
+              try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+              catch { text = new TextDecoder('euc-kr').decode(buf); }
+              const parsed = await BibleParser.parseTxt('개역개정', text);
+              const krvVersion: BibleVersion = {
+                id: 'built-in-krv',
+                name: '개역개정',
+                verses: parsed.verses,
+                isSystem: false,
+                isBuiltIn: false
+              };
+              await bibleDB.saveVersion(krvVersion);
+              setVersions(curr => curr.some(v => v.id === 'built-in-krv') ? curr : [...curr, krvVersion]);
+              console.log('[BibleProvider] 관리자 권한으로 개역개정이 자동 활성화되었습니다.');
+            }
+          } catch (e) {
+            console.error('[BibleProvider] 원격 개역개정 로드 실패:', e);
           }
-        } catch (e) {
-          console.error('[BibleProvider] 원격 개역개정 로드 실패:', e);
+        })();
+        return prev;
+      });
+    } else {
+      // 권한 회수 시 제거
+      setVersions(prev => {
+        if (prev.some(v => v.id === 'built-in-krv')) {
+          bibleDB.deleteVersion('built-in-krv').catch(() => {});
+          setSelectedVersionIds(sel => sel.filter(id => id !== 'built-in-krv'));
+          return prev.filter(v => v.id !== 'built-in-krv');
         }
-      })();
+        return prev;
+      });
+    }
 
-      return prev;
-    });
+    // 2. NIV (built-in-niv)
+    if (allowed.includes('built-in-niv')) {
+      setSelectedVersionIds(sel => sel.includes('built-in-niv') ? sel : [...sel, 'built-in-niv']);
+      setVersions(prev => {
+        if (prev.some(v => v.id === 'built-in-niv' || v.name === 'NIV')) return prev;
+        (async () => {
+          try {
+            const res = await fetch('/data/NIV_UTF8_LF.txt');
+            if (res.ok) {
+              const text = await res.text();
+              const parsed = await BibleParser.parseTxt('NIV', text);
+              const nivVersion: BibleVersion = {
+                id: 'built-in-niv',
+                name: 'NIV',
+                verses: parsed.verses,
+                isSystem: false,
+                isBuiltIn: false
+              };
+              await bibleDB.saveVersion(nivVersion);
+              setVersions(curr => curr.some(v => v.id === 'built-in-niv') ? curr : [...curr, nivVersion]);
+              setSelectedVersionIds(sel => sel.includes('built-in-niv') ? sel : [...sel, 'built-in-niv']);
+              console.log('[BibleProvider] 관리자 권한으로 NIV가 자동 활성화되었습니다.');
+            }
+          } catch (e) {
+            console.error('[BibleProvider] 원격 NIV 로드 실패:', e);
+          }
+        })();
+        return prev;
+      });
+    } else {
+      // 권한 회수 시 제거
+      setVersions(prev => {
+        if (prev.some(v => v.id === 'built-in-niv')) {
+          bibleDB.deleteVersion('built-in-niv').catch(() => {});
+          setSelectedVersionIds(sel => sel.filter(id => id !== 'built-in-niv'));
+          return prev.filter(v => v.id !== 'built-in-niv');
+        }
+        return prev;
+      });
+    }
   };
 
   // ── Firebase Auth & 구글 로그인 이벤트 감지 ──────────────────────────
@@ -113,15 +160,17 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         subscribeToVerseData(user.uid);
         console.log('[BibleProvider] ✅ Firebase Auth 연결됨. 사용자 ID:', user.uid);
 
-        // 관리자가 허용한 특별 번역본 실시간 감지
+        // 관리자가 허용한 특별 번역본 실시간 감지 (UID 및 이메일 양방향 감시)
         if (unsubProfile) unsubProfile();
         unsubProfile = subscribeUserProfile(user.uid, (profile) => {
-          if (profile && profile.allowedVersions) {
-            checkAndHydrateAllowedVersions(profile.allowedVersions);
+          if (profile) {
+            checkAndHydrateAllowedVersions(profile.allowedVersions || []);
           }
-        });
+        }, user.email);
       } else {
         setGoogleUserId(null);
+        // 로그아웃 시 주석/설교 상태 완전히 초기화
+        setVerseData({});
         if (unsubscribeVerseDataRef.current) {
           unsubscribeVerseDataRef.current();
           unsubscribeVerseDataRef.current = null;
@@ -130,6 +179,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           unsubProfile();
           unsubProfile = null;
         }
+        // 특수 번역본(개역개정, NIV) 목록에서 제거 및 기본 2개 번역본으로 리셋
+        setVersions(prev => prev.filter(v => v.id !== 'built-in-krv' && v.id !== 'built-in-niv'));
       }
     });
 
@@ -301,8 +352,23 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       setVersions(hydratedVersions);
-      // 앱을 열 때마다 개역한글과 NRSV를 기본으로 표시
-      setSelectedVersionIds(['built-in-kor-revised', 'built-in-eng-nrsv']);
+      // 저장된 선택 번역본이 있으면 복원, 없으면 기본으로 개역한글과 NRSV 표시
+      const savedSelectedStr = localStorage.getItem('bible-selected-versions');
+      if (savedSelectedStr) {
+        try {
+          const parsed = JSON.parse(savedSelectedStr);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const valid = parsed.filter(id => hydratedVersions.some(v => v.id === id));
+            setSelectedVersionIds(valid.length > 0 ? valid : ['built-in-kor-revised', 'built-in-eng-nrsv']);
+          } else {
+            setSelectedVersionIds(['built-in-kor-revised', 'built-in-eng-nrsv']);
+          }
+        } catch (e) {
+          setSelectedVersionIds(['built-in-kor-revised', 'built-in-eng-nrsv']);
+        }
+      } else {
+        setSelectedVersionIds(['built-in-kor-revised', 'built-in-eng-nrsv']);
+      }
       setIsInitialized(true); // ✅ 초기 1회성 비동기 로딩 완료 선언
 
       // ✅ 2. 구글 드라이브(appDataFolder) 백그라운드 동기화 로직
@@ -483,11 +549,17 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       },
       toggleVersion: (id) => setSelectedVersionIds(prev => {
+        let next: string[];
         if (prev.includes(id)) {
           if (prev.length <= 1) return prev; // 최소 1개 번역본 활성화 유지
-          return prev.filter(vid => vid !== id);
+          next = prev.filter(vid => vid !== id);
+        } else {
+          next = prev.length >= 5 ? prev : [...prev, id];
         }
-        return prev.length >= 5 ? prev : [...prev, id];
+        try {
+          localStorage.setItem('bible-selected-versions', JSON.stringify(next));
+        } catch (e) {}
+        return next;
       }),
       setCopyMode, setShowVersionInCopy,
       lineHeight, setLineHeight: (val) => setLineHeight(Math.max(1.3, val)),

@@ -2,8 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, Sparkles, RefreshCw, Copy, Check, ChevronRight, ChevronDown,
   BookOpen, Landmark, Lightbulb, AlertCircle, CreditCard,
-  History, Trash2, Calendar, Clock, Compass, ArrowRightLeft
+  History, Trash2, Calendar, Clock, Compass, ArrowRightLeft, LogIn,
+  Gift, Send
 } from 'lucide-react';
+import { auth } from '../api/firebaseConfig';
+import { getReferralSettings, submitReferralRequest, getPromotionSettings } from '../services/promotionService';
 import { 
   generateBibleAiCommentary, 
   getCachedCommentary, 
@@ -52,6 +55,7 @@ interface AiCommentaryPanelProps {
   onNavigateToVerse?: (bookId: string, chapter: number, verse: number, text?: string) => void;
   initialTab?: AiTabType;
   openRechargeTrigger?: number;
+  onOpenAuthModal?: () => void;
 }
 
 type TabType = AiTabType;
@@ -67,9 +71,10 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   onCopyToSermon,
   onNavigateToVerse,
   initialTab,
-  openRechargeTrigger
+  openRechargeTrigger,
+  onOpenAuthModal
 }) => {
-  const { totalRemaining, totalCapacity, freeRemaining, paidRemaining, isAvailable, recharge, remainingDaysText } = useAiUsage();
+  const { totalRemaining, totalCapacity, freeRemaining, paidRemaining, isAvailable, recharge, remainingDaysText, isLoggedIn } = useAiUsage();
   const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'all');
   const [commentaryData, setCommentaryData] = useState<AiCommentaryData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -92,6 +97,78 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
       setShowRechargeModal(true);
     }
   }, [openRechargeTrigger]);
+
+  // 신규 가입 프로모션 상태
+  const [promoSettings, setPromoSettings] = useState<{ enabled: boolean; bonusCredits: number; name: string; description?: string } | null>(null);
+
+  useEffect(() => {
+    getPromotionSettings().then(setPromoSettings).catch(() => {});
+  }, []);
+
+  // 친구 추천 혜택 관련 상태
+  const [referralBonusCount, setReferralBonusCount] = useState<number>(50);
+  const [isReferralFormOpen, setIsReferralFormOpen] = useState(false);
+  const [referrerNameInput, setReferrerNameInput] = useState('');
+  const [friendEmailInput, setFriendEmailInput] = useState('');
+  const [isSubmittingReferral, setIsSubmittingReferral] = useState(false);
+  const [referralFeedback, setReferralFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // 모달 오픈 시 추천 혜택 설정 불러오기
+  useEffect(() => {
+    if (showRechargeModal) {
+      getReferralSettings().then(st => {
+        if (st && st.bonusCredits) setReferralBonusCount(st.bonusCredits);
+      }).catch(() => {});
+      if (auth.currentUser) {
+        setReferrerNameInput(auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || '');
+      }
+    }
+  }, [showRechargeModal]);
+
+  // 추천 신청 제출 핸들러
+  const handleSubmitReferral = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setReferralFeedback(null);
+
+    const cleanName = referrerNameInput.trim();
+    const cleanFriend = friendEmailInput.trim().toLowerCase();
+
+    if (!cleanName) {
+      setReferralFeedback({ type: 'error', message: '추천인 본인의 성명을 입력해주세요.' });
+      return;
+    }
+    if (!cleanFriend || !cleanFriend.includes('@')) {
+      setReferralFeedback({ type: 'error', message: '올바른 친구 가입자의 이메일을 입력해주세요.' });
+      return;
+    }
+
+    const myEmail = (auth.currentUser?.email || '').trim().toLowerCase();
+    if (myEmail && myEmail === cleanFriend) {
+      setReferralFeedback({ type: 'error', message: '본인 이메일은 추천 대상으로 입력할 수 없습니다.' });
+      return;
+    }
+
+    setIsSubmittingReferral(true);
+    try {
+      await submitReferralRequest({
+        referrerName: cleanName,
+        referrerEmail: myEmail || cleanName,
+        referrerUid: auth.currentUser?.uid,
+        friendEmail: cleanFriend,
+        bonusCredits: referralBonusCount
+      });
+      setReferralFeedback({
+        type: 'success',
+        message: `추천 신청이 정상 접수되었습니다! 관리자 확인 후 AI ${referralBonusCount}회가 충전됩니다.`
+      });
+      setFriendEmailInput('');
+    } catch (err: any) {
+      console.error('Failed to submit referral:', err);
+      setReferralFeedback({ type: 'error', message: '신청 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.' });
+    } finally {
+      setIsSubmittingReferral(false);
+    }
+  };
 
   // 1. 단어 심층 연구 (어원·용례·빈도수·신구약 대조) 상태 관리
   const [deepStudyLoading, setDeepStudyLoading] = useState<Record<string, boolean>>({});
@@ -338,6 +415,11 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
 
   // AI 분석 실행 (사용자가 버튼을 클릭했을 때만 호출)
   const handleFetchCommentary = async (forceRefresh: boolean = false) => {
+    if (!isLoggedIn) {
+      if (onOpenAuthModal) onOpenAuthModal();
+      return;
+    }
+
     if (!currentVerse || !scriptureText) return;
 
     // 강제 새로고침이거나 신규 요청인데 잔여 횟수가 없는 경우
@@ -668,20 +750,31 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
 
         {/* 우측: 잔여 크레딧 안내 및 닫기 버튼 */}
         <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            onClick={() => setShowRechargeModal(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-[#6E6A63] hover:text-[#2C2B29] hover:bg-[#EFEAE2] transition-colors cursor-pointer border border-[#E5E0D8] bg-[#FAF9F5] shadow-2xs whitespace-nowrap"
-            title="남은 사용 횟수 확인 및 충전"
-          >
-            <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#8C877D] shrink-0" />
-            <span className="text-[#8C877D]">남은 횟수:</span>
-            <strong className="font-bold text-[#2C2B29]">{totalRemaining}</strong>
-            <span className="text-[10px] text-[#A39E94]">/ {totalCapacity}회</span>
-            <span className="w-px h-3 bg-[#E0DBD2] mx-0.5"></span>
-            <span className="text-[#8C877D] text-[11px] font-medium">{remainingDaysText}</span>
-            <span className="w-px h-3 bg-[#E0DBD2] mx-0.5"></span>
-            <span className="text-[#C46A40] font-semibold text-[11px] hover:underline">충전</span>
-          </button>
+          {!isLoggedIn ? (
+            <button
+              onClick={() => onOpenAuthModal ? onOpenAuthModal() : setShowRechargeModal(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-[#C46A40] bg-[#FAF0EB] hover:bg-[#F5E5DC] transition-colors cursor-pointer border border-[#F1D3C6] shadow-2xs whitespace-nowrap font-medium"
+              title="로그인하고 무료 10회 이용하기"
+            >
+              <LogIn className="w-3.5 h-3.5 shrink-0" />
+              <span>로그인 필요 (무료 10회)</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowRechargeModal(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-[#6E6A63] hover:text-[#2C2B29] hover:bg-[#EFEAE2] transition-colors cursor-pointer border border-[#E5E0D8] bg-[#FAF9F5] shadow-2xs whitespace-nowrap"
+              title="남은 사용 횟수 확인 및 충전"
+            >
+              <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#8C877D] shrink-0" />
+              <span className="text-[#8C877D]">남은 횟수:</span>
+              <strong className="font-bold text-[#2C2B29]">{totalRemaining}</strong>
+              <span className="text-[10px] text-[#A39E94]">/ {totalCapacity}회</span>
+              <span className="w-px h-3 bg-[#E0DBD2] mx-0.5"></span>
+              <span className="text-[#8C877D] text-[11px] font-medium">{remainingDaysText}</span>
+              <span className="w-px h-3 bg-[#E0DBD2] mx-0.5"></span>
+              <span className="text-[#C46A40] font-semibold text-[11px] hover:underline">충전</span>
+            </button>
+          )}
 
           <button
             onClick={onClose}
@@ -866,8 +959,76 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
         {/* ======================================================== */}
         {activeTab !== 'history' && (
           <>
+            {/* [비로그인 상태 전용 안내 뷰] */}
+            {!isLoggedIn && !commentaryData && (
+              <div className="flex flex-col items-center justify-center text-center py-6 px-4 space-y-3.5 max-w-sm mx-auto">
+                {/* 클로드 스타일 미니멀 심볼 */}
+                <div className="w-10 h-10 rounded-2xl bg-[#FAF0EB] border border-[#F1D3C6] flex items-center justify-center text-[#C46A40] shadow-2xs">
+                  <ClaudeSparkleIcon className="w-4 h-4" />
+                </div>
+                
+                <div className="space-y-1">
+                  <h3 className="font-serif font-bold text-base text-[#2C2B29]">AI 성경 연구</h3>
+                  <p className="text-xs text-[#7A756D] leading-relaxed">
+                    본문 구절의 원어 파싱과 배경, 신학·설교 인사이트를 분석합니다.
+                  </p>
+                </div>
+
+                {currentVerse && scriptureText && scriptureText.trim() && (
+                  <div className="w-full p-3 rounded-xl bg-white border border-[#E8E3DA] text-left shadow-2xs space-y-1">
+                    <span className="text-[11px] font-bold text-[#C46A40]">
+                      선택된 구절: {currentBookName} {currentChapter}:{currentVerse}
+                    </span>
+                    <p className="font-serif text-xs text-[#4A4741] line-clamp-2">
+                      "{scriptureText}"
+                    </p>
+                  </div>
+                )}
+
+                {/* 로그인 / 이용하기 메인 버튼 */}
+                <button
+                  onClick={() => onOpenAuthModal ? onOpenAuthModal() : setShowRechargeModal(true)}
+                  className="w-full py-3 px-4 rounded-xl bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold text-xs shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>로그인하고 AI 주석 이용하기</span>
+                </button>
+
+                {/* 🎁 로그인 이용하기 바로 아래: 신규 가입 프로모션 및 지메일 원클릭 안내 카드 */}
+                <div 
+                  onClick={() => onOpenAuthModal ? onOpenAuthModal() : undefined}
+                  className="w-full p-3.5 rounded-2xl bg-[#FAF9F5] border border-[#E8E3DA] hover:border-[#C46A40] text-left space-y-2 cursor-pointer transition-all shadow-2xs group"
+                >
+                  <div className="text-xs leading-relaxed space-y-1">
+                    <div className="flex items-center gap-1.5 text-[#5A564F]">
+                      <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#C46A40] shrink-0" />
+                      <span>가입 시 AI 연구 크래딧 <strong>매월 10회</strong> 제공</span>
+                    </div>
+                    <div className="text-xs font-bold text-[#C46A40] pl-5">
+                      현재 특별혜택으로 가입시 {promoSettings?.enabled && promoSettings.bonusCredits > 0 ? promoSettings.bonusCredits : 200} 크래딧 제공
+                    </div>
+                  </div>
+
+                  {/* 지메일 원클릭 입장 안내 문구 강조 */}
+                  <div className="pt-2 border-t border-[#EAE6DE] flex items-start gap-2">
+                    <div className="w-4 h-4 rounded-full bg-white border border-[#DDD8CE] flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-2.5 h-2.5" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.63z"/>
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                      </svg>
+                    </div>
+                    <p className="text-[11px] text-[#C46A40] font-medium leading-snug">
+                      Google(지메일) 계정은 별도 회원가입 없이 바로 입장하시면 혜택이 즉시 지급됩니다.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* A. 구절 미선택 상태 (구절 번호가 없거나 본문 텍스트가 비어있고, 로드된 주석도 없을 때) */}
-            {(!currentVerse || !scriptureText || !scriptureText.trim()) && !commentaryData && (
+            {isLoggedIn && (!currentVerse || !scriptureText || !scriptureText.trim()) && !commentaryData && (
               <div className="flex flex-col items-center justify-center text-center h-full py-16 px-4 text-[#8C877D]">
                 <div className="w-12 h-12 rounded-2xl bg-[#F5F2EB] border border-[#E8E3DA] flex items-center justify-center text-[#A39D93] mb-4">
                   <BookOpen className="w-6 h-6 stroke-[1.5]" />
@@ -880,7 +1041,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
             )}
 
             {/* B. 구절이 선택되었으나 아직 분석되지 않은 상태 (수동 시작 버튼 제공) */}
-            {currentVerse && scriptureText && scriptureText.trim() && !commentaryData && !isLoading && !errorType && (
+            {isLoggedIn && currentVerse && scriptureText && scriptureText.trim() && !commentaryData && !isLoading && !errorType && (
               <div className="space-y-4 py-2">
                 {/* 선택된 본문 카드 */}
                 <div className="p-4 rounded-xl bg-white border border-[#E8E3DA] shadow-2xs space-y-2">
@@ -1747,6 +1908,88 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   15,000원 충전
                 </button>
               </div>
+            </div>
+
+            {/* 🎁 친구 추천하기 섹션 */}
+            <div className="mt-3 p-3.5 rounded-2xl bg-gradient-to-br from-[#FFFBF8] to-[#F7F4EE] border border-[#F1D3C6] shadow-2xs">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-[#FAF0EB] text-[#C46A40] flex items-center justify-center shrink-0 border border-[#F1D3C6]">
+                    <Gift className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-[#2C2B29]">
+                      친구 추천하기
+                    </h4>
+                    <p className="text-[11px] font-bold text-[#C46A40] mt-0.5">
+                      +{referralBonusCount || 50}회 혜택 선물
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsReferralFormOpen(!isReferralFormOpen);
+                    setReferralFeedback(null);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-semibold shrink-0 transition-colors shadow-2xs cursor-pointer"
+                >
+                  {isReferralFormOpen ? '닫기' : '친구 추천하기'}
+                </button>
+              </div>
+
+              {/* 친구 추천 신청 입력 폼 */}
+              {isReferralFormOpen && (
+                <form onSubmit={handleSubmitReferral} className="mt-3 pt-3 border-t border-[#EFECE6] space-y-2.5 animate-in fade-in duration-200">
+                  <div className="p-2.5 rounded-xl bg-white border border-[#E8E3DA] text-[11px] text-[#C46A40] leading-relaxed">
+                    💡 정보를 정확하게 기입하시면, 확인후 혜택을 드립니다. (1인 추천 시 AI {referralBonusCount}회 추가)
+                  </div>
+
+                  {referralFeedback && (
+                    <div className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
+                      referralFeedback.type === 'success' 
+                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
+                        : 'bg-red-50 text-red-700 border border-red-200'
+                    }`}>
+                      {referralFeedback.type === 'success' ? <Check className="w-4 h-4 shrink-0 text-emerald-600" /> : <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />}
+                      <span>{referralFeedback.message}</span>
+                    </div>
+                  )}
+
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-semibold text-[#5A564F]">추천인(나)의 성명</label>
+                    <input
+                      type="text"
+                      placeholder="추천인(나)의 성명 입력"
+                      value={referrerNameInput}
+                      onChange={(e) => setReferrerNameInput(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-1 focus:ring-[#C46A40]"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-semibold text-[#5A564F]">친구(상대방)가입자 이메일</label>
+                    <input
+                      type="email"
+                      placeholder="친구(상대방)가입자 이메일 (예: friend@gmail.com)"
+                      value={friendEmailInput}
+                      onChange={(e) => setFriendEmailInput(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-1 focus:ring-[#C46A40]"
+                      required
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingReferral}
+                    className="w-full py-2.5 bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{isSubmittingReferral ? '신청 처리 중...' : `친구 추천 혜택 (${referralBonusCount}회) 신청 제출`}</span>
+                  </button>
+                </form>
+              )}
             </div>
           </div>
         </div>

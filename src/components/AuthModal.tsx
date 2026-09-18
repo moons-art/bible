@@ -184,13 +184,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
       >
         {/* Header */}
         <div className="p-5 border-b border-[#E7E5DF] bg-[#F7F5F0] flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-[#FAF0EB] text-[#C46A40] flex items-center justify-center border border-[#F1D3C6] shadow-2xs">
-              <Sparkles className="w-4 h-4" />
-            </div>
+          <div className="flex items-center gap-2.5">
+            <img 
+              src="/icon.png" 
+              alt="NATIONS BIBLE" 
+              className="w-8 h-8 rounded-xl object-contain border border-[#E7E2D8] shadow-2xs" 
+            />
             <div>
-              <h2 className="font-serif text-base font-bold text-[#2C2B29]">네이션스 바이블 로그인</h2>
-              <p className="text-[11px] text-[#8C877D]">연구 주석 및 설교 노트를 클라우드에 안전하게 보관하세요</p>
+              <h2 className="font-serif text-base font-bold text-[#2C2B29] tracking-tight">NATIONS BIBLE</h2>
             </div>
           </div>
           <button 
@@ -208,11 +209,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             <div className="w-6 h-6 rounded-full bg-[#FAF0EB] text-[#C46A40] flex items-center justify-center shrink-0 mt-0.5">
               <CheckCircle2 className="w-4 h-4" />
             </div>
-            <div className="text-xs text-[#524F4A] leading-relaxed">
-              <p className="font-bold text-[#2C2B29] mb-0.5">Google 계정 로그인 권장</p>
-              <p className="text-[11px] text-[#78746D]">
-                구글 로그인하시면 네이션스 스튜디오 및 모든 네이션스 서비스와 연동됩니다.
+            <div className="text-xs text-[#524F4A] leading-relaxed flex-1">
+              <p className="font-bold text-[#2C2B29] mb-1">Google 계정 로그인 권장</p>
+              <p className="text-[11px] text-[#78746D] mb-2">
+                모든 네이션스 서비스와 연동됩니다.
               </p>
+              <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                <span className="text-[10px] font-semibold tracking-tight py-1 px-2 bg-[#FAF9F5] text-[#5A564F] rounded-lg border border-[#EAE6DE] text-center flex items-center justify-center">
+                  NATIONS STUDIO
+                </span>
+                <span className="text-[10px] font-semibold tracking-tight py-1 px-2 bg-[#FAF0EB] text-[#C46A40] rounded-lg border border-[#F1D3C6] text-center flex items-center justify-center">
+                  NATIONS BIBLE
+                </span>
+                <span className="text-[10px] font-semibold tracking-tight py-1 px-2 bg-[#FAF9F5] text-[#5A564F] rounded-lg border border-[#EAE6DE] text-center flex items-center justify-center">
+                  NATIONS VOTE
+                </span>
+                <span className="text-[10px] font-semibold tracking-tight py-1 px-2 bg-[#FAF9F5] text-[#5A564F] rounded-lg border border-[#EAE6DE] text-center flex items-center justify-center">
+                  NATIONS CHURCH
+                </span>
+              </div>
             </div>
           </div>
 
