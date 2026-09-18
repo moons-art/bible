@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, ShieldCheck, Users, Sparkles, RefreshCw, Search, 
@@ -72,10 +73,21 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [isSavingPromo, setIsSavingPromo] = useState(false);
   const [isSavingReferral, setIsSavingReferral] = useState(false);
   const [customReferralInput, setCustomReferralInput] = useState<string>('');
-  const [manualReferrerEmail, setManualReferrerEmail] = useState('');
-  const [manualFriendEmail, setManualFriendEmail] = useState('');
-  const [manualBonusCount, setManualBonusCount] = useState<number>(50);
-  const [isManualSubmitting, setIsManualSubmitting] = useState(false);
+
+  // 인앱 커스텀 확인 모달 상태 (브라우저 confirm/prompt 깜빡임 및 자동 닫힘 원천 해결)
+  interface ConfirmModalConfig {
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    theme?: 'danger' | 'primary' | 'warning';
+    showInput?: boolean;
+    inputPlaceholder?: string;
+    onConfirm: (inputVal?: string) => Promise<void> | void;
+  }
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalConfig | null>(null);
+  const [confirmInputText, setConfirmInputText] = useState('');
 
   // 공통 토스트 알림
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -125,7 +137,6 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     getPromotionSettings().then(setPromoSettings).catch(() => {});
     getReferralSettings().then(st => {
       setReferralSettings(st);
-      setManualBonusCount(st.bonusCredits || 50);
     }).catch(() => {});
   };
 
@@ -153,7 +164,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   if (!isOpen) return null;
 
   // 권한 검증: ymoonsik@gmail.com 계정만 접속 가능
-  const isAuthorized = isAdminUser(currentUserEmail);
+  const isAuthorized = isAdminUser(currentUserEmail || auth.currentUser?.email);
 
   // ── [프로모션 & 추천인 관리 핸들러] ────────────────────────────
   // 1. 가입 프로모션 설정 저장
@@ -164,7 +175,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       showToast(`프로모션 설정 저장 완료! (추가 ${promoSettings.bonusCredits}회, ${promoSettings.enabled ? '활성화' : '비활성화'})`);
     } catch (err) {
       console.error('Failed to save promo settings:', err);
-      alert('프로모션 설정 저장 중 오류가 발생했습니다.');
+      showToast('프로모션 설정 저장 중 오류가 발생했습니다.');
     } finally {
       setIsSavingPromo(false);
     }
@@ -173,7 +184,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   // 2. 추천인 혜택 설정 저장
   const handleSaveReferral = async (credits: number) => {
     if (credits <= 0) {
-      alert('지급 횟수는 1회 이상이어야 합니다.');
+      showToast('지급 횟수는 1회 이상이어야 합니다.');
       return;
     }
     setIsSavingReferral(true);
@@ -183,241 +194,280 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       showToast(`추천인 1인당 혜택이 ${credits}회로 변경되었습니다.`);
     } catch (err) {
       console.error('Failed to save referral settings:', err);
-      alert('추천인 설정 저장 중 오류가 발생했습니다.');
+      showToast('추천인 설정 저장 중 오류가 발생했습니다.');
     } finally {
       setIsSavingReferral(false);
     }
   };
 
-  // 3. 추천 신청 승인 및 즉시 혜택 지급
-  const handleApproveReferral = async (req: ReferralRequest) => {
+  // 3. 추천 신청 승인 및 즉시 혜택 지급 (인앱 확인 모달)
+  const handleApproveReferral = (req: ReferralRequest) => {
     const friendDisplayName = req.friendName || req.friendEmail;
-    if (!confirm(`${req.referrerName} (${req.referrerEmail}) 회원에게 친구(${friendDisplayName}) 추천 보너스 ${req.bonusCredits}회를 지급하시겠습니까?`)) {
-      return;
-    }
-    setActionLoadingUid(req.id);
-    try {
-      await approveReferralRequest(req);
-      showToast(`${req.referrerName} 회원에게 추천 보너스 +${req.bonusCredits}회 충전 완료!`);
-      // 로컬 회원 목록도 즉각 반영
-      setUsers(prev => prev.map(u => {
-        if ((u.email || '').toLowerCase() === req.referrerEmail.toLowerCase() || u.uid === req.referrerUid) {
-          return {
-            ...u,
-            aiCredits: {
-              ...u.aiCredits,
-              paidRemaining: (u.aiCredits?.paidRemaining || 0) + req.bonusCredits
+    setConfirmModal({
+      isOpen: true,
+      title: '친구 추천 보너스 승인',
+      message: `${req.referrerName} (${req.referrerEmail}) 회원에게 친구(${friendDisplayName}) 추천 보너스 ${req.bonusCredits}회를 지급하시겠습니까?`,
+      confirmText: `+${req.bonusCredits}회 지급 승인`,
+      theme: 'primary',
+      onConfirm: async () => {
+        setActionLoadingUid(req.id);
+        try {
+          await approveReferralRequest(req);
+          showToast(`${req.referrerName} 회원에게 추천 보너스 +${req.bonusCredits}회 충전 완료!`);
+          setUsers(prev => prev.map(u => {
+            if ((u.email || '').toLowerCase() === req.referrerEmail.toLowerCase() || u.uid === req.referrerUid) {
+              return {
+                ...u,
+                aiCredits: {
+                  ...u.aiCredits,
+                  paidRemaining: (u.aiCredits?.paidRemaining || 0) + req.bonusCredits
+                }
+              };
             }
-          };
+            return u;
+          }));
+        } catch (err) {
+          console.error('Failed to approve referral:', err);
+          showToast('추천 혜택 지급 중 오류가 발생했습니다.');
+        } finally {
+          setActionLoadingUid(null);
         }
-        return u;
-      }));
-    } catch (err) {
-      console.error('Failed to approve referral:', err);
-      alert('추천 혜택 지급 중 오류가 발생했습니다.');
-    } finally {
-      setActionLoadingUid(null);
-    }
+      }
+    });
   };
 
-  // 4. 추천 신청 삭제 / 반려
-  const handleDeleteReferral = async (id: string) => {
-    if (!confirm('해당 추천 신청 내역을 목록에서 삭제하시겠습니까?')) return;
-    try {
-      await deleteReferralRequest(id);
-      showToast('추천 신청 내역이 삭제되었습니다.');
-    } catch (err) {
-      console.error('Failed to delete referral request:', err);
-      alert('삭제 중 오류가 발생했습니다.');
-    }
+  // 4. 추천 신청 삭제 / 반려 (인앱 확인 모달)
+  const handleDeleteReferral = (id: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: '추천 신청 내역 삭제',
+      message: '해당 추천 신청 내역을 목록에서 삭제하시겠습니까?',
+      confirmText: '삭제',
+      theme: 'danger',
+      onConfirm: async () => {
+        try {
+          await deleteReferralRequest(id);
+          showToast('추천 신청 내역이 삭제되었습니다.');
+        } catch (err) {
+          console.error('Failed to delete referral request:', err);
+          showToast('삭제 중 오류가 발생했습니다.');
+        }
+      }
+    });
   };
 
-  // 5. 회원 계정 영구 삭제 핸들러
-  const handleDeleteUser = async (user: UserProfile) => {
+  // 5. 회원 계정 영구 삭제 핸들러 (인앱 확인 모달 + 이름/이메일 일치 확인)
+  const handleDeleteUser = (user: UserProfile) => {
     const userName = user.displayName || user.email || '회원';
-    if (!confirm(`[주의] 정말 "${userName}" (${user.email || user.uid}) 회원의 데이터를 삭제하시겠습니까?\n\n이 작업은 Firestore 데이터베이스에서 해당 회원의 프로필 및 크레딧 데이터를 영구 삭제합니다.`)) {
-      return;
-    }
-    // 이중 확인
-    const check = prompt(`정말 삭제하시려면 삭제할 회원의 이름 또는 이메일 ("${userName}")을 입력해주세요:`);
-    if (!check || (check.trim() !== userName.trim() && check.trim() !== (user.email || '').trim())) {
-      alert('입력값이 일치하지 않아 회원 삭제가 취소되었습니다.');
-      return;
-    }
+    setConfirmInputText('');
+    setConfirmModal({
+      isOpen: true,
+      title: '회원 데이터 영구 삭제',
+      message: `[주의] 정말 "${userName}" (${user.email || user.uid}) 회원의 데이터를 영구 삭제하시겠습니까?\n이 작업은 되돌릴 수 없으며, Firestore 데이터베이스에서 영구 제거됩니다.\n\n확정하시려면 회원의 이름 또는 이메일("${userName}")을 아래에 똑같이 입력해주세요.`,
+      showInput: true,
+      inputPlaceholder: `"${userName}" 입력`,
+      confirmText: '영구 삭제',
+      theme: 'danger',
+      onConfirm: async (inputVal) => {
+        const trimmed = (inputVal || '').trim();
+        if (trimmed !== userName.trim() && trimmed !== (user.email || '').trim()) {
+          showToast('입력값이 일치하지 않아 회원 삭제가 취소되었습니다.');
+          return;
+        }
 
-    setActionLoadingUid(`delete_${user.uid}`);
-    try {
-      await deleteDoc(doc(db, 'users', user.uid));
-      setUsers(prev => prev.filter(u => u.uid !== user.uid));
-      showToast(`"${userName}" 회원의 데이터가 영구 삭제되었습니다.`);
-    } catch (err: any) {
-      console.error('Failed to delete user:', err);
-      alert('회원 삭제 중 오류가 발생했습니다: ' + (err?.message || '권한 오류'));
-    } finally {
-      setActionLoadingUid(null);
-    }
+        setActionLoadingUid(`delete_${user.uid}`);
+        try {
+          await deleteDoc(doc(db, 'users', user.uid));
+          setUsers(prev => prev.filter(u => u.uid !== user.uid));
+          showToast(`"${userName}" 회원의 데이터가 영구 삭제되었습니다.`);
+        } catch (err: any) {
+          console.error('Failed to delete user:', err);
+          showToast('회원 삭제 중 오류가 발생했습니다: ' + (err?.message || '권한 오류'));
+        } finally {
+          setActionLoadingUid(null);
+        }
+      }
+    });
   };
 
-  // 6. 특정 회원의 비밀번호 초기화 메일 발송
-  const handleResetPassword = async (user: UserProfile) => {
+  // 6. 특정 회원의 비밀번호 초기화 메일 발송 (인앱 확인 모달)
+  const handleResetPassword = (user: UserProfile) => {
     if (!user.email) {
-      alert('해당 회원은 이메일 주소가 등록되어 있지 않아 비밀번호 재설정 메일을 보낼 수 없습니다.');
+      showToast('해당 회원은 이메일 주소가 등록되어 있지 않아 메일을 보낼 수 없습니다.');
       return;
     }
     const userName = user.displayName || user.email;
-    if (!confirm(`"${userName}" (${user.email}) 회원에게 비밀번호 재설정 이메일을 발송하시겠습니까?\n\n회원이 이메일에 포함된 공식 링크를 클릭하면 새 비밀번호를 직접 설정하고 즉시 로그인할 수 있습니다.`)) {
-      return;
-    }
-
-    setActionLoadingUid(`reset_${user.uid}`);
-    try {
-      await sendPasswordResetEmail(auth, user.email);
-      showToast(`비밀번호 재설정 이메일 발송 완료! (${user.email})`);
-    } catch (err: any) {
-      console.error('Failed to send password reset email:', err);
-      const code = err?.code || '';
-      if (code === 'auth/user-not-found') {
-        alert('Firebase 인증 시스템에 등록되지 않은 이메일이거나 구글 간편로그인 전용 계정입니다.');
-      } else {
-        alert('비밀번호 재설정 메일 발송 실패: ' + (err?.message || code));
+    setConfirmModal({
+      isOpen: true,
+      title: '비밀번호 재설정 링크 발송',
+      message: `"${userName}" (${user.email}) 회원에게 비밀번호 재설정 공식 이메일을 발송하시겠습니까?\n\n회원이 수신한 이메일의 공식 안전 링크를 클릭하면 새 비밀번호를 직접 안전하게 입력하고 바로 로그인할 수 있습니다.`,
+      confirmText: '재설정 메일 발송',
+      theme: 'warning',
+      onConfirm: async () => {
+        setActionLoadingUid(`reset_${user.uid}`);
+        try {
+          await sendPasswordResetEmail(auth, user.email!);
+          showToast(`비밀번호 재설정 이메일 발송 완료! (${user.email})`);
+        } catch (err: any) {
+          console.error('Failed to send password reset email:', err);
+          const code = err?.code || '';
+          if (code === 'auth/user-not-found') {
+            showToast('Firebase 인증 시스템에 등록되지 않은 이메일이거나 구글 간편로그인 전용 계정입니다.');
+          } else {
+            showToast('비밀번호 재설정 메일 발송 실패: ' + (err?.message || code));
+          }
+        } finally {
+          setActionLoadingUid(null);
+        }
       }
-    } finally {
-      setActionLoadingUid(null);
-    }
+    });
   };
 
-  // 5. 관리자 수동 추천 혜택 즉시 충전
-  const handleManualGrantReferral = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualReferrerEmail.trim() || !manualReferrerEmail.includes('@')) {
-      alert('혜택을 받을 추천인의 올바른 이메일을 입력해주세요.');
-      return;
-    }
-    if (!manualFriendEmail.trim() || !manualFriendEmail.includes('@')) {
-      alert('추천받아 가입한 친구의 올바른 이메일을 입력해주세요.');
-      return;
-    }
-
-    if (!confirm(`${manualReferrerEmail} 회원에게 친구(${manualFriendEmail}) 추천 혜택 +${manualBonusCount}회를 즉시 지급하시겠습니까?`)) {
-      return;
-    }
-
-    setIsManualSubmitting(true);
-    try {
-      await manualGrantReferralBonus({
-        referrerEmail: manualReferrerEmail,
-        friendEmail: manualFriendEmail,
-        bonusCredits: manualBonusCount
-      });
-      showToast(`${manualReferrerEmail} 회원에게 +${manualBonusCount}회 즉시 지급 완료!`);
-      // 로컬 유저 갱신
-      setUsers(prev => prev.map(u => {
-        if ((u.email || '').toLowerCase() === manualReferrerEmail.trim().toLowerCase()) {
-          return {
-            ...u,
-            aiCredits: {
-              ...u.aiCredits,
-              paidRemaining: (u.aiCredits?.paidRemaining || 0) + manualBonusCount
+  // 7. 보너스 충전 처리 (+10회 / +50회 / +100회 - 인앱 확인 모달)
+  const handleAddCredits = (user: UserProfile, count: number) => {
+    const userName = user.displayName || user.email || '회원';
+    setConfirmModal({
+      isOpen: true,
+      title: 'AI 크레딧 보너스 충전',
+      message: `"${userName}" 회원에게 AI 연구 크레딧 ${count}회를 보너스로 충전하시겠습니까?`,
+      confirmText: `+${count}회 충전하기`,
+      theme: 'primary',
+      onConfirm: async () => {
+        setActionLoadingUid(user.uid);
+        try {
+          await addCreditsToUser(user.uid, count, '관리자 수동 지급');
+          showToast(`"${userName}" 회원에게 +${count}회 충전 완료!`);
+          setUsers(prev => prev.map(u => {
+            if (u.uid === user.uid) {
+              return {
+                ...u,
+                aiCredits: {
+                  ...u.aiCredits,
+                  paidRemaining: (u.aiCredits?.paidRemaining || 0) + count
+                }
+              };
             }
-          };
+            return u;
+          }));
+        } catch (err) {
+          console.error('Failed to add credits:', err);
+          showToast('보너스 충전 중 오류가 발생했습니다.');
+        } finally {
+          setActionLoadingUid(null);
         }
-        return u;
-      }));
-      setManualReferrerEmail('');
-      setManualFriendEmail('');
-    } catch (err) {
-      console.error('Failed to manually grant referral bonus:', err);
-      alert('수동 혜택 지급 중 오류가 발생했습니다.');
-    } finally {
-      setIsManualSubmitting(false);
-    }
+      }
+    });
   };
 
-  // 보너스 충전 처리 (+50회 / +100회 / 직접 입력)
-  const handleAddCredits = async (user: UserProfile, count: number) => {
-    if (!confirm(`${user.displayName || user.email} 회원에게 AI 연구 ${count}회를 보너스로 충전하시겠습니까?`)) {
-      return;
-    }
+  // 8. 직접 입력 보너스 충전 (인앱 입력 모달)
+  const handleCustomAddCredits = (user: UserProfile) => {
+    const userName = user.displayName || user.email || '회원';
+    setConfirmInputText('50');
+    setConfirmModal({
+      isOpen: true,
+      title: 'AI 크레딧 직접 입력 충전',
+      message: `"${userName}" 회원에게 충전할 크레딧 횟수를 입력해주세요:`,
+      showInput: true,
+      inputPlaceholder: '충전할 횟수 입력 (예: 200)',
+      confirmText: '충전하기',
+      theme: 'primary',
+      onConfirm: async (inputVal) => {
+        const n = parseInt(inputVal || '', 10);
+        if (isNaN(n) || n <= 0) {
+          showToast('올바른 숫자를 입력해주세요.');
+          return;
+        }
 
-    setActionLoadingUid(user.uid);
-    try {
-      await addCreditsToUser(user.uid, count, '관리자 수동 지급');
-      showToast(`${user.displayName || user.email} 회원에게 +${count}회 충전 완료!`);
-      // 로컬 목록 즉각 갱신
-      setUsers(prev => prev.map(u => {
-        if (u.uid === user.uid) {
-          return {
-            ...u,
-            aiCredits: {
-              ...u.aiCredits,
-              paidRemaining: (u.aiCredits?.paidRemaining || 0) + count
+        setActionLoadingUid(user.uid);
+        try {
+          await addCreditsToUser(user.uid, n, '관리자 수동 직접 입력 충전');
+          showToast(`"${userName}" 회원에게 +${n}회 충전 완료!`);
+          setUsers(prev => prev.map(u => {
+            if (u.uid === user.uid) {
+              return {
+                ...u,
+                aiCredits: {
+                  ...u.aiCredits,
+                  paidRemaining: (u.aiCredits?.paidRemaining || 0) + n
+                }
+              };
             }
-          };
+            return u;
+          }));
+        } catch (err) {
+          console.error('Failed to add credits:', err);
+          showToast('충전 중 오류가 발생했습니다.');
+        } finally {
+          setActionLoadingUid(null);
         }
-        return u;
-      }));
-    } catch (err) {
-      console.error('Failed to add credits:', err);
-      alert('보너스 충전 중 오류가 발생했습니다.');
-    } finally {
-      setActionLoadingUid(null);
-    }
+      }
+    });
   };
 
-  // 원격 특별 번역본 권한 토글 (개역개정, NIV 등)
-  const handleToggleVersion = async (
+  // 9. 원격 특별 번역본 권한 토글 (개역개정, NIV 등 - 인앱 확인 모달)
+  const handleToggleVersion = (
     user: UserProfile, 
     versionId: 'built-in-krv' | 'built-in-niv',
     versionName: string
   ) => {
     const isCurrentlyAllowed = (user.allowedVersions || []).includes(versionId);
     const actionText = isCurrentlyAllowed ? '회수' : '제공(활성화)';
-    
-    if (!confirm(`${user.displayName || user.email} 회원에게 ${versionName} 번역본을 ${actionText}하시겠습니까?`)) {
-      return;
-    }
+    const userName = user.displayName || user.email || '회원';
 
-    setActionLoadingUid(`${user.uid}_${versionId}`);
-    try {
-      await toggleUserAllowedVersion(user.uid, versionId, !isCurrentlyAllowed);
-      showToast(`${versionName} 번역본 ${actionText} 완료!`);
-      // 로컬 상태 즉각 갱신
-      setUsers(prev => prev.map(u => {
-        if (u.uid === user.uid) {
-          const prevAllowed = u.allowedVersions || [];
-          const nextAllowed = isCurrentlyAllowed 
-            ? prevAllowed.filter(id => id !== versionId)
-            : [...prevAllowed, versionId];
-          return { ...u, allowedVersions: nextAllowed };
+    setConfirmModal({
+      isOpen: true,
+      title: `${versionName} 번역본 권한 ${actionText}`,
+      message: `"${userName}" 회원에게 ${versionName} 번역본을 ${actionText}하시겠습니까?`,
+      confirmText: `${actionText}하기`,
+      theme: isCurrentlyAllowed ? 'warning' : 'primary',
+      onConfirm: async () => {
+        setActionLoadingUid(`${user.uid}_${versionId}`);
+        try {
+          await toggleUserAllowedVersion(user.uid, versionId, !isCurrentlyAllowed);
+          showToast(`${versionName} 번역본 ${actionText} 완료!`);
+          setUsers(prev => prev.map(u => {
+            if (u.uid === user.uid) {
+              const prevAllowed = u.allowedVersions || [];
+              const nextAllowed = isCurrentlyAllowed 
+                ? prevAllowed.filter(id => id !== versionId)
+                : [...prevAllowed, versionId];
+              return { ...u, allowedVersions: nextAllowed };
+            }
+            return u;
+          }));
+        } catch (err) {
+          console.error('Failed to toggle version:', err);
+          showToast('번역본 권한 변경 중 오류가 발생했습니다.');
+        } finally {
+          setActionLoadingUid(null);
         }
-        return u;
-      }));
-    } catch (err) {
-      console.error('Failed to toggle version:', err);
-      alert('번역본 권한 변경 중 오류가 발생했습니다.');
-    } finally {
-      setActionLoadingUid(null);
-    }
+      }
+    });
   };
 
   // 로그 전체 삭제
   const handleClearAllLogs = async () => {
     if (logs.length === 0) return;
-    if (!confirm(`정말로 기록된 모든 활동 로그(${logs.length}건)를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) {
-      return;
-    }
-
-    setIsDeletingLogs(true);
-    try {
-      await clearAllActivityLogs(logs.map(l => l.id));
-      setLogs([]);
-      showToast('모든 활동 로그가 안전하게 삭제되었습니다.');
-    } catch (err) {
-      console.error('Failed to clear logs:', err);
-      alert('로그 삭제 중 오류가 발생했습니다.');
-    } finally {
-      setIsDeletingLogs(false);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: '모든 활동 로그 영구 삭제',
+      message: `정말로 기록된 모든 활동 로그(${logs.length}건)를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`,
+      confirmText: '전체 로그 삭제',
+      theme: 'danger',
+      onConfirm: async () => {
+        setIsDeletingLogs(true);
+        try {
+          await clearAllActivityLogs(logs.map(l => l.id));
+          setLogs([]);
+          showToast('모든 활동 로그가 안전하게 삭제되었습니다.');
+        } catch (err) {
+          console.error('Failed to clear logs:', err);
+          showToast('로그 삭제 중 오류가 발생했습니다.');
+        } finally {
+          setIsDeletingLogs(false);
+        }
+      }
+    });
   };
 
   // 통계 계산
@@ -482,6 +532,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         initial={{ opacity: 0, scale: 0.96, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.96, y: 15 }}
+        onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-6xl bg-[#FAF9F5] rounded-3xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[94vh] z-10"
       >
         {/* Header */}
@@ -811,7 +862,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                   <td className="py-3 px-3 text-center">
                                     <div className="flex items-center justify-center gap-1">
                                       <button
-                                        onClick={() => handleAddCredits(user, 10)}
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCredits(user, 10); }}
                                         disabled={isBusy}
                                         className="px-2 py-1 bg-white hover:bg-[#FAF0EB] active:bg-[#F5E2DA] border border-[#DDD8CE] hover:border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
                                         title="10회 보너스 충전"
@@ -819,7 +871,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                         +10회
                                       </button>
                                       <button
-                                        onClick={() => handleAddCredits(user, 50)}
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCredits(user, 50); }}
                                         disabled={isBusy}
                                         className="px-2 py-1 bg-white hover:bg-[#FAF0EB] active:bg-[#F5E2DA] border border-[#DDD8CE] hover:border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
                                         title="50회 보너스 충전"
@@ -827,7 +880,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                         +50회
                                       </button>
                                       <button
-                                        onClick={() => handleAddCredits(user, 100)}
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCredits(user, 100); }}
                                         disabled={isBusy}
                                         className="px-2 py-1 bg-[#FAF0EB] hover:bg-[#F5E2DA] active:bg-[#EDD1C4] border border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
                                         title="100회 보너스 충전"
@@ -835,13 +889,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                         +100회
                                       </button>
                                       <button
-                                        onClick={() => {
-                                          const custom = prompt('충전할 횟수를 숫자로 입력해주세요 (예: 200):', '50');
-                                          if (custom) {
-                                            const n = parseInt(custom, 10);
-                                            if (!isNaN(n) && n > 0) handleAddCredits(user, n);
-                                          }
-                                        }}
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleCustomAddCredits(user); }}
                                         disabled={isBusy}
                                         className="px-2 py-1 hover:bg-[#F5F3ED] text-[#8C877D] hover:text-[#2C2B29] rounded-lg text-[10px] font-semibold transition-colors cursor-pointer border border-[#DDD8CE]"
                                         title="직접 숫자 입력 충전"
@@ -856,7 +905,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                     <div className="flex items-center justify-center gap-1.5 flex-wrap">
                                       {/* 개역개정 */}
                                       <button
-                                        onClick={() => handleToggleVersion(user, 'built-in-krv', '개역개정')}
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleToggleVersion(user, 'built-in-krv', '개역개정'); }}
                                         disabled={isBusy}
                                         className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-all border shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
                                           isAllowedKrv 
@@ -871,7 +921,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
                                       {/* NIV */}
                                       <button
-                                        onClick={() => handleToggleVersion(user, 'built-in-niv', 'NIV')}
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleToggleVersion(user, 'built-in-niv', 'NIV'); }}
                                         disabled={isBusy}
                                         className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-all border shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
                                           isAllowedNiv 
@@ -890,7 +941,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                   <td className="py-3 px-3 text-center">
                                     <div className="flex items-center justify-center gap-1.5">
                                       <button
-                                        onClick={() => handleResetPassword(user)}
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); handleResetPassword(user); }}
                                         disabled={isBusy || !user.email}
                                         className="px-2 py-1 bg-white hover:bg-amber-50 border border-[#DDD8CE] hover:border-amber-300 text-[#6E6A63] hover:text-amber-800 rounded-lg text-[10px] font-semibold transition-all shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-40"
                                         title={`${user.email} 주소로 공식 비밀번호 재설정 링크 이메일 발송`}
@@ -900,7 +952,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                       </button>
 
                                       <button
-                                        onClick={() => handleDeleteUser(user)}
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteUser(user); }}
                                         disabled={isBusy}
                                         className="p-1.5 bg-white hover:bg-red-50 border border-[#DDD8CE] hover:border-red-300 text-[#8C877D] hover:text-red-600 rounded-lg transition-all shadow-2xs cursor-pointer disabled:opacity-40"
                                         title="회원 데이터 영구 삭제"
@@ -1224,7 +1277,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                     <div className="flex items-center justify-end gap-1.5">
                                       {isPending && (
                                         <button
-                                          onClick={() => handleApproveReferral(req)}
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleApproveReferral(req); }}
                                           disabled={actionLoadingUid === req.id}
                                           className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer shadow-2xs disabled:opacity-50"
                                         >
@@ -1232,7 +1286,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                         </button>
                                       )}
                                       <button
-                                        onClick={() => handleDeleteReferral(req.id)}
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleDeleteReferral(req.id); }}
                                         className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
                                         title="신청 내역 삭제"
                                       >
@@ -1367,6 +1422,106 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             </>
           )}
         </div>
+
+        {/* 인앱 커스텀 확인 다이얼로그 (createPortal로 부모 transform 간섭 완전 차단 및 깜빡임 해결) */}
+        {typeof document !== 'undefined' && createPortal(
+          <AnimatePresence>
+            {confirmModal && confirmModal.isOpen && (
+              <div 
+                className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) {
+                    e.stopPropagation();
+                    setConfirmModal(null);
+                  }
+                }}
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.94, y: 10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.94, y: 10 }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-md bg-[#FAF9F5] border border-[#E7E5DF] rounded-3xl shadow-2xl p-6 space-y-4 text-left"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-9 h-9 rounded-2xl flex items-center justify-center shrink-0 border ${
+                        confirmModal.theme === 'danger'
+                          ? 'bg-red-50 text-red-600 border-red-200'
+                          : confirmModal.theme === 'warning'
+                          ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : 'bg-[#FAF0EB] text-[#C46A40] border-[#F1D3C6]'
+                      }`}>
+                        <AlertCircle className="w-5 h-5" />
+                      </div>
+                      <h3 className="font-bold text-sm text-[#2C2B29]">{confirmModal.title}</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmModal(null)}
+                      className="p-1.5 text-[#8C877D] hover:text-[#2C2B29] hover:bg-[#F3EFE9] rounded-xl transition-colors cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-[#6E6A63] whitespace-pre-line leading-relaxed pl-1">
+                    {confirmModal.message}
+                  </p>
+
+                  {confirmModal.showInput && (
+                    <div className="pt-1">
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder={confirmModal.inputPlaceholder || '내용 입력'}
+                        value={confirmInputText}
+                        onChange={(e) => setConfirmInputText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            confirmModal.onConfirm(confirmInputText);
+                            setConfirmModal(null);
+                          }
+                        }}
+                        className="w-full px-3.5 py-2.5 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#EFECE6]">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmModal(null)}
+                      className="px-4 py-2 bg-white border border-[#DDD8CE] hover:bg-[#F5F3ED] text-[#6E6A63] text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-2xs"
+                    >
+                      {confirmModal.cancelText || '취소'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const val = confirmInputText;
+                        confirmModal.onConfirm(val);
+                        setConfirmModal(null);
+                      }}
+                      className={`px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs ${
+                        confirmModal.theme === 'danger'
+                          ? 'bg-red-600 hover:bg-red-700 text-white'
+                          : confirmModal.theme === 'warning'
+                          ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                          : 'bg-[#C46A40] hover:bg-[#B55434] text-white'
+                      }`}
+                    >
+                      {confirmModal.confirmText || '확인'}
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
       </motion.div>
     </div>
   );

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   X, Sparkles, RefreshCw, Copy, Check, ChevronRight, ChevronDown,
   BookOpen, Landmark, Lightbulb, AlertCircle, CreditCard,
@@ -117,6 +118,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   const [friendNameInput, setFriendNameInput] = useState('');
   const [isSubmittingReferral, setIsSubmittingReferral] = useState(false);
   const [referralFeedback, setReferralFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [showClearHistoryConfirm, setShowClearHistoryConfirm] = useState(false);
 
   // 모달 오픈 시 추천 혜택 설정 불러오기
   useEffect(() => {
@@ -894,11 +896,10 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
               </div>
               {historyList.length > 0 && (
                 <button
-                  onClick={() => {
-                    if (window.confirm('저장된 모든 주석 기록을 삭제하시겠습니까?')) {
-                      clearAllCommentaryHistory();
-                      loadHistory();
-                    }
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowClearHistoryConfirm(true);
                   }}
                   className="text-[11px] text-[#9E9991] hover:text-red-600 transition-colors cursor-pointer"
                 >
@@ -906,6 +907,63 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                 </button>
               )}
             </div>
+
+            {/* 주석 기록 전체 삭제 확인 모달 */}
+            {showClearHistoryConfirm && typeof document !== 'undefined' && createPortal(
+              <div 
+                className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) {
+                    e.stopPropagation();
+                    setShowClearHistoryConfirm(false);
+                  }
+                }}
+              >
+                <div 
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-sm bg-[#FAF9F5] border border-[#E7E5DF] rounded-3xl shadow-2xl p-6 space-y-4 text-left animate-in fade-in zoom-in-95 duration-150"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-red-50 text-red-600 border border-red-200 flex items-center justify-center shrink-0">
+                      <Trash2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-sm text-[#2C2B29]">주석 기록 전체 삭제</h3>
+                      <p className="text-[11px] text-[#8C877D]">30일간 보관된 모든 기록</p>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-[#6E6A63] leading-relaxed">
+                    저장된 모든 주석 기록을 삭제하시겠습니까?<br />
+                    이 작업은 되돌릴 수 없습니다.
+                  </p>
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#EFECE6]">
+                    <button
+                      type="button"
+                      onClick={() => setShowClearHistoryConfirm(false)}
+                      className="px-4 py-2 bg-white border border-[#DDD8CE] hover:bg-[#F5F3ED] text-[#6E6A63] text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-2xs"
+                    >
+                      취소
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowClearHistoryConfirm(false);
+                        clearAllCommentaryHistory();
+                        loadHistory();
+                      }}
+                      className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
+                    >
+                      전체 삭제
+                    </button>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
 
             {!isLoggedIn ? (
               <div className="py-12 text-center text-[#8C877D] space-y-2">
@@ -1021,13 +1079,18 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   className="w-full p-3.5 rounded-2xl bg-[#FAF9F5] border border-[#E8E3DA] hover:border-[#C46A40] text-left space-y-2 cursor-pointer transition-all shadow-2xs group"
                 >
                   <div className="text-xs leading-relaxed space-y-1">
-                    <div className="flex items-center gap-1.5 text-[#5A564F]">
+                    <div className="flex items-center gap-1.5 text-[#5A564F] font-semibold">
                       <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#C46A40] shrink-0" />
-                      <span>{promoSettings?.enabled && promoSettings.name ? promoSettings.name : '가입 시 AI 연구 크래딧 매월 10회 제공'}</span>
+                      <span>가입 시 AI 연구 크레딧 10회 제공</span>
                     </div>
-                    <div className="text-xs font-bold text-[#C46A40] pl-5">
-                      {promoSettings?.enabled && promoSettings.description ? promoSettings.description : '특별혜택기간: 200 크래딧 제공'}
-                    </div>
+                    {promoSettings?.enabled && (
+                      <div className="text-xs font-bold text-[#C46A40] pl-5 flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 bg-[#FAF0EB] border border-[#F1D3C6] rounded-md text-[11px]">
+                          {(promoSettings.name && !promoSettings.name.includes('10회')) ? promoSettings.name : '특별혜택기간'}
+                        </span>
+                        <span>{promoSettings.description || '200크래딧 제공'}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* 지메일 원클릭 입장 안내 문구 강조 */}

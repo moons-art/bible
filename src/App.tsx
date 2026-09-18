@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { BibleProvider } from './stores/BibleProvider';
 import { useBible } from './stores/BibleContext';
 import { FileUploader } from './components/FileUploader';
@@ -10,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Trash2, 
   FileEdit, Eye, EyeOff, WifiOff, Sparkles, PanelLeft, ChevronsLeftRight, Copy, Columns,
   MoreVertical, ArrowUp, ArrowDown, SlidersHorizontal, GripVertical, ArrowLeft,
-  CreditCard, History
+  CreditCard, History, AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { searchService, type SearchRange } from './services/searchService';
@@ -215,6 +216,9 @@ const MainApp: React.FC = () => {
     import('./services/promotionService').then(({ getPromotionSettings }) => {
       getPromotionSettings().then(setPromoSettings).catch(() => {});
     });
+    if (typeof window !== 'undefined' && window.location.pathname.includes('/admin')) {
+      setShowAdminDashboardModal(true);
+    }
   }, []);
 
   // Firebase Auth 통합 리스너 (구글 + 일반 이메일 간편가입 지원)
@@ -352,6 +356,7 @@ const MainApp: React.FC = () => {
   }, [activeDropdownVersionId]);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarPinned, setIsSidebarPinned] = useState(false);
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() => {
     const saved = localStorage.getItem('bible-left-sidebar-width');
     return saved ? Math.max(parseInt(saved, 10), 285) : 285;
@@ -364,6 +369,7 @@ const MainApp: React.FC = () => {
       const newWidth = e.clientX;
       if (newWidth < 140) {
         setIsSidebarOpen(false);
+        setIsSidebarPinned(false);
         setIsResizingLeftSidebar(false);
       } else {
         const clampedWidth = Math.min(Math.max(newWidth, 240), 450);
@@ -388,6 +394,18 @@ const MainApp: React.FC = () => {
     };
   }, [isResizingLeftSidebar]);
 
+  // 앱 전역 인앱 확인 다이얼로그 상태 (브라우저 confirm 팝업 차단 및 사이드바 깜빡임 완전 해결)
+  interface AppConfirmDialogState {
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    theme?: 'danger' | 'warning' | 'primary';
+    onConfirm: () => void;
+  }
+  const [appConfirmDialog, setAppConfirmDialog] = useState<AppConfirmDialogState | null>(null);
+
   // 사이드바 Hover 자동 열림/닫힘 및 외부 클릭 처리
   const sidebarCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leftSidebarRef = useRef<HTMLDivElement>(null);
@@ -402,13 +420,14 @@ const MainApp: React.FC = () => {
   };
 
   const closeSidebarWithHover = () => {
-    if (isResizingLeftSidebar) return;
+    // 사용자가 클릭으로 고정(Pinned)해두었거나 확인 모달/리사이징 중일 때는 마우스가 벗어나도 절대 닫지 않음
+    if (isSidebarPinned || isResizingLeftSidebar || appConfirmDialog?.isOpen) return;
     if (sidebarCloseTimerRef.current) {
       clearTimeout(sidebarCloseTimerRef.current);
     }
     sidebarCloseTimerRef.current = setTimeout(() => {
       setIsSidebarOpen(false);
-    }, 200);
+    }, 280);
   };
 
   useEffect(() => {
@@ -419,10 +438,11 @@ const MainApp: React.FC = () => {
     };
   }, []);
 
-  // 사이드바 외부 클릭 시 닫기
+  // 사이드바 외부 클릭 시 닫기 (확인 모달 상호작용 중에는 닫히지 않도록 완벽 가드)
   useEffect(() => {
     if (!isSidebarOpen) return;
     const handleOutsideClick = (e: MouseEvent) => {
+      if (appConfirmDialog?.isOpen) return;
       if (
         leftSidebarRef.current &&
         leftSidebarRef.current.contains(e.target as Node)
@@ -436,11 +456,12 @@ const MainApp: React.FC = () => {
         return;
       }
       setIsSidebarOpen(false);
+      setIsSidebarPinned(false);
     };
 
     window.addEventListener('mousedown', handleOutsideClick);
     return () => window.removeEventListener('mousedown', handleOutsideClick);
-  }, [isSidebarOpen]);
+  }, [isSidebarOpen, appConfirmDialog]);
 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isSettingsPageOpen, setIsSettingsPageOpen] = useState(false);
@@ -796,7 +817,11 @@ const MainApp: React.FC = () => {
                   </span>
                 </div>
                 <button
-                  onClick={() => setIsSidebarOpen(false)}
+                  type="button"
+                  onClick={() => {
+                    setIsSidebarOpen(false);
+                    setIsSidebarPinned(false);
+                  }}
                   className="p-1.5 text-[#8C877D] hover:text-[#2B2927] hover:bg-[#EBE5DC] rounded-lg transition-colors cursor-pointer"
                   title="사이드바 닫기"
                 >
@@ -939,11 +964,21 @@ const MainApp: React.FC = () => {
                               {activeDropdownVersionId === v.id && (
                                 <div className="absolute right-0 top-6 w-24 bg-white border border-[#E5E0D8] rounded-xl shadow-lg py-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
                                   <button
-                                    onClick={() => {
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      e.preventDefault();
                                       setActiveDropdownVersionId(null);
-                                      if (confirm(`'${v.name}' 번역본을 목록에서 삭제하시겠습니까?`)) {
-                                        removeVersion(v.id);
-                                      }
+                                      setAppConfirmDialog({
+                                        isOpen: true,
+                                        title: '번역본 목록에서 삭제',
+                                        message: `'${v.name}' 번역본을 목록에서 삭제하시겠습니까?\n(언제든지 상단 + 버튼에서 다시 추가할 수 있습니다.)`,
+                                        confirmText: '삭제',
+                                        theme: 'danger',
+                                        onConfirm: () => {
+                                          removeVersion(v.id);
+                                        }
+                                      });
                                     }}
                                     className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-[#D97757] hover:bg-[#F7EEE9] cursor-pointer font-medium"
                                   >
@@ -1015,13 +1050,18 @@ const MainApp: React.FC = () => {
                       className="mx-0.5 my-1.5 p-2.5 rounded-xl bg-[#FAF0EB]/80 hover:bg-[#FAF0EB] border border-[#F1D3C6] cursor-pointer transition-all shadow-2xs group"
                     >
                       <div className="text-[11px] leading-snug space-y-1">
-                        <div className="flex items-center gap-1.5 text-[#4A4741]">
+                        <div className="flex items-center gap-1.5 text-[#4A4741] font-semibold">
                           <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#C46A40] shrink-0" />
-                          <span>{promoSettings?.enabled && promoSettings.name ? promoSettings.name : '가입 시 AI 연구 크레딧 10회 제공'}</span>
+                          <span>가입 시 AI 연구 크레딧 10회 제공</span>
                         </div>
-                        <div className="text-[11px] font-bold text-[#C46A40] pl-5">
-                          {promoSettings?.enabled && promoSettings.description ? promoSettings.description : '특별혜택기간: 200 크래딧 제공'}
-                        </div>
+                        {promoSettings?.enabled && (
+                          <div className="text-[11px] font-bold text-[#C46A40] pl-5 flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.2 bg-white border border-[#F1D3C6] rounded text-[10px]">
+                              {(promoSettings.name && !promoSettings.name.includes('10회')) ? promoSettings.name : '특별혜택기간'}
+                            </span>
+                            <span>{promoSettings.description || '200크래딧 제공'}</span>
+                          </div>
+                        )}
                       </div>
                       <div className="mt-1.5 pt-1.5 border-t border-[#F1D3C6]/60 flex items-center justify-between text-[10px] text-[#C46A40]">
                         <span className="font-normal text-[#8C877D]">지메일로 원클릭 가입</span>
@@ -1070,7 +1110,12 @@ const MainApp: React.FC = () => {
                     {/* 최고 관리자 전용 대시보드 진입 버튼 */}
                     {isAdminUser(userProfile?.email) && (
                       <button
-                        onClick={() => setShowAdminDashboardModal(true)}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          setShowAdminDashboardModal(true);
+                        }}
                         className="w-full flex items-center justify-between py-1.5 px-2.5 bg-[#FAF0EB] hover:bg-[#F5E2DA] border border-[#F1D3C6] text-[#C46A40] rounded-xl transition-all cursor-pointer shadow-2xs group"
                         title="최고 관리자 전용 콘솔"
                       >
@@ -1096,29 +1141,39 @@ const MainApp: React.FC = () => {
                         <span className="text-xs font-normal text-[#2B2927] truncate">{userProfile?.name || '사용자'}</span>
                       </div>
                       <button
-                        onClick={async () => {
-                          if (confirm('로그아웃 하시겠습니까?\n모든 개인 데이터와 세션이 초기화됩니다.')) {
-                            try {
-                              await signOut(auth);
-                            } catch (e) {}
-                            try {
-                              const { gdriveWebService } = await import('./api/gdriveWebService');
-                              await gdriveWebService.logout();
-                            } catch (e) {}
-                            try {
-                              const { clearAiUsageState } = await import('./services/aiUsageService');
-                              clearAiUsageState();
-                            } catch (e) {}
-                            // 로컬 스토리지의 모든 개인 데이터 및 세션 완벽 삭제
-                            localStorage.removeItem('offline_user_profile');
-                            localStorage.removeItem('gdrive_token');
-                            localStorage.removeItem('gdrive_token_expires_at');
-                            localStorage.removeItem('nations_ai_commentary_usage_v1');
-                            localStorage.removeItem('commentary_history_v1');
-                            localStorage.removeItem('bible-selected-versions');
-                            sessionStorage.clear();
-                            window.location.reload();
-                          }
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          setAppConfirmDialog({
+                            isOpen: true,
+                            title: '로그아웃',
+                            message: '로그아웃 하시겠습니까?\n모든 개인 데이터와 세션이 안전하게 초기화됩니다.',
+                            confirmText: '로그아웃',
+                            theme: 'danger',
+                            onConfirm: async () => {
+                              try {
+                                await signOut(auth);
+                              } catch (e) {}
+                              try {
+                                const { gdriveWebService } = await import('./api/gdriveWebService');
+                                await gdriveWebService.logout();
+                              } catch (e) {}
+                              try {
+                                const { clearAiUsageState } = await import('./services/aiUsageService');
+                                clearAiUsageState();
+                              } catch (e) {}
+                              // 로컬 스토리지의 모든 개인 데이터 및 세션 완벽 삭제
+                              localStorage.removeItem('offline_user_profile');
+                              localStorage.removeItem('gdrive_token');
+                              localStorage.removeItem('gdrive_token_expires_at');
+                              localStorage.removeItem('nations_ai_commentary_usage_v1');
+                              localStorage.removeItem('commentary_history_v1');
+                              localStorage.removeItem('bible-selected-versions');
+                              sessionStorage.clear();
+                              window.location.reload();
+                            }
+                          });
                         }}
                         className="px-2 py-0.5 text-[10px] font-normal text-[#D97757] bg-[#F7EEE9] hover:bg-[#F2DFD5] rounded-md transition-all border border-[#F0DCD3] cursor-pointer"
                       >
@@ -1162,17 +1217,24 @@ const MainApp: React.FC = () => {
               <div className="flex items-center gap-1.5 shrink-0">
                 <button 
                   ref={sidebarToggleBtnRef}
+                  type="button"
                   onClick={() => {
                     if (sidebarCloseTimerRef.current) {
                       clearTimeout(sidebarCloseTimerRef.current);
                       sidebarCloseTimerRef.current = null;
                     }
-                    setIsSidebarOpen(!isSidebarOpen);
+                    if (isSidebarOpen && isSidebarPinned) {
+                      setIsSidebarOpen(false);
+                      setIsSidebarPinned(false);
+                    } else {
+                      setIsSidebarOpen(true);
+                      setIsSidebarPinned(true);
+                    }
                   }}
                   onMouseEnter={openSidebarWithHover}
                   onMouseLeave={closeSidebarWithHover}
                   className="p-1.5 hover:bg-[#F3EFE9] rounded-lg transition-colors text-[#524E48] hover:text-[#2B2927] shrink-0 border border-transparent hover:border-[#E5E0D8] cursor-pointer"
-                  title="사이드바 (마우스를 올리면 자동으로 열리고 벗어나면 닫힙니다)"
+                  title="사이드바 (클릭하면 고정되어 열리며, 마우스를 올리면 자동으로 열립니다)"
                 >
                   <PanelLeft className="w-5 h-5 stroke-[1.6px]" />
                 </button>
@@ -2121,6 +2183,76 @@ const MainApp: React.FC = () => {
             </button>
           </div>
         </div>
+      )}
+
+      {/* 앱 전역 인앱 확인 다이얼로그 (createPortal로 최상위 렌더링 & 깜빡임 원천 차단) */}
+      {appConfirmDialog && appConfirmDialog.isOpen && typeof document !== 'undefined' && createPortal(
+        <div 
+          className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              e.stopPropagation();
+              setAppConfirmDialog(null);
+            }
+          }}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.94, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.94, y: 10 }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-[#FAF9F5] border border-[#E7E5DF] rounded-3xl shadow-2xl p-6 space-y-4 text-left"
+          >
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border ${
+                appConfirmDialog.theme === 'danger'
+                  ? 'bg-red-50 text-red-600 border-red-200'
+                  : appConfirmDialog.theme === 'warning'
+                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                  : 'bg-[#FAF0EB] text-[#C46A40] border-[#F1D3C6]'
+              }`}>
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-[#2C2B29]">{appConfirmDialog.title}</h3>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#6E6A63] whitespace-pre-line leading-relaxed pl-1">
+              {appConfirmDialog.message}
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#EFECE6]">
+              <button
+                type="button"
+                onClick={() => setAppConfirmDialog(null)}
+                className="px-4 py-2 bg-white border border-[#DDD8CE] hover:bg-[#F5F3ED] text-[#6E6A63] text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-2xs"
+              >
+                {appConfirmDialog.cancelText || '취소'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const fn = appConfirmDialog.onConfirm;
+                  setAppConfirmDialog(null);
+                  fn();
+                }}
+                className={`px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs ${
+                  appConfirmDialog.theme === 'danger'
+                    ? 'bg-red-600 hover:bg-red-700 text-white'
+                    : appConfirmDialog.theme === 'warning'
+                    ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                    : 'bg-[#C46A40] hover:bg-[#B55434] text-white'
+                }`}
+              >
+                {appConfirmDialog.confirmText || '확인'}
+              </button>
+            </div>
+          </motion.div>
+        </div>,
+        document.body
       )}
     </div>
   );

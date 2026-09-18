@@ -13,11 +13,13 @@ import {
 import type { User } from 'firebase/auth';
 import { db } from '../api/firebaseConfig';
 
+export const ADMIN_EMAILS = ['ymoonsik@gmail.com', 'global0103@naver.com'];
 export const ADMIN_EMAIL = 'ymoonsik@gmail.com';
 
 export function isAdminUser(email?: string | null): boolean {
   if (!email) return false;
-  return email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  const normalized = email.trim().toLowerCase();
+  return ADMIN_EMAILS.some(admin => admin.toLowerCase() === normalized);
 }
 
 export interface UserProfile {

@@ -25,8 +25,8 @@ export interface PromotionSettings {
 
 export const DEFAULT_PROMOTION_SETTINGS: PromotionSettings = {
   enabled: true,
-  name: '가입 시 AI 연구 크레딧 10회 제공',
-  description: '특별혜택기간: 200 크래딧 제공',
+  name: '특별혜택기간',
+  description: '200크래딧 제공',
   bonusCredits: 200,
 };
 
