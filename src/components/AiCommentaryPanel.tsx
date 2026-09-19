@@ -111,66 +111,65 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
     getPromotionSettings().then(setPromoSettings).catch(() => {});
   }, []);
 
-  // 친구 추천 혜택 관련 상태
+  // 친구 추천 혜택 관련 상태 (이메일 기반)
   const [referralBonusCount, setReferralBonusCount] = useState<number>(50);
   const [isReferralFormOpen, setIsReferralFormOpen] = useState(false);
-  const [referrerNameInput, setReferrerNameInput] = useState('');
-  const [friendNameInput, setFriendNameInput] = useState('');
+  const [referrerEmailInput, setReferrerEmailInput] = useState('');
+  const [friendEmailInput, setFriendEmailInput] = useState('');
   const [isSubmittingReferral, setIsSubmittingReferral] = useState(false);
   const [referralFeedback, setReferralFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showClearHistoryConfirm, setShowClearHistoryConfirm] = useState(false);
 
-  // 모달 오픈 시 추천 혜택 설정 불러오기
+  // 모달 오픈 시 추천 혜택 설정 불러오기 및 본인 이메일 자동 세팅
   useEffect(() => {
     if (showRechargeModal) {
       getReferralSettings().then(st => {
         if (st && st.bonusCredits) setReferralBonusCount(st.bonusCredits);
       }).catch(() => {});
-      if (auth.currentUser) {
-        setReferrerNameInput(auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || '');
+      if (auth.currentUser?.email) {
+        setReferrerEmailInput(auth.currentUser.email);
       }
     }
   }, [showRechargeModal]);
 
-  // 추천 신청 제출 핸들러 (성명 기반)
+  // 추천 신청 제출 핸들러 (이메일 기반)
   const handleSubmitReferral = async (e: React.FormEvent) => {
     e.preventDefault();
     setReferralFeedback(null);
 
-    const cleanName = referrerNameInput.trim();
-    const cleanFriend = friendNameInput.trim();
+    const cleanMyEmail = (referrerEmailInput || auth.currentUser?.email || '').trim().toLowerCase();
+    const cleanFriendEmail = friendEmailInput.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    if (!cleanName) {
-      setReferralFeedback({ type: 'error', message: '추천인(나)의 성명(가입한 본명)을 입력해주세요.' });
+    if (!cleanMyEmail || !emailRegex.test(cleanMyEmail)) {
+      setReferralFeedback({ type: 'error', message: '추천인(본인)의 올바른 이메일 주소를 입력해주세요.' });
       return;
     }
-    if (!cleanFriend) {
-      setReferralFeedback({ type: 'error', message: '친구(상대방) 가입자의 성명(가입한 본명)을 입력해주세요.' });
-      return;
-    }
-
-    if (cleanName.toLowerCase() === cleanFriend.toLowerCase()) {
-      setReferralFeedback({ type: 'error', message: '본인 성명은 추천 대상으로 입력할 수 없습니다.' });
+    if (!cleanFriendEmail || !emailRegex.test(cleanFriendEmail)) {
+      setReferralFeedback({ type: 'error', message: '친구(상대방) 가입자의 올바른 이메일 주소를 입력해주세요.' });
       return;
     }
 
-    const myEmail = (auth.currentUser?.email || '').trim().toLowerCase();
+    if (cleanMyEmail === cleanFriendEmail) {
+      setReferralFeedback({ type: 'error', message: '본인 이메일은 추천 대상으로 입력할 수 없습니다.' });
+      return;
+    }
 
     setIsSubmittingReferral(true);
     try {
       await submitReferralRequest({
-        referrerName: cleanName,
-        referrerEmail: myEmail || cleanName,
+        referrerEmail: cleanMyEmail,
+        referrerName: cleanMyEmail.split('@')[0],
         referrerUid: auth.currentUser?.uid,
-        friendName: cleanFriend,
-        friendEmail: cleanFriend,
+        friendEmail: cleanFriendEmail,
+        friendName: cleanFriendEmail.split('@')[0],
         bonusCredits: referralBonusCount
       });
       setReferralFeedback({
         type: 'success',
         message: `추천 신청이 정상 접수되었습니다! 관리자 확인 후 AI ${referralBonusCount}회가 충전됩니다.`
       });
-      setFriendNameInput('');
+      setFriendEmailInput('');
     } catch (err: any) {
       console.error('Failed to submit referral:', err);
       setReferralFeedback({ type: 'error', message: '신청 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.' });
@@ -760,16 +759,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
 
         {/* 우측: 잔여 크레딧 안내 및 닫기 버튼 */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {!isLoggedIn ? (
-            <button
-              onClick={() => onOpenAuthModal ? onOpenAuthModal() : setShowRechargeModal(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-[#C46A40] bg-[#FAF0EB] hover:bg-[#F5E5DC] transition-colors cursor-pointer border border-[#F1D3C6] shadow-2xs whitespace-nowrap font-medium"
-              title="로그인하고 무료 10회 이용하기"
-            >
-              <LogIn className="w-3.5 h-3.5 shrink-0" />
-              <span>로그인 필요 (무료 10회)</span>
-            </button>
-          ) : (
+          {isLoggedIn && (
             <button
               onClick={() => setShowRechargeModal(true)}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-[#6E6A63] hover:text-[#2C2B29] hover:bg-[#EFEAE2] transition-colors cursor-pointer border border-[#E5E0D8] bg-[#FAF9F5] shadow-2xs whitespace-nowrap"
@@ -1053,17 +1043,6 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   </p>
                 </div>
 
-                {currentVerse && scriptureText && scriptureText.trim() && (
-                  <div className="w-full p-3 rounded-xl bg-white border border-[#E8E3DA] text-left shadow-2xs space-y-1">
-                    <span className="text-[11px] font-bold text-[#C46A40]">
-                      선택된 구절: {currentBookName} {currentChapter}:{currentVerse}
-                    </span>
-                    <p className="font-serif text-xs text-[#4A4741] line-clamp-2">
-                      "{scriptureText}"
-                    </p>
-                  </div>
-                )}
-
                 {/* 로그인 / 이용하기 메인 버튼 */}
                 <button
                   onClick={() => onOpenAuthModal ? onOpenAuthModal() : undefined}
@@ -1086,9 +1065,9 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                     {promoSettings?.enabled && (
                       <div className="text-xs font-bold text-[#C46A40] pl-5 flex items-center gap-1.5">
                         <span className="px-2 py-0.5 bg-[#FAF0EB] border border-[#F1D3C6] rounded-md text-[11px]">
-                          {(promoSettings.name && !promoSettings.name.includes('10회')) ? promoSettings.name : '특별혜택기간'}
+                          {(promoSettings.name && !promoSettings.name.includes('10회') && !promoSettings.name.includes('크레딧') && !promoSettings.name.includes('가입')) ? promoSettings.name : '특별혜택기간'}
                         </span>
-                        <span>{promoSettings.description || '200크래딧 제공'}</span>
+                        <span>{(promoSettings.description || '200크레딧 제공').replace(/^(?:특별혜택기간|프로모션)\s*:\s*/, '').replace(/200\s*크[래레]딧\s*제공/, '200크레딧 제공').replace('크래딧', '크레딧').trim()}</span>
                       </div>
                     )}
                   </div>
@@ -1955,7 +1934,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   <div className="text-[#8C877D] text-[11px]">설교 준비 및 집중 묵상용</div>
                 </div>
                 <button
-                  onClick={() => handleSimulateRecharge(200, '5,000원')}
+                  onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
                   className="px-3 py-1.5 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold transition-colors cursor-pointer shadow-2xs"
                 >
                   5,000원 충전
@@ -1972,7 +1951,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   <div className="text-[#8C877D] text-[11px]">가장 많은 목회자/성도가 선택</div>
                 </div>
                 <button
-                  onClick={() => handleSimulateRecharge(500, '10,000원')}
+                  onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
                   className="px-3 py-1.5 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold transition-colors cursor-pointer shadow-2xs"
                 >
                   10,000원 충전
@@ -1986,7 +1965,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   <div className="text-[#8C877D] text-[11px]">최대 혜택 패키지</div>
                 </div>
                 <button
-                  onClick={() => handleSimulateRecharge(1000, '15,000원')}
+                  onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
                   className="px-3 py-1.5 rounded-lg bg-[#2C2B29] hover:bg-[#1A1918] text-white font-semibold transition-colors cursor-pointer shadow-2xs"
                 >
                   15,000원 충전
@@ -2022,11 +2001,11 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                 </button>
               </div>
 
-              {/* 친구 추천 신청 입력 폼 */}
+              {/* 친구 추천 신청 입력 폼 (이메일 기반) */}
               {isReferralFormOpen && (
                 <form onSubmit={handleSubmitReferral} className="mt-3 pt-3 border-t border-[#EFECE6] space-y-2.5 animate-in fade-in duration-200">
                   <div className="p-2.5 rounded-xl bg-white border border-[#E8E3DA] text-[11px] text-[#C46A40] leading-relaxed">
-                    💡 정보를 정확하게 기입하시면, 확인후 혜택을 드립니다. (1인 추천 시 AI {referralBonusCount}회 추가)
+                    💡 가입하신 구글/지메일 주소를 정확히 기입하시면, 관리자 확인 후 AI {referralBonusCount}회가 충전됩니다.
                   </div>
 
                   {referralFeedback && (
@@ -2041,24 +2020,24 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   )}
 
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-[#5A564F]">추천인(나)의 성명: 가입한 본명</label>
+                    <label className="block text-[11px] font-semibold text-[#5A564F]">추천인(나)의 가입 이메일</label>
                     <input
-                      type="text"
-                      placeholder="본인 본명 입력"
-                      value={referrerNameInput}
-                      onChange={(e) => setReferrerNameInput(e.target.value)}
+                      type="email"
+                      placeholder="본인 구글/가입 이메일 (예: user@gmail.com)"
+                      value={referrerEmailInput}
+                      onChange={(e) => setReferrerEmailInput(e.target.value)}
                       className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-1 focus:ring-[#C46A40]"
                       required
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-[#5A564F]">친구(상대방)가입자 성명: 가입한 본명</label>
+                    <label className="block text-[11px] font-semibold text-[#5A564F]">친구(상대방)의 가입 이메일</label>
                     <input
-                      type="text"
-                      placeholder="친구 본명 입력"
-                      value={friendNameInput}
-                      onChange={(e) => setFriendNameInput(e.target.value)}
+                      type="email"
+                      placeholder="친구 구글/가입 이메일 (예: friend@gmail.com)"
+                      value={friendEmailInput}
+                      onChange={(e) => setFriendEmailInput(e.target.value)}
                       className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-1 focus:ring-[#C46A40]"
                       required
                     />

@@ -11,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Trash2, 
   FileEdit, Eye, EyeOff, WifiOff, Sparkles, PanelLeft, ChevronsLeftRight, Copy, Columns,
   MoreVertical, ArrowUp, ArrowDown, SlidersHorizontal, GripVertical, ArrowLeft,
-  CreditCard, History, AlertCircle
+  CreditCard, History, AlertCircle, LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { searchService, type SearchRange } from './services/searchService';
@@ -240,12 +240,16 @@ const MainApp: React.FC = () => {
             const syncedProfile = await syncUserProfile(user);
             console.log('[App] ✅ syncUserProfile 성공 uid:', user.uid);
 
-            // 신규 가입자 또는 가입 보너스 수령자 환영 팝업 체크
+            // 신규 가입자 환영 팝업 체크 (기존 가입자는 절대 중복 노출 안 됨)
             if (syncedProfile) {
               const paidBonus = syncedProfile.aiCredits?.paidRemaining || 0;
               const seenKey = `welcome_bonus_seen_${user.uid}`;
               const alreadySeen = localStorage.getItem(seenKey) === 'true';
-              if (paidBonus > 0 && !alreadySeen) {
+              const hasSeenInDb = syncedProfile.hasSeenWelcome === true;
+              const isNewSignUp = syncedProfile.isNewSignUp === true;
+              const isFirstLogin = (syncedProfile.loginCount || 1) <= 1;
+
+              if (paidBonus > 0 && isNewSignUp && isFirstLogin && !hasSeenInDb && !alreadySeen) {
                 setWelcomeModalInfo({
                   isOpen: true,
                   bonusCredits: paidBonus,
@@ -401,7 +405,7 @@ const MainApp: React.FC = () => {
     message: string;
     confirmText?: string;
     cancelText?: string;
-    theme?: 'danger' | 'warning' | 'primary';
+    theme?: 'danger' | 'warning' | 'primary' | 'claude';
     onConfirm: () => void;
   }
   const [appConfirmDialog, setAppConfirmDialog] = useState<AppConfirmDialogState | null>(null);
@@ -1057,9 +1061,9 @@ const MainApp: React.FC = () => {
                         {promoSettings?.enabled && (
                           <div className="text-[11px] font-bold text-[#C46A40] pl-5 flex items-center gap-1.5">
                             <span className="px-1.5 py-0.2 bg-white border border-[#F1D3C6] rounded text-[10px]">
-                              {(promoSettings.name && !promoSettings.name.includes('10회')) ? promoSettings.name : '특별혜택기간'}
+                              {(promoSettings.name && !promoSettings.name.includes('10회') && !promoSettings.name.includes('크레딧') && !promoSettings.name.includes('가입')) ? promoSettings.name : '특별혜택기간'}
                             </span>
-                            <span>{promoSettings.description || '200크래딧 제공'}</span>
+                            <span>{(promoSettings.description || '200크레딧 제공').replace(/^(?:특별혜택기간|프로모션)\s*:\s*/, '').replace(/200\s*크[래레]딧\s*제공/, '200크레딧 제공').replace('크래딧', '크레딧').trim()}</span>
                           </div>
                         )}
                       </div>
@@ -1148,9 +1152,9 @@ const MainApp: React.FC = () => {
                           setAppConfirmDialog({
                             isOpen: true,
                             title: '로그아웃',
-                            message: '로그아웃 하시겠습니까?\n모든 개인 데이터와 세션이 안전하게 초기화됩니다.',
+                            message: '로그아웃 하시겠습니까?\n모든 개인 데이터와 세션이 안전하게 저장됩니다.',
                             confirmText: '로그아웃',
-                            theme: 'danger',
+                            theme: 'claude',
                             onConfirm: async () => {
                               try {
                                 await signOut(auth);
@@ -1394,7 +1398,7 @@ const MainApp: React.FC = () => {
                       <div className="flex-1 overflow-hidden">
                          <BibleViewer 
                           key={`left-${leftNav.bookId}-${leftNav.chapter}-${leftNav.verse}-${leftNav.scrollTrigger}-${selectedVersionIds.join(',')}`}
-                          selectedVersions={versions.filter(v => selectedVersionIds.includes(v.id))} 
+                          selectedVersions={versions.filter(v => selectedVersionIds.includes(v.id))}
                           currentBookId={leftNav.bookId}
                           currentChapter={leftNav.chapter}
                           highlightVerse={leftNav.verse}
@@ -2171,9 +2175,15 @@ const MainApp: React.FC = () => {
 
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 if (auth.currentUser) {
-                  localStorage.setItem(`welcome_bonus_seen_${auth.currentUser.uid}`, 'true');
+                  const uid = auth.currentUser.uid;
+                  localStorage.setItem(`welcome_bonus_seen_${uid}`, 'true');
+                  try {
+                    const { doc, updateDoc } = await import('firebase/firestore');
+                    const { db } = await import('./api/firebaseConfig');
+                    await updateDoc(doc(db, 'users', uid), { hasSeenWelcome: true });
+                  } catch (e) {}
                 }
                 setWelcomeModalInfo(null);
               }}
@@ -2185,10 +2195,10 @@ const MainApp: React.FC = () => {
         </div>
       )}
 
-      {/* 앱 전역 인앱 확인 다이얼로그 (createPortal로 최상위 렌더링 & 깜빡임 원천 차단) */}
+      {/* 앱 전역 인앱 확인 다이얼로그 (우아한 클로드 스타일 모달) */}
       {appConfirmDialog && appConfirmDialog.isOpen && typeof document !== 'undefined' && createPortal(
         <div 
-          className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+          className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/45 backdrop-blur-xs animate-in fade-in duration-150"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             if (e.target === e.currentTarget) {
@@ -2198,37 +2208,50 @@ const MainApp: React.FC = () => {
           }}
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.94, y: 10 }}
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.94, y: 10 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm bg-[#FAF9F5] border border-[#E7E5DF] rounded-3xl shadow-2xl p-6 space-y-4 text-left"
+            className="w-full max-w-sm bg-[#FAF9F5] border border-[#E7E5DF] rounded-3xl shadow-2xl p-5 space-y-4 text-left"
           >
-            <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border ${
-                appConfirmDialog.theme === 'danger'
-                  ? 'bg-red-50 text-red-600 border-red-200'
-                  : appConfirmDialog.theme === 'warning'
-                  ? 'bg-amber-50 text-amber-700 border-amber-200'
-                  : 'bg-[#FAF0EB] text-[#C46A40] border-[#F1D3C6]'
-              }`}>
-                <AlertCircle className="w-5 h-5" />
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border bg-[#FAF0EB] text-[#C46A40] border-[#F1D3C6] shadow-2xs">
+                  {appConfirmDialog.title.includes('로그아웃') ? (
+                    <LogOut className="w-5 h-5 text-[#C46A40] stroke-[1.8px]" />
+                  ) : (
+                    <ClaudeSparkleIcon className="w-5 h-5 text-[#C46A40]" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="font-serif font-bold text-base text-[#2C2B29] tracking-tight">{appConfirmDialog.title}</h3>
+                  <p className="text-[10px] text-[#A39E94] font-medium">NATIONS BIBLE</p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-bold text-sm text-[#2C2B29]">{appConfirmDialog.title}</h3>
-              </div>
-            </div>
-
-            <p className="text-xs text-[#6E6A63] whitespace-pre-line leading-relaxed pl-1">
-              {appConfirmDialog.message}
-            </p>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#EFECE6]">
               <button
                 type="button"
                 onClick={() => setAppConfirmDialog(null)}
-                className="px-4 py-2 bg-white border border-[#DDD8CE] hover:bg-[#F5F3ED] text-[#6E6A63] text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-2xs"
+                className="p-1.5 rounded-xl text-[#8C877D] hover:text-[#2C2B29] hover:bg-[#EFEAE2] transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4 stroke-[1.8px]" />
+              </button>
+            </div>
+
+            {/* Content Box */}
+            <div className="p-3.5 bg-white rounded-2xl border border-[#E8E3DA] shadow-2xs">
+              <p className="text-xs text-[#524F4A] whitespace-pre-line leading-relaxed">
+                {appConfirmDialog.message}
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setAppConfirmDialog(null)}
+                className="px-4 py-2.5 bg-white border border-[#DDD8CE] hover:bg-[#F5F3ED] text-[#6E6A63] text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-2xs"
               >
                 {appConfirmDialog.cancelText || '취소'}
               </button>
@@ -2239,13 +2262,7 @@ const MainApp: React.FC = () => {
                   setAppConfirmDialog(null);
                   fn();
                 }}
-                className={`px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs ${
-                  appConfirmDialog.theme === 'danger'
-                    ? 'bg-red-600 hover:bg-red-700 text-white'
-                    : appConfirmDialog.theme === 'warning'
-                    ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                    : 'bg-[#C46A40] hover:bg-[#B55434] text-white'
-                }`}
+                className="px-5 py-2.5 bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
               >
                 {appConfirmDialog.confirmText || '확인'}
               </button>

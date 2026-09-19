@@ -698,7 +698,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                     </div>
                     <h3 className="text-[#2C2B29] font-bold text-sm mb-1.5">로그인이 필요한 기능입니다</h3>
                     <p className="text-xs text-[#6A6864] font-medium leading-relaxed">
-                      왼쪽 사이드바의 <strong>[로그인 / 간편가입]</strong> 버튼을 눌러<br/>가입 후 로그인하시면 설교노트를 영구적으로 저장할 수 있습니다.
+                      왼쪽 사이드바의 <strong>[로그인 / 간편가입]</strong> 버튼을 눌러<br/>가입 후 로그인하시면 편하게 사용하실 수 있습니다.
                     </p>
                   </div>
                 )}

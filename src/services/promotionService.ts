@@ -26,7 +26,7 @@ export interface PromotionSettings {
 export const DEFAULT_PROMOTION_SETTINGS: PromotionSettings = {
   enabled: true,
   name: '특별혜택기간',
-  description: '200크래딧 제공',
+  description: '200크레딧 제공',
   bonusCredits: 200,
 };
 
@@ -43,11 +43,11 @@ export const DEFAULT_REFERRAL_SETTINGS: ReferralSettings = {
 // ── 3. 친구 추천 신청 요청 인터페이스 ──────────────────────────────────
 export interface ReferralRequest {
   id: string;
-  referrerName: string;
+  referrerName?: string;
   referrerEmail: string;
   referrerUid?: string;
   friendName?: string;
-  friendEmail?: string;
+  friendEmail: string;
   bonusCredits: number;
   status: 'pending' | 'approved' | 'rejected';
   createdAt: number;
@@ -62,7 +62,22 @@ export async function getPromotionSettings(): Promise<PromotionSettings> {
   try {
     const snap = await getDoc(doc(db, 'system_settings', 'promotion'));
     if (snap.exists()) {
-      return { ...DEFAULT_PROMOTION_SETTINGS, ...snap.data() } as PromotionSettings;
+      const data = snap.data();
+      const name = (data.name && !data.name.includes('10회') && !data.name.includes('크레딧')) 
+        ? data.name 
+        : '특별혜택기간';
+      const rawDesc = (data.description || '200크레딧 제공');
+      const description = rawDesc
+        .replace(/^(?:특별혜택기간|프로모션)\s*:\s*/, '')
+        .replace(/200\s*크[래레]딧\s*제공/, '200크레딧 제공')
+        .replace('크래딧', '크레딧')
+        .trim();
+      return { 
+        ...DEFAULT_PROMOTION_SETTINGS, 
+        ...data,
+        name,
+        description
+      } as PromotionSettings;
     }
   } catch (e) {
     console.warn('[promotionService] getPromotionSettings failed, using default:', e);
@@ -108,27 +123,28 @@ export async function saveReferralSettings(settings: ReferralSettings): Promise<
 }
 
 /**
- * 이용권 결제창에서 친구 추천 신청 접수
+ * 이용권 결제창에서 친구 추천 신청 접수 (이메일 기반)
  */
 export async function submitReferralRequest(params: {
-  referrerName: string;
   referrerEmail: string;
+  friendEmail: string;
+  referrerName?: string;
   referrerUid?: string;
   friendName?: string;
-  friendEmail?: string;
   bonusCredits: number;
 }): Promise<string> {
   const col = collection(db, 'referral_requests');
-  const cleanFriendName = (params.friendName || '').trim();
-  const cleanFriendEmail = (params.friendEmail || '').trim().toLowerCase();
+  const cleanFriendEmail = params.friendEmail.trim().toLowerCase();
   const cleanReferrerEmail = params.referrerEmail.trim().toLowerCase();
+  const referrerName = (params.referrerName || '').trim() || cleanReferrerEmail.split('@')[0];
+  const friendName = (params.friendName || '').trim() || cleanFriendEmail.split('@')[0];
 
   const docRef = await addDoc(col, {
-    referrerName: params.referrerName.trim(),
+    referrerName,
     referrerEmail: cleanReferrerEmail,
     referrerUid: params.referrerUid || '',
-    friendName: cleanFriendName,
-    friendEmail: cleanFriendEmail || cleanFriendName,
+    friendName,
+    friendEmail: cleanFriendEmail,
     bonusCredits: params.bonusCredits,
     status: 'pending',
     createdAt: Date.now(),

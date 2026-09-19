@@ -46,6 +46,7 @@ export interface UserProfile {
   lastBonusReason?: string;
   lastBonusGrantedAt?: number;
   isNewSignUp?: boolean;
+  hasSeenWelcome?: boolean;
 }
 
 export interface ActivityLogEntry {
@@ -185,6 +186,7 @@ export async function syncUserProfile(
         lastBonusReason: bonusReason || undefined,
         lastBonusGrantedAt: bonusReason ? now : undefined,
         isNewSignUp: true,
+        hasSeenWelcome: false,
       };
 
       await setDoc(userRef, cleanUndefined(newProfile));
@@ -253,6 +255,8 @@ export async function syncUserProfile(
         deviceInfo: devInfo,
         aiCredits,
         allowedVersions: mergedAllowed,
+        isNewSignUp: false,
+        hasSeenWelcome: existing.hasSeenWelcome || false,
       };
 
       if (extraStats?.noteCount !== undefined) updated.noteCount = extraStats.noteCount;

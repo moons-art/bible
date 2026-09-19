@@ -171,8 +171,20 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const handleSavePromo = async () => {
     setIsSavingPromo(true);
     try {
-      await savePromotionSettings(promoSettings);
-      showToast(`프로모션 설정 저장 완료! (추가 ${promoSettings.bonusCredits}회, ${promoSettings.enabled ? '활성화' : '비활성화'})`);
+      const cleanName = promoSettings.name.trim() || '특별혜택기간';
+      const cleanDesc = promoSettings.description
+        .replace(/^(?:특별혜택기간|프로모션)\s*:\s*/, '')
+        .replace(/200\s*크[래레]딧\s*제공/, '200크레딧 제공')
+        .replace('크래딧', '크레딧')
+        .trim() || '200크레딧 제공';
+      const settingsToSave = {
+        ...promoSettings,
+        name: cleanName,
+        description: cleanDesc
+      };
+      setPromoSettings(settingsToSave);
+      await savePromotionSettings(settingsToSave);
+      showToast(`프로모션 설정 저장 완료! (${cleanName}, ${cleanDesc})`);
     } catch (err) {
       console.error('Failed to save promo settings:', err);
       showToast('프로모션 설정 저장 중 오류가 발생했습니다.');
@@ -202,18 +214,17 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
   // 3. 추천 신청 승인 및 즉시 혜택 지급 (인앱 확인 모달)
   const handleApproveReferral = (req: ReferralRequest) => {
-    const friendDisplayName = req.friendName || req.friendEmail;
     setConfirmModal({
       isOpen: true,
       title: '친구 추천 보너스 승인',
-      message: `${req.referrerName} (${req.referrerEmail}) 회원에게 친구(${friendDisplayName}) 추천 보너스 ${req.bonusCredits}회를 지급하시겠습니까?`,
+      message: `${req.referrerEmail} 회원에게 친구(${req.friendEmail}) 추천 보너스 ${req.bonusCredits}회를 지급하시겠습니까?`,
       confirmText: `+${req.bonusCredits}회 지급 승인`,
       theme: 'primary',
       onConfirm: async () => {
         setActionLoadingUid(req.id);
         try {
           await approveReferralRequest(req);
-          showToast(`${req.referrerName} 회원에게 추천 보너스 +${req.bonusCredits}회 충전 완료!`);
+          showToast(`${req.referrerEmail} 회원에게 추천 보너스 +${req.bonusCredits}회 충전 완료!`);
           setUsers(prev => prev.map(u => {
             if ((u.email || '').toLowerCase() === req.referrerEmail.toLowerCase() || u.uid === req.referrerUid) {
               return {
@@ -1043,7 +1054,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           <label className="block text-[11px] font-semibold text-[#5A564F] mb-1">프로모션 이름</label>
                           <input
                             type="text"
-                            placeholder="예: 신규 가입 특별 프로모션"
+                            placeholder="예: 특별혜택기간"
                             value={promoSettings.name}
                             onChange={(e) => setPromoSettings(prev => ({ ...prev, name: e.target.value }))}
                             className="w-full px-3 py-2 bg-[#FAF9F5] border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40]"
@@ -1054,7 +1065,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           <label className="block text-[11px] font-semibold text-[#5A564F] mb-1">프로모션 설명</label>
                           <input
                             type="text"
-                            placeholder="예: 지금 가입하시면 AI 연구 횟수를 추가로 드립니다."
+                            placeholder="예: 200크레딧 제공"
                             value={promoSettings.description}
                             onChange={(e) => setPromoSettings(prev => ({ ...prev, description: e.target.value }))}
                             className="w-full px-3 py-2 bg-[#FAF9F5] border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40]"
@@ -1210,8 +1221,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         <table className="w-full text-left border-collapse text-xs">
                           <thead>
                             <tr className="bg-[#FAF9F5] border-b border-[#EAE6DE] text-[#8C877D] text-[11px]">
-                              <th className="py-2.5 px-3">추천인 (신청자 본명/계정)</th>
-                              <th className="py-2.5 px-3">친구(상대방) 성명 / 계정</th>
+                              <th className="py-2.5 px-3">추천인 (신청자 이메일)</th>
+                              <th className="py-2.5 px-3">친구 (가입 이메일)</th>
                               <th className="py-2.5 px-3">친구 가입 여부</th>
                               <th className="py-2.5 px-3">혜택 횟수</th>
                               <th className="py-2.5 px-3">신청 일시</th>
@@ -1221,26 +1232,25 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           </thead>
                           <tbody className="divide-y divide-[#F0EBE1]">
                             {referralRequests.map(req => {
-                              const isFriendSignedUp = users.some(u => {
-                                const byEmail = req.friendEmail && (u.email || '').toLowerCase() === req.friendEmail.toLowerCase();
-                                const byName = req.friendName && (u.displayName || '').trim().toLowerCase() === req.friendName.trim().toLowerCase();
-                                return byEmail || byName;
-                              });
+                              const cleanFriendEmail = (req.friendEmail || '').toLowerCase().trim();
+                              const isFriendSignedUp = Boolean(cleanFriendEmail && users.some(u => 
+                                (u.email || '').toLowerCase().trim() === cleanFriendEmail
+                              ));
                               const isPending = req.status === 'pending';
                               const isApproved = req.status === 'approved';
 
                               return (
                                 <tr key={req.id} className="hover:bg-[#FAF9F5] transition-colors">
                                   <td className="py-2.5 px-3">
-                                    <div className="font-bold text-[#2C2B29]">{req.referrerName}</div>
-                                    <div className="text-[10px] text-[#8C877D]">{req.referrerEmail}</div>
+                                    <div className="font-bold text-[#2C2B29]">{req.referrerEmail}</div>
+                                    {req.referrerName && req.referrerName !== req.referrerEmail.split('@')[0] && (
+                                      <div className="text-[10px] text-[#8C877D]">{req.referrerName}</div>
+                                    )}
                                   </td>
                                   <td className="py-2.5 px-3 font-medium text-[#2C2B29]">
-                                    <div className="font-bold text-[#2C2B29]">
-                                      {req.friendName ? `${req.friendName} (친구 본명)` : req.friendEmail}
-                                    </div>
-                                    {req.friendName && req.friendEmail && (
-                                      <div className="text-[10px] text-[#8C877D]">{req.friendEmail}</div>
+                                    <div className="font-bold text-[#2C2B29]">{req.friendEmail}</div>
+                                    {req.friendName && req.friendName !== req.friendEmail.split('@')[0] && (
+                                      <div className="text-[10px] text-[#8C877D]">{req.friendName}</div>
                                     )}
                                   </td>
                                   <td className="py-2.5 px-3">

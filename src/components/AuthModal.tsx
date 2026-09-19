@@ -315,6 +315,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             </div>
           ) : (
             <>
+              {/* 안내 문구: 로그인 후 무료 사용 안내 */}
+              <p className="text-[11px] text-[#78746D] text-center leading-relaxed font-medium">
+                로그인후 ai 주석을 제외한 모든 기능을 편하게 무료사용하실 수 있습니다.
+              </p>
+
               {/* 3. 이메일 탭 (로그인 / 회원가입) */}
               <div className="flex bg-[#F0EEE6] p-1 rounded-xl">
                 <button

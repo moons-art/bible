@@ -87,7 +87,36 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 isBuiltIn: false
               };
               await bibleDB.saveVersion(krvVersion);
-              setVersions(curr => curr.some(v => v.id === 'built-in-krv') ? curr : [...curr, krvVersion]);
+              setVersions(curr => {
+                if (curr.some(v => v.id === 'built-in-krv')) return curr;
+                const next = [...curr, krvVersion];
+                // 저장된 순서에 맞게 위치 복원
+                try {
+                  const savedOrderStr = localStorage.getItem('bible-version-order');
+                  if (savedOrderStr) {
+                    const savedOrder: string[] = JSON.parse(savedOrderStr);
+                    next.sort((a, b) => {
+                      const ia = savedOrder.indexOf(a.id);
+                      const ib = savedOrder.indexOf(b.id);
+                      if (ia !== -1 && ib !== -1) return ia - ib;
+                      if (ia !== -1) return -1;
+                      if (ib !== -1) return 1;
+                      return 0;
+                    });
+                  }
+                } catch (e) {}
+                return next;
+              });
+              // 이전에 선택됐던 경우 선택 상태 복원
+              try {
+                const savedSelectedStr = localStorage.getItem('bible-selected-versions');
+                if (savedSelectedStr) {
+                  const savedSelected: string[] = JSON.parse(savedSelectedStr);
+                  if (Array.isArray(savedSelected) && savedSelected.includes('built-in-krv')) {
+                    setSelectedVersionIds(sel => sel.includes('built-in-krv') ? sel : [...sel, 'built-in-krv']);
+                  }
+                }
+              } catch (e) {}
               console.log('[BibleProvider] 관리자 권한으로 개역개정이 자동 활성화되었습니다.');
             }
           } catch (e) {
@@ -110,7 +139,6 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // 2. NIV (built-in-niv)
     if (allowed.includes('built-in-niv')) {
-      setSelectedVersionIds(sel => sel.includes('built-in-niv') ? sel : [...sel, 'built-in-niv']);
       setVersions(prev => {
         if (prev.some(v => v.id === 'built-in-niv' || v.name === 'NIV')) return prev;
         (async () => {
@@ -128,7 +156,6 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               };
               await bibleDB.saveVersion(nivVersion);
               setVersions(curr => curr.some(v => v.id === 'built-in-niv') ? curr : [...curr, nivVersion]);
-              setSelectedVersionIds(sel => sel.includes('built-in-niv') ? sel : [...sel, 'built-in-niv']);
               console.log('[BibleProvider] 관리자 권한으로 NIV가 자동 활성화되었습니다.');
             }
           } catch (e) {
@@ -352,22 +379,23 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       setVersions(hydratedVersions);
-      // 저장된 선택 번역본이 있으면 복원, 없으면 기본으로 개역한글과 NRSV 표시
+      // 저장값 있으면 그대로 복원, 없으면(최초 접속) 개역한글 1개만
       const savedSelectedStr = localStorage.getItem('bible-selected-versions');
       if (savedSelectedStr) {
         try {
           const parsed = JSON.parse(savedSelectedStr);
           if (Array.isArray(parsed) && parsed.length > 0) {
             const valid = parsed.filter(id => hydratedVersions.some(v => v.id === id));
-            setSelectedVersionIds(valid.length > 0 ? valid : ['built-in-kor-revised', 'built-in-eng-nrsv']);
+            setSelectedVersionIds(valid.length > 0 ? valid : ['built-in-kor-revised']);
           } else {
-            setSelectedVersionIds(['built-in-kor-revised', 'built-in-eng-nrsv']);
+            setSelectedVersionIds(['built-in-kor-revised']);
           }
         } catch (e) {
-          setSelectedVersionIds(['built-in-kor-revised', 'built-in-eng-nrsv']);
+          setSelectedVersionIds(['built-in-kor-revised']);
         }
       } else {
-        setSelectedVersionIds(['built-in-kor-revised', 'built-in-eng-nrsv']);
+        // 최초 접속: 개역한글 1개만
+        setSelectedVersionIds(['built-in-kor-revised']);
       }
       setIsInitialized(true); // ✅ 초기 1회성 비동기 로딩 완료 선언
 
