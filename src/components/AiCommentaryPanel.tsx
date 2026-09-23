@@ -4,7 +4,7 @@ import {
   X, Sparkles, RefreshCw, Copy, Check, ChevronRight, ChevronDown,
   BookOpen, Landmark, Lightbulb, AlertCircle, CreditCard,
   History, Trash2, Calendar, Clock, Compass, ArrowRightLeft, LogIn,
-  Gift, Send
+  Gift, Send, Database, HardDrive, Search
 } from 'lucide-react';
 import { auth } from '../api/firebaseConfig';
 import { getReferralSettings, submitReferralRequest, getPromotionSettings } from '../services/promotionService';
@@ -56,6 +56,7 @@ interface AiCommentaryPanelProps {
   onNavigateToVerse?: (bookId: string, chapter: number, verse: number, text?: string) => void;
   initialTab?: AiTabType;
   openRechargeTrigger?: number;
+  onResetRechargeTrigger?: () => void;
   onOpenAuthModal?: () => void;
 }
 
@@ -73,9 +74,10 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   onNavigateToVerse,
   initialTab,
   openRechargeTrigger,
+  onResetRechargeTrigger,
   onOpenAuthModal
 }) => {
-  const { totalRemaining, totalCapacity, freeRemaining, paidRemaining, isAvailable, recharge, remainingDaysText, isLoggedIn } = useAiUsage();
+  const { totalRemaining, totalCapacity, freeRemaining, paidRemaining, isAvailable, recharge, remainingDaysText, isLoggedIn, cloudCommentaryLimit, usedCloudCommentaryCount } = useAiUsage();
   const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'all');
   const [commentaryData, setCommentaryData] = useState<AiCommentaryData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -85,6 +87,36 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   const [rechargeSuccessMessage, setRechargeSuccessMessage] = useState<string | null>(null);
   const [historyList, setHistoryList] = useState<CommentaryHistoryItem[]>([]);
 
+  // 주석 기록 검색, 페이징(10~30개 단위), 권별보기 상태
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [historyViewMode, setHistoryViewMode] = useState<'latest' | 'byBook'>('latest');
+  const [visibleHistoryCount, setVisibleHistoryCount] = useState<number>(20);
+  const [expandedBooks, setExpandedBooks] = useState<Record<string, boolean>>({});
+
+  // 검색어 필터링된 기록 목록
+  const filteredHistory = React.useMemo(() => {
+    const q = historySearchQuery.trim().toLowerCase();
+    if (!q) return historyList;
+    return historyList.filter(item => {
+      const matchRef = item.reference.toLowerCase().includes(q);
+      const matchBook = (item.bookName || '').toLowerCase().includes(q);
+      const matchText = (item.scriptureText || '').toLowerCase().includes(q);
+      const matchSummary = (item.data?.summary || '').toLowerCase().includes(q);
+      return matchRef || matchBook || matchText || matchSummary;
+    });
+  }, [historyList, historySearchQuery]);
+
+  // 권별 그룹화
+  const groupedByBook = React.useMemo(() => {
+    const groups: { [book: string]: CommentaryHistoryItem[] } = {};
+    filteredHistory.forEach(item => {
+      const book = item.bookName || item.reference.split(' ')[0] || '기타';
+      if (!groups[book]) groups[book] = [];
+      groups[book].push(item);
+    });
+    return groups;
+  }, [filteredHistory]);
+
   // 외부 요청에 따른 탭 전환 동기화
   useEffect(() => {
     if (initialTab) {
@@ -92,17 +124,18 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
     }
   }, [initialTab]);
 
-  // 외부 요청에 따른 충전 모달 오픈
-  // 외부 요청에 따른 충전 모달 오픈 (로그인 상태일 때만)
+  // 외부 요청에 따른 충전 모달 오픈 (단회성 트리거: 실행 즉시 리셋하여 재오픈 시 자동 팝업 방지)
   useEffect(() => {
     if (openRechargeTrigger && openRechargeTrigger > 0) {
       if (!isLoggedIn) {
         if (onOpenAuthModal) onOpenAuthModal();
+        if (onResetRechargeTrigger) onResetRechargeTrigger();
         return;
       }
       setShowRechargeModal(true);
+      if (onResetRechargeTrigger) onResetRechargeTrigger();
     }
-  }, [openRechargeTrigger, isLoggedIn, onOpenAuthModal]);
+  }, [openRechargeTrigger, isLoggedIn, onOpenAuthModal, onResetRechargeTrigger]);
 
   // 신규 가입 프로모션 상태
   const [promoSettings, setPromoSettings] = useState<{ enabled: boolean; bonusCredits: number; name: string; description?: string } | null>(null);
@@ -738,9 +771,320 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
 
   if (!isOpen) return null;
 
+  const rechargeModal = (showRechargeModal && typeof document !== 'undefined')
+    ? createPortal(
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setShowRechargeModal(false)}
+        >
+          <div
+            className="relative w-full max-w-4xl bg-[#FAF9F5] text-[#2C2B29] rounded-2xl shadow-2xl border border-[#E7E5DF] overflow-hidden flex flex-col max-h-[94vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 닫기 버튼 */}
+            <button
+              onClick={() => setShowRechargeModal(false)}
+              className="absolute top-4 right-4 z-10 p-1.5 rounded-lg text-[#8C877D] hover:text-[#2C2B29] hover:bg-[#EFEAE2] transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5 stroke-[1.8]" />
+            </button>
+
+            {/* 헤더 */}
+            <div className="p-5 md:p-6 border-b border-[#EFECE6] bg-white shrink-0">
+              <div className="text-center">
+                <div className="w-12 h-12 rounded-2xl bg-[#FAF0EB] border border-[#F1D3C6] flex items-center justify-center text-[#C46A40] mx-auto mb-3 shadow-2xs">
+                  <CreditCard className="w-6 h-6 stroke-[1.8]" />
+                </div>
+                <h3 className="text-xl font-serif font-bold text-[#2C2B29] mb-3">AI 원어 주석 이용권</h3>
+
+                {/* 현재 잔여 상태 */}
+                <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs sm:text-sm text-[#1F1E1D]">
+                  <div className="flex items-center gap-1.5">
+                    <CreditCard className="w-4 h-4 text-[#6E6A63] stroke-[1.5px] shrink-0" />
+                    <span className="text-[#6B6966] font-normal">보유 크레딧:</span>
+                    <strong className="font-bold text-[#1F1E1D]">{totalRemaining}</strong>
+                    {remainingDaysText && (
+                      <span className="text-xs text-[#C46A40] font-medium ml-1">({remainingDaysText})</span>
+                    )}
+                  </div>
+                  <span className="text-[#DDD8CE] hidden sm:inline">•</span>
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Clock 
+                        className={`w-4 h-4 stroke-[1.8px] transition-opacity ${
+                          cloudCommentaryLimit > 0 ? 'opacity-30 text-[#2B2927]' : 'opacity-100 text-[#2B2927]'
+                        }`} 
+                      />
+                      <Database 
+                        className={`w-4 h-4 stroke-[1.8px] transition-opacity ${
+                          cloudCommentaryLimit > 0 ? 'opacity-100 text-[#2B2927]' : 'opacity-30 text-[#2B2927]'
+                        }`} 
+                      />
+                    </div>
+                    <span className="font-medium text-[#1F1E1D]">
+                      {cloudCommentaryLimit > 0
+                        ? (cloudCommentaryLimit >= 30000 ? '주석 클라우드 무제한' : `주석 클라우드 ${cloudCommentaryLimit}`)
+                        : '30일 무료 보관'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {rechargeSuccessMessage && (
+                <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold flex items-center justify-center gap-2">
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>{rechargeSuccessMessage}</span>
+                </div>
+              )}
+            </div>
+
+            {/* 2단 컨텐츠 스크롤 래퍼: 하단 잘림 방지 및 양측 패널 높이 완벽 일치 */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#FAF9F5]">
+              <div className="flex flex-col md:flex-row min-h-full items-stretch">
+                {/* 좌측: 크레딧 이용권 */}
+                <div className="flex-1 p-5 md:p-6 pb-24 md:pb-32 border-b md:border-b-0 md:border-r border-[#EFECE6] bg-[#FAF9F5] flex flex-col justify-between">
+                <div>
+                  <h4 className="text-lg md:text-xl font-bold text-[#1A1918] mb-2 flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-[#C46A40]" />
+                    AI 크래딧 이용권
+                  </h4>
+                  <p className="text-xs text-[#1A1918] font-medium mb-4">
+                    충전된 크레딧은 1년(365일)동안 사용하실 수 있습니다.
+                  </p>
+
+                <div className="space-y-3.5 mb-5">
+                  {/* 기본 무료 플랜 카드 */}
+                  <div className="p-4 rounded-xl border border-[#E8E3DA] bg-white transition-all flex flex-col gap-2.5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="font-bold text-sm text-[#2C2B29]">기본 무료 제공</div>
+                      <div className="font-bold text-base text-[#7A756D]">무료 (0원)</div>
+                    </div>
+                    <ul className="text-[11px] text-[#7A756D] space-y-1">
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#7A756D]" /> 매월 10 크래딧 무료</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#7A756D]" /> 기기에 30일 저장</li>
+                    </ul>
+                  </div>
+
+                  {/* 플랜 1: 라이트 플랜 */}
+                  <div className="p-4 rounded-xl border border-[#E8E3DA] hover:border-[#C46A40] bg-white transition-all flex flex-col gap-3 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="font-bold text-sm text-[#2C2B29]">라이트 플랜</div>
+                      <div className="font-bold text-lg text-[#C46A40]">5,000원</div>
+                    </div>
+                    <ul className="text-[11px] text-[#7A756D] space-y-1">
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> ai 주석 200 크레딧 제공</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 구절, 단어 심층연구</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 기기에 30일 저장</li>
+                    </ul>
+                    <button
+                      onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
+                      className="w-full py-2 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold text-xs mt-1 transition-colors cursor-pointer"
+                    >
+                      충전하기
+                    </button>
+                  </div>
+
+                  {/* 플랜 2: 스탠다드 플랜 */}
+                  <div className="p-4 rounded-xl border border-[#E8E3DA] hover:border-[#C46A40] bg-white transition-all flex flex-col gap-3 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="font-bold text-sm text-[#2C2B29]">스탠다드 플랜</div>
+                      <div className="font-bold text-lg text-[#C46A40]">10,000원</div>
+                    </div>
+                    <ul className="text-[11px] text-[#7A756D] space-y-1">
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> ai 주석 500 크레딧 제공</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 구절, 단어 심층연구</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 기기에 30일 저장</li>
+                    </ul>
+                    <button
+                      onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
+                      className="w-full py-2 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold text-xs mt-1 transition-colors cursor-pointer"
+                    >
+                      충전하기
+                    </button>
+                  </div>
+
+                  {/* 플랜 3: 프로플랜 */}
+                  <div className="p-4 rounded-xl border border-[#E8E3DA] hover:border-[#2C2B29] transition-all flex flex-col gap-3 shadow-xs bg-slate-50">
+                    <div className="flex items-center justify-between">
+                      <div className="font-bold text-sm text-[#2C2B29]">프로플랜</div>
+                      <div className="font-bold text-lg text-[#2C2B29]">15,000원</div>
+                    </div>
+                    <ul className="text-[11px] text-[#7A756D] space-y-1">
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> ai 주석 1,000 크레딧 제공</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 구절, 단어 심층연구</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 기기에 30일 저장</li>
+                    </ul>
+                    <button
+                      onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
+                      className="w-full py-2 rounded-lg bg-[#2C2B29] hover:bg-[#1A1918] text-white font-semibold text-xs mt-1 transition-colors cursor-pointer"
+                    >
+                      충전하기
+                    </button>
+                  </div>
+                </div>
+
+                {/* 크레딧 구매 플랜 소개 아래 안내문 */}
+                <div className="text-xs text-[#1A1918] leading-relaxed mb-6 space-y-1">
+                  <p>생성된 주석은 해당 기기에 30일동안 저장됩니다.</p>
+                  <p>서버 클라우드에 평생 저장, 모든 기기에서 열람하려면 우측의 주석 클라우드 이용권을 구매해주세요.</p>
+                </div>
+
+                {/* 🎁 친구 추천하기 */}
+                <div className="p-3.5 rounded-2xl bg-gradient-to-br from-[#FFFBF8] to-[#F7F4EE] border border-[#F1D3C6] shadow-2xs">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-[#FAF0EB] text-[#C46A40] flex items-center justify-center shrink-0 border border-[#F1D3C6]">
+                        <Gift className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-[#2C2B29]">친구 추천하기</h4>
+                        <p className="text-[11px] font-bold text-[#C46A40] mt-0.5">+{referralBonusCount || 50}회 혜택 선물</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setIsReferralFormOpen(!isReferralFormOpen); setReferralFeedback(null); }}
+                      className="px-2.5 py-1.5 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-semibold shrink-0 transition-colors shadow-2xs cursor-pointer"
+                    >
+                      {isReferralFormOpen ? '닫기' : '친구 추천하기'}
+                    </button>
+                  </div>
+
+                  {isReferralFormOpen && (
+                    <form onSubmit={handleSubmitReferral} className="mt-3 pt-3 border-t border-[#EFECE6] space-y-2.5 animate-in fade-in duration-200">
+                      <div className="p-2.5 rounded-xl bg-white border border-[#E8E3DA] text-[11px] text-[#C46A40] leading-relaxed">
+                        💡 가입하신 구글/지메일 주소를 정확히 기입하시면, 관리자 확인 후 AI {referralBonusCount}회가 충전됩니다.
+                      </div>
+                      {referralFeedback && (
+                        <div className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
+                          referralFeedback.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
+                        }`}>
+                          {referralFeedback.type === 'success' ? <Check className="w-4 h-4 shrink-0 text-emerald-600" /> : <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />}
+                          <span>{referralFeedback.message}</span>
+                        </div>
+                      )}
+                      <div className="space-y-1">
+                        <label className="block text-[11px] font-semibold text-[#5A564F]">추천인(나)의 가입 이메일</label>
+                        <input
+                          type="email"
+                          placeholder="본인 구글 이메일 (예: user@gmail.com)"
+                          value={referrerEmailInput}
+                          onChange={(e) => setReferrerEmailInput(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-1 focus:ring-[#C46A40]"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-[11px] font-semibold text-[#5A564F]">친구(상대방)의 가입 이메일</label>
+                        <input
+                          type="email"
+                          placeholder="친구 구글 이메일 (예: friend@gmail.com)"
+                          value={friendEmailInput}
+                          onChange={(e) => setFriendEmailInput(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-1 focus:ring-[#C46A40]"
+                          required
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={isSubmittingReferral}
+                        className="w-full py-2.5 bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>{isSubmittingReferral ? '신청 처리 중...' : `친구 추천 혜택 (${referralBonusCount}회) 신청 제출`}</span>
+                      </button>
+                    </form>
+                  )}
+                </div>
+              </div>
+              </div>
+
+              {/* 우측: 주석 클라우드 이용권 */}
+              <div className="flex-1 p-5 md:p-6 pb-24 md:pb-32 bg-white flex flex-col justify-between">
+                <div>
+                  <h4 className="text-lg md:text-xl font-bold text-[#1A1918] mb-2 flex items-center gap-2">
+                    <Database className="w-5 h-5 text-[#C46A40]" />
+                    주석 클라우드 이용권
+                  </h4>
+                  <p className="text-xs text-[#1A1918] leading-relaxed mb-4">
+                    생성된 ai 주석을 서버 클라우드에 저장하여 크레딧 차감없이 모든 기기에서 열람할수 있는 나만의 주석을 만듭니다.
+                  </p>
+
+                  <div className="space-y-3.5">
+                    {/* 클라우드 300 */}
+                    <div className="p-4 rounded-xl border border-[#E8E3DA] hover:border-[#C46A40] bg-white transition-all flex flex-col gap-3 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold text-sm text-[#2C2B29]">주석 클라우드 300</div>
+                        <div className="font-bold text-lg text-[#C46A40]">19,000원</div>
+                      </div>
+                      <ul className="text-[11px] text-[#7A756D] space-y-1">
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 300구절 평생보관</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> +200 ai 주석 크레딧 증정</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 모든 기기 실시간 연동</li>
+                      </ul>
+                      <button onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')} className="w-full py-2 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold text-xs mt-1 transition-colors cursor-pointer">
+                        구매하기
+                      </button>
+                    </div>
+
+                    {/* 클라우드 1000 */}
+                    <div className="p-4 rounded-xl border-2 border-[#C46A40] bg-[#FFFBF8] transition-all flex flex-col gap-3 shadow-xs relative">
+                      <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-[#C46A40] text-white text-[10px] font-bold tracking-wider shadow-sm">
+                        가장 인기
+                      </span>
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold text-sm text-[#2C2B29]">주석 클라우드 1000</div>
+                        <div className="font-bold text-lg text-[#C46A40]">35,000원</div>
+                      </div>
+                      <ul className="text-[11px] text-[#7A756D] space-y-1">
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 1000구절 평생보관</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> +500 ai 주석 크레딧 증정</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 모든 기기 실시간 연동</li>
+                      </ul>
+                      <button onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')} className="w-full py-2 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold text-xs mt-1 transition-colors cursor-pointer">
+                        구매하기
+                      </button>
+                    </div>
+
+                    {/* 클라우드 무제한 */}
+                    <div className="p-4 rounded-xl border border-[#E8E3DA] hover:border-[#2C2B29] transition-all flex flex-col gap-3 shadow-xs bg-slate-50">
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold text-sm text-[#2C2B29]">주석 클라우드 무제한</div>
+                        <div className="font-bold text-lg text-[#2C2B29]">49,000원</div>
+                      </div>
+                      <ul className="text-[11px] text-[#7A756D] space-y-1">
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 성경 전체 평생 보관</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> +1000 ai 주석 크레딧 증정</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 모든 기기 실시간 연동</li>
+                      </ul>
+                      <button onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')} className="w-full py-2 rounded-lg bg-[#2C2B29] hover:bg-[#1A1918] text-white font-semibold text-xs mt-1 transition-colors cursor-pointer">
+                        구매하기
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 주석 클라우드 안내문 */}
+                <div className="mt-5 pt-4 border-t border-[#EFECE6] text-[11px] text-[#7A756D] leading-relaxed">
+                  <ul className="list-disc pl-4 space-y-1.5">
+                    <li>주석 클라우드 보관 서비스는 네이션스 바이블 서비스 운영 기간 동안 월 구독료나 추가 유지 비용 없이 지속적으로 이용하실 수 있습니다.</li>
+                    <li>동일한 로그인 계정(Google/이메일)을 사용하시면 스마트폰, 태블릿, PC 어디서든 보관된 주석을 크레딧 차감 없이 무료로 열람하실 수 있습니다.</li>
+                    <li>기본 증정된 AI 크레딧은 충전일로부터 365일간 유효하며, 필요시 일반 크레딧을 추가 충전하여 계속 연구하실 수 있습니다.</li>
+                    <li>향후 서비스 종료 등 불가피한 사유 발생 시 최소 60일 전 사전 공지되며, 회원님이 정성껏 축적하신 주석 데이터를 파일(PDF/텍스트)로 영구 소장하실 수 있도록 일괄 백업 기능을 제공합니다.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>,
+        document.body
+      )
+    : null;
+
   return (
     <div className="flex flex-col h-full bg-[#FAF9F5] text-[#2C2B29] border-l border-[#E7E5DF] relative select-text overflow-hidden font-sans">
-      
+
       {/* 1. 헤더 (클로드 웜 샌드 스타일 - 좌측 바와 완벽한 h-14 수직 정렬) */}
       <header className="h-14 min-h-14 px-4 md:px-5 border-b border-[#E7E5DF] bg-[#F7F5F0]/90 backdrop-blur-xs flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -748,31 +1092,25 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
             <ClaudeSparkleIcon className="w-4 h-4 text-[#4A4741]" />
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <h2 className="font-serif font-bold text-sm text-[#2C2B29] truncate">AI 원어·성경 주석</h2>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#EBE5DC] text-[#6E6A63] font-medium shrink-0">
-                Gemini 3.6
-              </span>
-            </div>
+            <h2 className="font-serif font-bold text-sm text-[#2C2B29] truncate">AI 원어·성경 주석</h2>
           </div>
         </div>
 
         {/* 우측: 잔여 크레딧 안내 및 닫기 버튼 */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {isLoggedIn && (
             <button
               onClick={() => setShowRechargeModal(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-[#6E6A63] hover:text-[#2C2B29] hover:bg-[#EFEAE2] transition-colors cursor-pointer border border-[#E5E0D8] bg-[#FAF9F5] shadow-2xs whitespace-nowrap"
-              title="남은 사용 횟수 확인 및 충전"
+              className="flex items-center gap-1.5 px-1 py-1 rounded-md text-xs text-[#5A564F] hover:text-[#2C2B29] transition-colors cursor-pointer whitespace-nowrap"
+              title="크레딧 확인 및 충전"
             >
-              <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#8C877D] shrink-0" />
-              <span className="text-[#8C877D]">남은 횟수:</span>
+              <CreditCard className="w-3.5 h-3.5 text-[#6E6A63] stroke-[1.5px] shrink-0" />
+              <span className="text-[#5A564F] font-medium">보유 크레딧:</span>
               <strong className="font-bold text-[#2C2B29]">{totalRemaining}</strong>
-              <span className="text-[10px] text-[#A39E94]">/ {totalCapacity}회</span>
-              <span className="w-px h-3 bg-[#E0DBD2] mx-0.5"></span>
-              <span className="text-[#8C877D] text-[11px] font-medium">{remainingDaysText}</span>
-              <span className="w-px h-3 bg-[#E0DBD2] mx-0.5"></span>
-              <span className="text-[#C46A40] font-semibold text-[11px] hover:underline">충전</span>
+              <span className="w-px h-3 bg-[#DDD7CD] mx-0.5"></span>
+              <span className="text-[#5A564F] text-[11px] font-medium">{remainingDaysText}</span>
+              <span className="w-px h-3 bg-[#DDD7CD] mx-0.5"></span>
+              <span className="text-[#C46A40] font-bold text-[11px] hover:underline">충전</span>
             </button>
           )}
 
@@ -879,10 +1217,40 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
         {/* ======================================================== */}
         {activeTab === 'history' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-[#E8E3DA]">
+            {/* 상단 저장 상태 헤더 */}
+            <div className="flex items-center justify-between pb-3 border-b border-[#E8E3DA]">
               <div>
-                <h3 className="font-serif font-bold text-sm text-[#2C2B29]">최근 30일간 저장된 주석 목록</h3>
-                <p className="text-[11px] text-[#7A756D]">이 기기에 30일간 안전하게 보관됩니다.</p>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Clock 
+                      className={`w-4 h-4 stroke-[1.8px] transition-opacity ${
+                        cloudCommentaryLimit > 0 ? 'opacity-30 text-[#2B2927]' : 'opacity-100 text-[#2B2927]'
+                      }`} 
+                    />
+                    <Database 
+                      className={`w-4 h-4 stroke-[1.8px] transition-opacity ${
+                        cloudCommentaryLimit > 0 ? 'opacity-100 text-[#2B2927]' : 'opacity-30 text-[#2B2927]'
+                      }`} 
+                    />
+                  </div>
+                  <h3 className="font-serif font-bold text-sm text-[#2C2B29]">
+                    {cloudCommentaryLimit > 0
+                      ? (cloudCommentaryLimit >= 30000 ? '주석 클라우드 무제한' : `주석 클라우드 ${cloudCommentaryLimit}`)
+                      : '30일 무료 보관'}
+                  </h3>
+                  {/* 검은색 카드(배경색 없음) + 검은색/다크 글자 스타일로 현재 저장된 목록 수 표시 */}
+                  <span 
+                    className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927] shrink-0"
+                    title={`현재 저장된 목록: ${historyList.length}개`}
+                  >
+                    {historyList.length}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#7A756D]">
+                  {cloudCommentaryLimit > 0
+                    ? '클라우드에 안전하게 보관되어 어디서나 열람할 수 있습니다.'
+                    : '이 기기에 30일간 안전하게 보관됩니다.'}
+                </p>
               </div>
               {historyList.length > 0 && (
                 <button
@@ -891,7 +1259,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                     e.stopPropagation();
                     setShowClearHistoryConfirm(true);
                   }}
-                  className="text-[11px] text-[#9E9991] hover:text-red-600 transition-colors cursor-pointer"
+                  className="text-[11px] text-[#9E9991] hover:text-red-600 transition-colors cursor-pointer shrink-0"
                 >
                   전체 삭제
                 </button>
@@ -975,49 +1343,234 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                 <p className="text-[11px] text-[#9E9991]">성경 본문에서 구절을 선택한 후 AI 주석을 분석해 보세요.</p>
               </div>
             ) : (
-              <div className="space-y-2.5">
-                {historyList.map(item => {
-                  const daysLeft = getRemainingDays(item.expiresAt);
-                  const isCurrent = commentaryData?.reference === item.reference;
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => handleSelectHistoryItem(item)}
-                      className={`p-3 rounded-xl border transition-all cursor-pointer shadow-2xs group flex items-start justify-between gap-3 ${
-                        isCurrent 
-                          ? 'bg-[#FAF0EB] border-[#F1D3C6]' 
-                          : 'bg-white border-[#E8E3DA] hover:border-[#C46A40]'
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-serif font-bold text-xs text-[#2C2B29]">{item.reference}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#FAF0EB] text-[#C46A40] font-medium">
-                            {item.data?.testament || '성경'} ({item.data?.originalLanguageCommentary?.language || '원어'})
-                          </span>
-                          <span className="text-[10px] text-[#8C877D] flex items-center gap-0.5">
-                            <Clock className="w-2.5 h-2.5" />
-                            {daysLeft}일 보관 남음
-                          </span>
-                        </div>
-                        <p className="text-xs text-[#5C5852] line-clamp-1 font-serif">
-                          "{item.scriptureText}"
-                        </p>
-                      </div>
+              <div className="space-y-3">
+                {/* 1. 검색 입력창 및 보기 모드 탭 */}
+                <div className="space-y-2">
+                  <div className="relative flex items-center">
+                    <Search className="w-3.5 h-3.5 text-[#8C877D] absolute left-3 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={historySearchQuery}
+                      onChange={(e) => {
+                        setHistorySearchQuery(e.target.value);
+                        setVisibleHistoryCount(20);
+                      }}
+                      placeholder="구절, 책 이름, 주석 본문 검색..."
+                      className="w-full pl-8.5 pr-8 py-2 bg-white border border-[#E5E0D8] rounded-xl text-xs text-[#2C2B29] placeholder-[#A39E94] focus:outline-none focus:border-[#C46A40] transition-colors shadow-2xs"
+                    />
+                    {historySearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistorySearchQuery('');
+                          setVisibleHistoryCount(20);
+                        }}
+                        className="absolute right-2.5 p-1 text-[#A39E94] hover:text-[#2C2B29] transition-colors cursor-pointer"
+                        title="검색어 지우기"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
 
-                      <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                        <button
-                          onClick={(e) => handleDeleteHistory(e, item.reference)}
-                          className="p-1 rounded text-[#A39E94] hover:text-red-600 hover:bg-[#F3EFE9] transition-colors cursor-pointer"
-                          title="기록 삭제"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                        <ChevronRight className="w-4 h-4 text-[#A39E94] group-hover:text-[#C46A40] transition-colors" />
-                      </div>
+                  {/* 보기 모드 (최신순 vs 권별보기) 및 개수 표시 */}
+                  <div className="flex items-center justify-between gap-2 pt-0.5">
+                    <div className="inline-flex items-center p-0.5 bg-[#EFECE6] rounded-lg text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setHistoryViewMode('latest')}
+                        className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer ${
+                          historyViewMode === 'latest'
+                            ? 'bg-white text-[#2C2B29] font-bold shadow-2xs'
+                            : 'text-[#7A756D] hover:text-[#2C2B29]'
+                        }`}
+                      >
+                        최신순
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHistoryViewMode('byBook')}
+                        className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer ${
+                          historyViewMode === 'byBook'
+                            ? 'bg-white text-[#2C2B29] font-bold shadow-2xs'
+                            : 'text-[#7A756D] hover:text-[#2C2B29]'
+                        }`}
+                      >
+                        권별보기
+                      </button>
                     </div>
-                  );
-                })}
+
+                    <div className="text-[11px] text-[#8C877D]">
+                      {historySearchQuery ? (
+                        <span>검색 <strong className="text-[#C46A40]">{filteredHistory.length}</strong>건</span>
+                      ) : (
+                        <span>총 <strong className="text-[#2C2B29]">{historyList.length}</strong>개</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. 주석 기록 리스트 */}
+                {filteredHistory.length === 0 ? (
+                  <div className="py-8 text-center text-[#8C877D] space-y-1 bg-[#FAF9F5] rounded-2xl border border-dashed border-[#E5E0D8]">
+                    <Search className="w-6 h-6 mx-auto text-[#A39E94] stroke-[1.5] mb-1" />
+                    <p className="text-xs font-semibold text-[#2C2B29]">검색 결과가 없습니다.</p>
+                    <p className="text-[11px] text-[#9E9991]">다른 검색어로 다시 검색해 보세요.</p>
+                  </div>
+                ) : historyViewMode === 'latest' ? (
+                  /* [최신순 보기]: 한 페이지 20개씩(10~30개 단위) + 더보기 페이징 */
+                  <div className="space-y-2.5">
+                    {filteredHistory.slice(0, visibleHistoryCount).map(item => {
+                      const daysLeft = getRemainingDays(item.expiresAt);
+                      const isCurrent = commentaryData?.reference === item.reference;
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => handleSelectHistoryItem(item)}
+                          className={`p-3 rounded-xl border transition-all cursor-pointer shadow-2xs group flex items-start justify-between gap-3 ${
+                            isCurrent 
+                              ? 'bg-[#FAF0EB] border-[#F1D3C6]' 
+                              : 'bg-white border-[#E8E3DA] hover:border-[#C46A40]'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                              <span className="font-serif font-bold text-xs text-[#2C2B29]">{item.reference}</span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#FAF0EB] text-[#C46A40] font-medium shrink-0">
+                                {item.data?.testament || '성경'} ({item.data?.originalLanguageCommentary?.language || '원어'})
+                              </span>
+                              {cloudCommentaryLimit > 0 ? (
+                                <span className="text-[10px] text-[#C46A40] bg-[#FAF0EB] px-1.5 py-0.5 rounded border border-[#F1D3C6]/60 flex items-center gap-0.5 shrink-0 font-medium">
+                                  <Database className="w-2.5 h-2.5" />
+                                  클라우드 보관
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-[#8C877D] flex items-center gap-0.5 shrink-0">
+                                  <Clock className="w-2.5 h-2.5" />
+                                  {daysLeft}일 보관 남음
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-[#5C5852] line-clamp-1 font-serif">
+                              "{item.scriptureText}"
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                            <button
+                              onClick={(e) => handleDeleteHistory(e, item.reference)}
+                              className="p-1 rounded text-[#A39E94] hover:text-red-600 hover:bg-[#F3EFE9] transition-colors cursor-pointer"
+                              title="기록 삭제"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <ChevronRight className="w-4 h-4 text-[#A39E94] group-hover:text-[#C46A40] transition-colors" />
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* 페이징 더보기 버튼 */}
+                    {filteredHistory.length > visibleHistoryCount && (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setVisibleHistoryCount(prev => prev + 20)}
+                          className="w-full py-2.5 bg-white hover:bg-[#F5F3ED] border border-[#E5E0D8] text-xs font-semibold text-[#5C5852] hover:text-[#2C2B29] rounded-xl transition-all shadow-2xs cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <span>더보기 (+20개)</span>
+                          <span className="text-[11px] text-[#8C877D]">
+                            ({Math.min(visibleHistoryCount, filteredHistory.length)} / {filteredHistory.length})
+                          </span>
+                          <ChevronDown className="w-3.5 h-3.5 text-[#8C877D]" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* [권별보기]: 성경 권(책)별 아코디언 그룹화 */
+                  <div className="space-y-2">
+                    {Object.entries(groupedByBook).map(([bookName, bookItems]) => {
+                      const isExpanded = expandedBooks[bookName] !== false; // 기본 펼침 상태
+                      return (
+                        <div key={bookName} className="border border-[#E5E0D8] rounded-xl bg-white overflow-hidden shadow-2xs">
+                          {/* 권 헤더 */}
+                          <button
+                            type="button"
+                            onClick={() => setExpandedBooks(prev => ({ ...prev, [bookName]: !isExpanded }))}
+                            className="w-full p-2.5 px-3 bg-[#FAF9F5] hover:bg-[#F3EFE9] transition-colors flex items-center justify-between text-left cursor-pointer border-b border-[#EFECE6]"
+                          >
+                            <div className="flex items-center gap-2">
+                              <BookOpen className="w-3.5 h-3.5 text-[#C46A40] stroke-[1.8]" />
+                              <span className="font-serif font-bold text-xs text-[#2C2B29]">{bookName}</span>
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927]">
+                                {bookItems.length}
+                              </span>
+                            </div>
+                            <ChevronDown className={`w-4 h-4 text-[#8C877D] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+
+                          {/* 권 내부 구절 목록 */}
+                          {isExpanded && (
+                            <div className="p-2 space-y-1.5 bg-white">
+                              {bookItems.map(item => {
+                                const daysLeft = getRemainingDays(item.expiresAt);
+                                const isCurrent = commentaryData?.reference === item.reference;
+                                return (
+                                  <div
+                                    key={item.id}
+                                    onClick={() => handleSelectHistoryItem(item)}
+                                    className={`p-2.5 rounded-lg border transition-all cursor-pointer shadow-2xs group flex items-start justify-between gap-2 ${
+                                      isCurrent 
+                                        ? 'bg-[#FAF0EB] border-[#F1D3C6]' 
+                                        : 'bg-[#FAF9F5] border-[#EAE6DF] hover:border-[#C46A40]'
+                                    }`}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                                        <span className="font-serif font-bold text-xs text-[#2C2B29]">
+                                          {item.chapter}장 {item.verse}절
+                                        </span>
+                                        <span className="text-[10px] px-1 py-0.2 rounded bg-[#FAF0EB] text-[#C46A40] font-medium">
+                                          {item.data?.originalLanguageCommentary?.language || '원어'}
+                                        </span>
+                                        {cloudCommentaryLimit > 0 ? (
+                                          <span className="text-[9px] text-[#C46A40] flex items-center gap-0.5">
+                                            <Database className="w-2.5 h-2.5" />
+                                            클라우드
+                                          </span>
+                                        ) : (
+                                          <span className="text-[9px] text-[#8C877D] flex items-center gap-0.5">
+                                            <Clock className="w-2 h-2" />
+                                            {daysLeft}일
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-[11px] text-[#5C5852] line-clamp-1 font-serif">
+                                        "{item.scriptureText}"
+                                      </p>
+                                    </div>
+
+                                    <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                                      <button
+                                        onClick={(e) => handleDeleteHistory(e, item.reference)}
+                                        className="p-1 rounded text-[#A39E94] hover:text-red-600 hover:bg-[#F3EFE9] transition-colors cursor-pointer"
+                                        title="기록 삭제"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                      <ChevronRight className="w-3.5 h-3.5 text-[#A39E94] group-hover:text-[#C46A40] transition-colors" />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1124,7 +1677,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                     onClick={() => handleFetchCommentary(false)}
                     className="w-full px-6 py-3 rounded-xl bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold text-sm transition-all shadow-xs cursor-pointer flex items-center justify-center"
                   >
-                    AI 주석 생성 시작
+                    AI 주석 생성 시작 (1 크레딧)
                   </button>
                 </div>
               </div>
@@ -1264,10 +1817,8 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                 <div className="rounded-xl bg-[#FDFBF7] border border-[#E8DFC8] p-4 shadow-2xs space-y-3">
                   {/* 상단 배너 헤더 */}
                   <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-lg bg-[#FAF0EB] border border-[#F1D3C6] flex items-center justify-center text-[#C46A40] shrink-0">
-                        <Landmark className="w-4 h-4" />
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <Landmark className="w-4.5 h-4.5 text-[#C46A40] shrink-0" />
                       <div>
                         <h4 className="font-serif font-bold text-sm text-[#2C2B29]">
                           구절 심층 연구
@@ -1302,7 +1853,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                             {isPassageTheologyOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                           </>
                         ) : (
-                          <span>연구시작(1회차감)</span>
+                          <span>연구시작 (1 크레딧)</span>
                         )}
                       </button>
                     </div>
@@ -1566,7 +2117,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                                       )}
                                     </>
                                   ) : (
-                                    <span>단어심층 연구(1회 차감)</span>
+                                    <span>단어심층 연구 (1 크레딧)</span>
                                   )}
                                 </button>
                               </div>
@@ -1864,199 +2415,9 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
         )}
       </div>
 
-      {/* 4. 구독 및 충전 안내 모달 */}
-      {showRechargeModal && (
-        <div 
-          className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150"
-          onClick={() => setShowRechargeModal(false)}
-        >
-          <div 
-            className="relative w-full max-w-md bg-[#FAF9F5] text-[#2C2B29] rounded-2xl shadow-2xl border border-[#E7E5DF] overflow-hidden p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* 닫기 버튼 */}
-            <button 
-              onClick={() => setShowRechargeModal(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-[#8C877D] hover:text-[#2C2B29] hover:bg-[#EFEAE2] transition-colors cursor-pointer"
-            >
-              <X className="w-4 h-4 stroke-[1.8]" />
-            </button>
+      {/* 4. 구독 및 충전 안내 모달 (createPortal) */}
+      {rechargeModal}
 
-            <div className="text-center mb-4">
-              <div className="w-12 h-12 rounded-2xl bg-[#FAF0EB] border border-[#F1D3C6] flex items-center justify-center text-[#C46A40] mx-auto mb-3 shadow-2xs">
-                <CreditCard className="w-6 h-6 stroke-[1.8]" />
-              </div>
-              <h3 className="text-base font-serif font-bold text-[#2C2B29] mb-1">AI 원어 주석 이용권 안내</h3>
-              <p className="text-xs text-[#7A756D] leading-relaxed">
-                매월 기본 10회가 무료 제공되며, 필요에 따라 유료 이용권을 충전하실 수 있습니다.
-              </p>
-              <p className="text-[11px] text-[#C46A40] font-medium mt-1">
-                * 충전된 유료 횟수는 1년(365일)동안 사용하실 수 있습니다.
-              </p>
-            </div>
-
-            {/* 현재 잔여 상태 */}
-            <div className="p-3 bg-white rounded-xl border border-[#E8E3DA] mb-4 text-xs flex items-center justify-between">
-              <div>
-                <span className="text-[#8C877D]">현재 잔여 횟수:</span>
-                <strong className="ml-1 text-sm font-bold text-[#C46A40]">{totalRemaining}회</strong>
-                <span className="text-[10px] text-[#7A756D] ml-1.5">(무료 {freeRemaining}회 / 유료 {paidRemaining}회)</span>
-              </div>
-              <span className="px-2 py-0.5 rounded-full bg-[#F4EFE6] text-[#6E6A63] text-[10px] font-medium">
-                매월 1일 10회 자동 갱신
-              </span>
-            </div>
-
-            {rechargeSuccessMessage && (
-              <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold flex items-center gap-2">
-                <Check className="w-4 h-4 text-emerald-600" />
-                <span>{rechargeSuccessMessage}</span>
-              </div>
-            )}
-
-            {/* 충전 플랜 목록 */}
-            <div className="space-y-2.5 mb-2">
-              {/* 기본 무료 플랜 */}
-              <div className="p-3 rounded-xl border border-[#E8E3DA] bg-white flex items-center justify-between text-xs">
-                <div>
-                  <div className="font-bold text-[#2C2B29]">기본 무료 제공</div>
-                  <div className="text-[#8C877D] text-[11px]">매월 10회 무료 제공</div>
-                </div>
-                <span className="px-2.5 py-1 rounded-lg bg-[#F4EFE6] text-[#7A756D] font-bold text-xs">
-                  무료 (0원)
-                </span>
-              </div>
-
-              {/* 플랜 1: 라이트 플랜 (200회) */}
-              <div className="p-3 rounded-xl border border-[#E8E3DA] bg-white hover:border-[#C46A40] transition-all flex items-center justify-between text-xs">
-                <div>
-                  <div className="font-bold text-[#2C2B29]">라이트 플랜 (200회)</div>
-                  <div className="text-[#8C877D] text-[11px]">설교 준비 및 집중 묵상용</div>
-                </div>
-                <button
-                  onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
-                  className="px-3 py-1.5 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold transition-colors cursor-pointer shadow-2xs"
-                >
-                  5,000원 충전
-                </button>
-              </div>
-
-              {/* 플랜 2: 스탠다드 플랜 (500회) - 인기 추천 */}
-              <div className="p-3 rounded-xl border-2 border-[#C46A40] bg-[#FFFBF8] relative flex items-center justify-between text-xs shadow-xs">
-                <span className="absolute -top-2 left-4 px-2 py-0.2 rounded-full bg-[#C46A40] text-white text-[9px] font-bold tracking-wider">
-                  인기 추천
-                </span>
-                <div>
-                  <div className="font-bold text-[#2C2B29]">스탠다드 플랜 (500회)</div>
-                  <div className="text-[#8C877D] text-[11px]">가장 많은 목회자/성도가 선택</div>
-                </div>
-                <button
-                  onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
-                  className="px-3 py-1.5 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold transition-colors cursor-pointer shadow-2xs"
-                >
-                  10,000원 충전
-                </button>
-              </div>
-
-              {/* 플랜 3: 프로 플랜 (1,000회) - 최대 혜택 패키지 */}
-              <div className="p-3 rounded-xl border border-[#E8E3DA] bg-white hover:border-[#C46A40] transition-all flex items-center justify-between text-xs">
-                <div>
-                  <div className="font-bold text-[#2C2B29]">프로 플랜 (1,000회)</div>
-                  <div className="text-[#8C877D] text-[11px]">최대 혜택 패키지</div>
-                </div>
-                <button
-                  onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
-                  className="px-3 py-1.5 rounded-lg bg-[#2C2B29] hover:bg-[#1A1918] text-white font-semibold transition-colors cursor-pointer shadow-2xs"
-                >
-                  15,000원 충전
-                </button>
-              </div>
-            </div>
-
-            {/* 🎁 친구 추천하기 섹션 */}
-            <div className="mt-3 p-3.5 rounded-2xl bg-gradient-to-br from-[#FFFBF8] to-[#F7F4EE] border border-[#F1D3C6] shadow-2xs">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-[#FAF0EB] text-[#C46A40] flex items-center justify-center shrink-0 border border-[#F1D3C6]">
-                    <Gift className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-[#2C2B29]">
-                      친구 추천하기
-                    </h4>
-                    <p className="text-[11px] font-bold text-[#C46A40] mt-0.5">
-                      +{referralBonusCount || 50}회 혜택 선물
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsReferralFormOpen(!isReferralFormOpen);
-                    setReferralFeedback(null);
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-semibold shrink-0 transition-colors shadow-2xs cursor-pointer"
-                >
-                  {isReferralFormOpen ? '닫기' : '친구 추천하기'}
-                </button>
-              </div>
-
-              {/* 친구 추천 신청 입력 폼 (이메일 기반) */}
-              {isReferralFormOpen && (
-                <form onSubmit={handleSubmitReferral} className="mt-3 pt-3 border-t border-[#EFECE6] space-y-2.5 animate-in fade-in duration-200">
-                  <div className="p-2.5 rounded-xl bg-white border border-[#E8E3DA] text-[11px] text-[#C46A40] leading-relaxed">
-                    💡 가입하신 구글/지메일 주소를 정확히 기입하시면, 관리자 확인 후 AI {referralBonusCount}회가 충전됩니다.
-                  </div>
-
-                  {referralFeedback && (
-                    <div className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
-                      referralFeedback.type === 'success' 
-                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
-                        : 'bg-red-50 text-red-700 border border-red-200'
-                    }`}>
-                      {referralFeedback.type === 'success' ? <Check className="w-4 h-4 shrink-0 text-emerald-600" /> : <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />}
-                      <span>{referralFeedback.message}</span>
-                    </div>
-                  )}
-
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-[#5A564F]">추천인(나)의 가입 이메일</label>
-                    <input
-                      type="email"
-                      placeholder="본인 구글/가입 이메일 (예: user@gmail.com)"
-                      value={referrerEmailInput}
-                      onChange={(e) => setReferrerEmailInput(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-1 focus:ring-[#C46A40]"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-[#5A564F]">친구(상대방)의 가입 이메일</label>
-                    <input
-                      type="email"
-                      placeholder="친구 구글/가입 이메일 (예: friend@gmail.com)"
-                      value={friendEmailInput}
-                      onChange={(e) => setFriendEmailInput(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2C2B29] outline-none focus:border-[#C46A40] focus:ring-1 focus:ring-[#C46A40]"
-                      required
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isSubmittingReferral}
-                    className="w-full py-2.5 bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>{isSubmittingReferral ? '신청 처리 중...' : `친구 추천 혜택 (${referralBonusCount}회) 신청 제출`}</span>
-                  </button>
-                </form>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

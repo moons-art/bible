@@ -5,8 +5,14 @@ import {
   X, ShieldCheck, Users, Sparkles, RefreshCw, Search, 
   BookOpen, Clock, Laptop, Check, AlertCircle, Award, 
   Activity, Trash2, FileText, Database, Gift, Tag, UserPlus, CheckCircle2,
-  KeyRound
+  KeyRound, Building2, MessageCircle, Calendar
 } from 'lucide-react';
+import {
+  getSitePolicy,
+  saveSitePolicy,
+  type SitePolicy,
+  DEFAULT_SITE_POLICY
+} from '../services/policyService';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { doc, deleteDoc } from 'firebase/firestore';
 import { 
@@ -17,6 +23,7 @@ import {
   clearAllActivityLogs,
   syncUserProfile,
   addCreditsToUser, 
+  addCloudCapacityToUser,
   toggleUserAllowedVersion, 
   type UserProfile,
   type ActivityLogEntry
@@ -49,7 +56,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   onClose,
   currentUserEmail,
 }) => {
-  const [activeTab, setActiveTab] = useState<'users' | 'promotions' | 'logs'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'promotions' | 'logs' | 'policies'>('users');
+  
+  // 서비스 정책, 약관 및 사업자 정보 상태
+  const [policySettings, setPolicySettings] = useState<SitePolicy>(DEFAULT_SITE_POLICY);
+  const [policySubTab, setPolicySubTab] = useState<'business' | 'terms' | 'privacy'>('business');
+  const [isSavingPolicy, setIsSavingPolicy] = useState(false);
   
   // 유저 목록 상태
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -138,6 +150,21 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     getReferralSettings().then(st => {
       setReferralSettings(st);
     }).catch(() => {});
+    getSitePolicy().then(setPolicySettings).catch(() => {});
+  };
+
+  // 서비스 정책 및 사업자 정보 저장
+  const handleSavePolicy = async () => {
+    setIsSavingPolicy(true);
+    try {
+      await saveSitePolicy(policySettings);
+      showToast('서비스 정책 및 사업자 정보가 성공적으로 저장되었습니다.');
+    } catch (err) {
+      console.error('Failed to save policy settings:', err);
+      showToast('저장 중 오류가 발생했습니다.');
+    } finally {
+      setIsSavingPolicy(false);
+    }
   };
 
   // 모달 진입 시 동기화 및 데이터 로드 + 실시간 추천 신청 목록 구독
@@ -415,6 +442,40 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     });
   };
 
+  // 주석 클라우드 수동 지급 처리 (+300 / +1000 / 무제한 - 인앱 확인 모달)
+  const handleAddCloudCapacity = (user: UserProfile, capacity: number) => {
+    const userName = user.displayName || user.email || '회원';
+    const capacityText = capacity >= 30000 ? '무제한(성경 전체)' : `+${capacity}구절`;
+    setConfirmModal({
+      isOpen: true,
+      title: '주석 클라우드 용량 수동 지급',
+      message: `"${userName}" 회원에게 주석 클라우드 영구 보관 용량 ${capacityText}을 수동으로 추가하시겠습니까?`,
+      confirmText: `용량 추가 승인`,
+      theme: 'primary',
+      onConfirm: async () => {
+        setActionLoadingUid(user.uid);
+        try {
+          await addCloudCapacityToUser(user.uid, capacity, 0, '관리자 수동 지급');
+          showToast(`"${userName}" 회원에게 주석 클라우드 ${capacityText} 추가 완료!`);
+          setUsers(prev => prev.map(u => {
+            if (u.uid === user.uid) {
+              return {
+                ...u,
+                cloudCommentaryLimit: (u.cloudCommentaryLimit || 0) + capacity
+              };
+            }
+            return u;
+          }));
+        } catch (err) {
+          console.error('Failed to add cloud capacity:', err);
+          showToast('주석 클라우드 용량 추가 중 오류가 발생했습니다.');
+        } finally {
+          setActionLoadingUid(null);
+        }
+      }
+    });
+  };
+
   // 9. 원격 특별 번역본 권한 토글 (개역개정, NIV 등 - 인앱 확인 모달)
   const handleToggleVersion = (
     user: UserProfile, 
@@ -634,6 +695,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
               <Activity className="w-4 h-4" />
               <span>실시간 접속 및 활동 로그 ({totalLogsCount}건)</span>
             </button>
+
+            <button
+              onClick={() => setActiveTab('policies')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                activeTab === 'policies'
+                  ? 'bg-[#C46A40] text-white shadow-xs'
+                  : 'bg-white text-[#6E6A63] border border-[#DDD8CE] hover:bg-[#F5F3ED]'
+              }`}
+            >
+              <Building2 className="w-4 h-4" />
+              <span>서비스 정책 & 약관 관리</span>
+            </button>
           </div>
         )}
 
@@ -756,9 +829,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         <thead>
                           <tr className="bg-[#F7F5F0] border-b border-[#E7E5DF] text-[#6E6A63]">
                             <th className="py-3 px-4 font-bold">회원 정보</th>
-                            <th className="py-3 px-4 font-bold">최근 접속 & 활동</th>
-                            <th className="py-3 px-3 font-bold text-center">작성 자료</th>
-                            <th className="py-3 px-4 font-bold text-center">AI 잔여 횟수</th>
+                            <th className="py-3 px-4 font-bold">접속 & 기기</th>
+                            <th className="py-3 px-3 font-bold text-center">보관 및 작성 자료</th>
+                            <th className="py-3 px-4 font-bold text-center">AI 크레딧 & 충전 내역</th>
+                            <th className="py-3 px-4 font-bold text-center">주석 클라우드</th>
                             <th className="py-3 px-4 font-bold text-center">보너스 충전</th>
                             <th className="py-3 px-4 font-bold text-center">특별 번역본</th>
                             <th className="py-3 px-3 font-bold text-center">계정 관리</th>
@@ -767,7 +841,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         <tbody className="divide-y divide-[#EFECE6]">
                           {filteredUsers.length === 0 ? (
                             <tr>
-                              <td colSpan={7} className="py-12 text-center">
+                              <td colSpan={8} className="py-12 text-center">
                                 {fetchError ? (
                                   <div className="flex flex-col items-center gap-2 text-red-500">
                                     <AlertCircle className="w-8 h-8" />
@@ -790,9 +864,26 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                               const isAllowedNiv = (user.allowedVersions || []).includes('built-in-niv');
                               const isBusy = !!actionLoadingUid && actionLoadingUid.startsWith(user.uid);
 
+                              // 충전 기록 계산
+                              const recHistory = user.rechargeHistory || [];
+                              const latestRecharge = recHistory.length > 0 ? recHistory[recHistory.length - 1] : null;
+                              const now = Date.now();
+                              const expiresAt = latestRecharge?.expiresAt || user.aiCredits?.paidExpiresAt;
+                              const daysLeft = expiresAt ? Math.max(0, Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24))) : null;
+
+                              // 기기 목록 계산
+                              const userDevices = (user.devices && user.devices.length > 0) 
+                                ? user.devices 
+                                : (user.deviceInfo ? [{ device: user.deviceInfo, lastLoginAt: user.lastLoginAt || now, loginCount: user.loginCount || 1 }] : []);
+
+                              // 클라우드 구독 상태 계산
+                              const isCloudSubscribed = (user.cloudCommentaryLimit || 0) > 0;
+                              const cloudPlanName = user.subscribedPlan || (user.cloudCommentaryLimit && user.cloudCommentaryLimit >= 30000 ? '무제한 ALL' : `클라우드 ${user.cloudCommentaryLimit || 0}`);
+                              const cloudSubDate = user.cloudSubscribedAt || user.subscribedAt;
+
                               return (
                                 <tr key={user.uid} className="hover:bg-[#FAF9F5] transition-colors">
-                                  {/* 회원 정보 */}
+                                  {/* 회원 정보 (이름, 이메일, UID, 가입일) */}
                                   <td className="py-3 px-4">
                                     <div className="flex items-center gap-2.5">
                                       {user.photoURL ? (
@@ -812,22 +903,28 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                           )}
                                         </div>
                                         <p className="text-[11px] text-[#8C877D] font-mono select-all">{user.email || '이메일 없음'}</p>
-                                        <p className="text-[9px] text-[#A39E94] font-mono truncate max-w-[160px]" title={user.uid}>UID: {user.uid}</p>
+                                        <p className="text-[9px] text-[#A39E94] font-mono truncate max-w-[150px]" title={user.uid}>UID: {user.uid}</p>
+                                        <div className="text-[10px] text-[#8C877D] mt-1 flex items-center gap-1">
+                                          <Calendar className="w-3 h-3 text-[#A39E94]" />
+                                          <span>가입: {user.createdAt ? new Date(user.createdAt).toLocaleDateString('ko-KR') : '-'}</span>
+                                        </div>
                                       </div>
                                     </div>
                                   </td>
 
-                                  {/* 최근 접속 & 기기 */}
+                                  {/* 최근 접속 & 기기 (기기 종류 및 총 기기 수) */}
                                   <td className="py-3 px-4">
-                                    <div className="text-[11px] text-[#2C2B29] font-medium">
-                                      {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('ko-KR', {
-                                        month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                                      }) : '-'}
+                                    <div className="text-[11px] text-[#2C2B29] font-medium flex items-center gap-1.5">
+                                      <span>
+                                        {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('ko-KR', {
+                                          month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                                        }) : '-'}
+                                      </span>
+                                      <span className="px-1.5 py-0.2 bg-slate-100 text-slate-700 text-[9px] font-bold rounded border border-slate-200">
+                                        기기 {userDevices.length}대
+                                      </span>
                                     </div>
                                     <div className="text-[10px] text-[#8C877D] flex items-center gap-1 mt-0.5">
-                                      <Laptop className="w-3 h-3 text-[#A39E94]" />
-                                      <span>{user.deviceInfo || '웹 브라우저'}</span>
-                                      <span className="text-[#DDD8CE]">|</span>
                                       <span>로그인 {user.loginCount || 1}회</span>
                                       {user.activityCount ? (
                                         <>
@@ -836,23 +933,43 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                         </>
                                       ) : null}
                                     </div>
+
+                                    {/* 기기 종류 태그들 */}
+                                    <div className="flex flex-wrap gap-1 mt-1.5 max-w-[220px]">
+                                      {userDevices.map((d, dIdx) => (
+                                        <span 
+                                          key={dIdx}
+                                          title={`최근 접속: ${new Date(d.lastLoginAt).toLocaleString('ko-KR')} (총 ${d.loginCount || 1}회 접속)`}
+                                          className="px-1.5 py-0.5 bg-[#FAF9F5] border border-[#E7E5DF] hover:border-slate-400 text-[#6E6A63] text-[9px] rounded font-medium inline-flex items-center gap-1 cursor-help transition-colors"
+                                        >
+                                          <Laptop className="w-2.5 h-2.5 text-[#A39E94]" />
+                                          {d.device}
+                                        </span>
+                                      ))}
+                                    </div>
+
                                     {user.lastAction && (
-                                      <div className="text-[9px] text-[#A39E94] mt-0.5">
+                                      <div className="text-[9px] text-[#A39E94] mt-1">
                                         마지막 액션: <span className="text-[#6E6A63]">{user.lastAction}</span>
                                       </div>
                                     )}
                                   </td>
 
-                                  {/* 자료 통계 */}
+                                  {/* 보관 및 작성 자료 (말씀메모, 설교노트, AI주석 저장수) */}
                                   <td className="py-3 px-3 text-center">
-                                    <div className="inline-flex items-center gap-1.5 text-[11px] bg-[#FAF9F5] px-2.5 py-1 rounded-lg border border-[#E7E5DF]">
-                                      <span title="작성한 말씀 주석 수" className="font-semibold text-slate-700">주석 {user.noteCount || 0}</span>
-                                      <span className="text-[#DDD8CE]">/</span>
-                                      <span title="작성한 설교 노트 수" className="font-semibold text-indigo-700">설교 {user.sermonCount || 0}</span>
+                                    <div className="flex flex-col gap-1 items-center">
+                                      <div className="inline-flex items-center gap-1.5 text-[11px] bg-[#FAF9F5] px-2.5 py-1 rounded-lg border border-[#E7E5DF]">
+                                        <span title="기록한 말씀 주석/메모 건수" className="font-semibold text-slate-700">말씀메모 {user.noteCount || 0}</span>
+                                        <span className="text-[#DDD8CE]">|</span>
+                                        <span title="작성한 설교 노트 편수" className="font-semibold text-indigo-700">설교 {user.sermonCount || 0}</span>
+                                      </div>
+                                      <div className="text-[10px] text-[#8C877D] mt-0.5">
+                                        AI주석 보관: <strong className="text-slate-800 font-semibold">{user.usedCloudCommentaryCount || 0}</strong> / {user.cloudCommentaryLimit || 0}
+                                      </div>
                                     </div>
                                   </td>
 
-                                  {/* AI 잔여 횟수 */}
+                                  {/* AI 잔여 횟수 & 충전 내역 */}
                                   <td className="py-3 px-4 text-center">
                                     <div className="flex flex-col items-center">
                                       <div className="font-bold text-xs text-[#2C2B29]">
@@ -866,6 +983,75 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                       <span className="text-[10px] text-[#8C877D]">
                                         누적 {user.aiCredits?.totalUsed || 0}회 연구됨
                                       </span>
+
+                                      {/* 최근 충전 내역 및 유효기간 */}
+                                      <div className="mt-1 pt-1 border-t border-[#EFECE6] w-full text-center">
+                                        {latestRecharge ? (
+                                          <div className="flex flex-col items-center">
+                                            <span className="text-[10px] font-semibold text-[#C46A40]">
+                                              최근: +{latestRecharge.amount}회 ({latestRecharge.planName})
+                                            </span>
+                                            <span className="text-[9px] text-[#8C877D]">
+                                              {new Date(latestRecharge.date).toLocaleDateString('ko-KR')}
+                                              {daysLeft !== null && ` • ${daysLeft}일 남음`}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <span className="text-[9px] text-[#A39E94]">충전 기록 없음</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  {/* 주석 클라우드 상태 & 지급 */}
+                                  <td className="py-3 px-3 text-center">
+                                    <div className="flex flex-col gap-1.5 items-center justify-center">
+                                      {/* 구독 상태 배지 */}
+                                      {isCloudSubscribed ? (
+                                        <div className="text-center">
+                                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold rounded-full">
+                                            구독 중 ({cloudPlanName})
+                                          </span>
+                                          <div className="text-[9px] text-[#8C877D] mt-0.5">
+                                            구독일: {cloudSubDate ? new Date(cloudSubDate).toLocaleDateString('ko-KR') : '-'}
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium rounded-full">
+                                          기본 30일 보관
+                                        </span>
+                                      )}
+
+                                      {/* 관리자 수동 지급 버튼 */}
+                                      <div className="flex items-center gap-1 mt-0.5">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCloudCapacity(user, 300); }}
+                                          disabled={isBusy}
+                                          className="px-2 py-0.5 bg-white hover:bg-slate-50 active:bg-slate-100 border border-[#DDD8CE] hover:border-slate-300 text-slate-700 rounded text-[10px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                                          title="300구절 클라우드 추가"
+                                        >
+                                          +300
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCloudCapacity(user, 1000); }}
+                                          disabled={isBusy}
+                                          className="px-2 py-0.5 bg-white hover:bg-slate-50 active:bg-slate-100 border border-[#DDD8CE] hover:border-slate-300 text-slate-700 rounded text-[10px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                                          title="1000구절 클라우드 추가"
+                                        >
+                                          +1000
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCloudCapacity(user, 30000); }}
+                                          disabled={isBusy}
+                                          className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-900 text-white rounded text-[9px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                                          title="성경 전체 무제한 클라우드 지급"
+                                        >
+                                          무제한
+                                        </button>
+                                      </div>
                                     </div>
                                   </td>
 
@@ -1074,7 +1260,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
                         <div>
                           <label className="block text-[11px] font-semibold text-[#5A564F] mb-1">
-                            가입 시 추가 혜택 (기본 10회에 추가 충전)
+                            가입 시 보너스 혜택 지급
                           </label>
                           <div className="grid grid-cols-5 gap-1.5">
                             {[10, 50, 100, 200].map(cnt => (
@@ -1106,7 +1292,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         <div className="p-3 bg-[#FAF0EB]/60 rounded-xl border border-[#F1D3C6] text-[11px] text-[#524F4A] flex items-center justify-between">
                           <span>신규 가입자 혜택 요약:</span>
                           <strong className="text-[#C46A40]">
-                            기본 10회 {promoSettings.enabled && promoSettings.bonusCredits > 0 ? `+ 보너스 ${promoSettings.bonusCredits}회 = 총 ${10 + promoSettings.bonusCredits}회` : '(현재 프로모션 OFF)'}
+                            {promoSettings.enabled && promoSettings.bonusCredits > 0
+                              ? `가입 보너스 ${promoSettings.bonusCredits}회 즉시 지급 (소진 시 매월 10회 무료)`
+                              : '기본 10회 제공 (프로모션 OFF)'}
                           </strong>
                         </div>
 
@@ -1427,6 +1615,297 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       </table>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* 4. 서비스 정책, 약관 & 푸터 사업자 정보 관리 탭 */}
+              {activeTab === 'policies' && (
+                <div className="space-y-5">
+                  {/* 최상단 헤더 카드 (스크린샷과 100% 일치) */}
+                  <div className="bg-white rounded-2xl border border-[#E7E5DF] p-5 sm:p-6 shadow-xs flex items-start gap-4">
+                    <div className="w-11 h-11 rounded-2xl bg-[#1F2937] flex items-center justify-center text-amber-400 shrink-0 shadow-xs">
+                      <FileText className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-serif font-bold text-base sm:text-lg text-[#2B2927]">
+                          서비스 정책, 약관 & 푸터 사업자 정보 설정
+                        </h3>
+                        <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-600 border border-blue-200 text-[11px] font-bold">
+                          스토어 심사 & 법적 고지
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#8C877D] mt-1">
+                        서비스 이용약관, 개인정보 처리방침, 하단 푸터에 표시될 사업자/고객센터 정보 및 카카오톡 채널을 수정합니다.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 서브 탭 바 (스크린샷 일치) */}
+                  <div className="flex items-center gap-2 border-b border-[#E7E5DF] pb-2 overflow-x-auto custom-scrollbar">
+                    <button
+                      onClick={() => setPolicySubTab('business')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                        policySubTab === 'business'
+                          ? 'bg-[#1F2937] text-white shadow-xs'
+                          : 'bg-white text-[#6E6A63] border border-[#DDD8CE] hover:bg-[#F5F3ED]'
+                      }`}
+                    >
+                      <Building2 className="w-4 h-4" />
+                      <span>사업자 & 푸터 기본 정보</span>
+                    </button>
+
+                    <button
+                      onClick={() => setPolicySubTab('terms')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                        policySubTab === 'terms'
+                          ? 'bg-blue-50 text-blue-700 border border-blue-300 shadow-xs font-bold'
+                          : 'bg-white text-[#6E6A63] border border-[#DDD8CE] hover:bg-[#F5F3ED]'
+                      }`}
+                    >
+                      <FileText className="w-4 h-4 text-blue-500" />
+                      <span>서비스 이용약관 (무료앱 기준)</span>
+                    </button>
+
+                    <button
+                      onClick={() => setPolicySubTab('privacy')}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                        policySubTab === 'privacy'
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 shadow-xs font-bold'
+                          : 'bg-white text-[#6E6A63] border border-[#DDD8CE] hover:bg-[#F5F3ED]'
+                      }`}
+                    >
+                      <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                      <span>개인정보 처리방침</span>
+                    </button>
+                  </div>
+
+                  {/* 서브 탭 1: 사업자 & 푸터 기본 정보 및 카카오톡 채널 */}
+                  {policySubTab === 'business' && (
+                    <div className="bg-white rounded-2xl border border-[#E7E5DF] p-5 sm:p-6 shadow-xs space-y-5">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* 서비스 / 상호명 */}
+                        <div>
+                          <label className="block text-xs font-semibold text-[#524E48] mb-1.5">
+                            서비스 / 상호명
+                          </label>
+                          <input
+                            type="text"
+                            value={policySettings.businessName}
+                            onChange={(e) => setPolicySettings({ ...policySettings, businessName: e.target.value })}
+                            placeholder="네이션스 솔루션"
+                            className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2B2927] focus:outline-hidden focus:border-[#C46A40] transition-colors"
+                          />
+                        </div>
+
+                        {/* 대표자명 (선택) */}
+                        <div>
+                          <label className="block text-xs font-semibold text-[#524E48] mb-1.5">
+                            대표자명 (선택)
+                          </label>
+                          <input
+                            type="text"
+                            value={policySettings.representative}
+                            onChange={(e) => setPolicySettings({ ...policySettings, representative: e.target.value })}
+                            placeholder="예) 홍길동"
+                            className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2B2927] focus:outline-hidden focus:border-[#C46A40] transition-colors"
+                          />
+                        </div>
+
+                        {/* 고객센터 / 문의 이메일 */}
+                        <div>
+                          <label className="block text-xs font-semibold text-[#524E48] mb-1.5">
+                            고객센터 / 문의 이메일
+                          </label>
+                          <input
+                            type="email"
+                            value={policySettings.contactEmail}
+                            onChange={(e) => setPolicySettings({ ...policySettings, contactEmail: e.target.value })}
+                            placeholder="ymoonsik@gmail.com"
+                            className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2B2927] focus:outline-hidden focus:border-[#C46A40] transition-colors"
+                          />
+                        </div>
+
+                        {/* 사업자등록번호 (선택) */}
+                        <div>
+                          <label className="block text-xs font-semibold text-[#524E48] mb-1.5">
+                            사업자등록번호 (선택)
+                          </label>
+                          <input
+                            type="text"
+                            value={policySettings.businessNumber}
+                            onChange={(e) => setPolicySettings({ ...policySettings, businessNumber: e.target.value })}
+                            placeholder="000-00-00000"
+                            className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2B2927] focus:outline-hidden focus:border-[#C46A40] transition-colors"
+                          />
+                        </div>
+
+                        {/* 통신판매업신고번호 (선택) */}
+                        <div>
+                          <label className="block text-xs font-semibold text-[#524E48] mb-1.5">
+                            통신판매업신고번호 (선택)
+                          </label>
+                          <input
+                            type="text"
+                            value={policySettings.ecommerceNumber}
+                            onChange={(e) => setPolicySettings({ ...policySettings, ecommerceNumber: e.target.value })}
+                            placeholder="제2026-서울-0000호"
+                            className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2B2927] focus:outline-hidden focus:border-[#C46A40] transition-colors"
+                          />
+                        </div>
+
+                        {/* 저작권 문구 (Copyright) */}
+                        <div>
+                          <label className="block text-xs font-semibold text-[#524E48] mb-1.5">
+                            저작권 문구 (Copyright)
+                          </label>
+                          <input
+                            type="text"
+                            value={policySettings.copyright}
+                            onChange={(e) => setPolicySettings({ ...policySettings, copyright: e.target.value })}
+                            placeholder="Copyright © 2026 Nations. All rights reserved."
+                            className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2B2927] focus:outline-hidden focus:border-[#C46A40] transition-colors"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 카카오톡 채널 연동 설정 (요청 사항) */}
+                      <div className="pt-4 border-t border-[#F0EBE1] space-y-3">
+                        <div className="flex items-center gap-2 text-xs font-bold text-[#2B2927]">
+                          <span className="w-5 h-5 rounded-md bg-[#FEE500] text-[#3C1E1E] flex items-center justify-center text-[10px] font-black">
+                            💬
+                          </span>
+                          <span>카카오톡 채널 & 1:1 고객상담 연동 정보</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-xs font-semibold text-[#524E48] mb-1.5">
+                              카카오톡 채널 이름
+                            </label>
+                            <input
+                              type="text"
+                              value={policySettings.kakaoChannelName}
+                              onChange={(e) => setPolicySettings({ ...policySettings, kakaoChannelName: e.target.value })}
+                              placeholder="네이션스 솔루션"
+                              className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2B2927] focus:outline-hidden focus:border-[#C46A40] transition-colors"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-semibold text-[#524E48] mb-1.5">
+                              카카오톡 채널 홈 URL
+                            </label>
+                            <input
+                              type="text"
+                              value={policySettings.kakaoChannelUrl}
+                              onChange={(e) => setPolicySettings({ ...policySettings, kakaoChannelUrl: e.target.value })}
+                              placeholder="http://pf.kakao.com/_cxjBxaX"
+                              className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2B2927] focus:outline-hidden focus:border-[#C46A40] transition-colors"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-semibold text-[#524E48] mb-1.5">
+                              카카오톡 1:1 채팅 URL
+                            </label>
+                            <input
+                              type="text"
+                              value={policySettings.kakaoChatUrl}
+                              onChange={(e) => setPolicySettings({ ...policySettings, kakaoChatUrl: e.target.value })}
+                              placeholder="http://pf.kakao.com/_cxjBxaX/chat"
+                              className="w-full px-3 py-2 bg-white border border-[#DDD8CE] rounded-xl text-xs text-[#2B2927] focus:outline-hidden focus:border-[#C46A40] transition-colors"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 저장 버튼 */}
+                      <div className="pt-4 border-t border-[#F0EBE1] flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleSavePolicy}
+                          disabled={isSavingPolicy}
+                          className="px-5 py-2.5 bg-[#1F2937] hover:bg-black text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs flex items-center gap-2 active:scale-95 disabled:opacity-50"
+                        >
+                          <FileText className="w-4 h-4" />
+                          <span>{isSavingPolicy ? '저장 중...' : '서비스 정책 및 사업자 정보 저장'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 서브 탭 2: 서비스 이용약관 (무료앱 기준) */}
+                  {policySubTab === 'terms' && (
+                    <div className="bg-white rounded-2xl border border-[#E7E5DF] p-5 sm:p-6 shadow-xs space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-sm font-bold text-[#2B2927] flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-blue-600" />
+                            <span>서비스 이용약관 본문 수정</span>
+                          </h4>
+                          <p className="text-[11px] text-[#8C877D] mt-0.5">
+                            사용자 앱 및 회원가입 화면에서 조회할 수 있는 표준 이용약관입니다.
+                          </p>
+                        </div>
+                      </div>
+
+                      <textarea
+                        rows={16}
+                        value={policySettings.termsOfService}
+                        onChange={(e) => setPolicySettings({ ...policySettings, termsOfService: e.target.value })}
+                        className="w-full p-4 bg-[#FAF9F5] border border-[#DDD8CE] rounded-xl text-xs font-mono text-[#2B2927] leading-relaxed focus:outline-hidden focus:border-[#C46A40] transition-colors custom-scrollbar"
+                      />
+
+                      <div className="pt-2 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleSavePolicy}
+                          disabled={isSavingPolicy}
+                          className="px-5 py-2.5 bg-[#1F2937] hover:bg-black text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs flex items-center gap-2 active:scale-95 disabled:opacity-50"
+                        >
+                          <FileText className="w-4 h-4" />
+                          <span>{isSavingPolicy ? '저장 중...' : '서비스 이용약관 저장'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 서브 탭 3: 개인정보 처리방침 */}
+                  {policySubTab === 'privacy' && (
+                    <div className="bg-white rounded-2xl border border-[#E7E5DF] p-5 sm:p-6 shadow-xs space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-sm font-bold text-[#2B2927] flex items-center gap-2">
+                            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                            <span>개인정보 처리방침 본문 수정</span>
+                          </h4>
+                          <p className="text-[11px] text-[#8C877D] mt-0.5">
+                            Google 로그인 시 개인정보 수집, 클라우드 동기화 및 보관 기준을 규정한 법적 고지문입니다.
+                          </p>
+                        </div>
+                      </div>
+
+                      <textarea
+                        rows={16}
+                        value={policySettings.privacyPolicy}
+                        onChange={(e) => setPolicySettings({ ...policySettings, privacyPolicy: e.target.value })}
+                        className="w-full p-4 bg-[#FAF9F5] border border-[#DDD8CE] rounded-xl text-xs font-mono text-[#2B2927] leading-relaxed focus:outline-hidden focus:border-[#C46A40] transition-colors custom-scrollbar"
+                      />
+
+                      <div className="pt-2 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleSavePolicy}
+                          disabled={isSavingPolicy}
+                          className="px-5 py-2.5 bg-[#1F2937] hover:bg-black text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs flex items-center gap-2 active:scale-95 disabled:opacity-50"
+                        >
+                          <ShieldCheck className="w-4 h-4" />
+                          <span>{isSavingPolicy ? '저장 중...' : '개인정보 처리방침 저장'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </>

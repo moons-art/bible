@@ -6,6 +6,8 @@ export interface AiUsageState {
   paidRemaining: number; // 유료 충전 잔여 횟수
   paidExpiresAt?: number; // 유료 충전 만료 타임스탬프 (1년 365일 유효)
   totalUsed: number; // 누적 사용 횟수
+  cloudCommentaryLimit?: number;
+  usedCloudCommentaryCount?: number;
   history: Array<{
     timestamp: number;
     reference: string;
@@ -34,6 +36,8 @@ export function getAiUsageState(): AiUsageState {
         monthlyFreeRemaining: MONTHLY_FREE_QUOTA,
         paidRemaining: 0,
         totalUsed: 0,
+        cloudCommentaryLimit: 0,
+        usedCloudCommentaryCount: 0,
         history: [],
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
@@ -42,10 +46,12 @@ export function getAiUsageState(): AiUsageState {
 
     const state: AiUsageState = JSON.parse(raw);
 
-    // 새로운 달이 시작된 경우: 무료 10회 자동 충전, 유료 충전 잔여분은 유지
+    // 새로운 달이 시작된 경우:
+    // 플랜 구독자(paidRemaining > 0)는 무료 10개 미지급(0)
+    // 미구독자이거나 크레딧을 다 써서 paidRemaining === 0인 경우 다음 달부터 10개로 갱신 (누적 합산이 아닌 10개로 시작)
     if (state.monthKey !== currentMonth) {
       state.monthKey = currentMonth;
-      state.monthlyFreeRemaining = MONTHLY_FREE_QUOTA;
+      state.monthlyFreeRemaining = (state.paidRemaining && state.paidRemaining > 0) ? 0 : MONTHLY_FREE_QUOTA;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
 
@@ -57,6 +63,8 @@ export function getAiUsageState(): AiUsageState {
       monthlyFreeRemaining: MONTHLY_FREE_QUOTA,
       paidRemaining: 0,
       totalUsed: 0,
+      cloudCommentaryLimit: 0,
+      usedCloudCommentaryCount: 0,
       history: [],
     };
   }
@@ -84,14 +92,13 @@ export function getTotalRemainingCredits(): number {
   return state.monthlyFreeRemaining + state.paidRemaining;
 }
 
-// 총 제공/충전 한도 반환 (기본 10회, 유료 충전 시 충전 규모에 맞춘 상한 기준선)
+// 총 제공/충전 한도 반환 (기본 10회, 유료 충전 시 충전된 총 수량)
 export function getTotalCapacity(): number {
   const state = getAiUsageState();
   if (state.paidRemaining <= 0) {
     return MONTHLY_FREE_QUOTA;
   }
-  const base = state.paidRemaining + (state.totalUsed || 0);
-  return Math.max(MONTHLY_FREE_QUOTA, Math.ceil(base / 100) * 100);
+  return state.paidRemaining + (state.totalUsed || 0);
 }
 
 // 1회 크레딧 차감 (무료 크레딧 우선 차감 후 유료 크레딧 차감)
@@ -113,10 +120,11 @@ export function consumeAiCredit(reference: string): boolean {
   return false;
 }
 
-// 유료 크레딧 충전 (충전 시점부터 1년 365일 유효기간 부여)
+// 유료 크레딧 충전 (충전 시점부터 1년 365일 유효기간 부여, 유료 플랜 회원은 무료 10개 미지급)
 export function addPaidCredits(count: number): void {
   const state = getAiUsageState();
   state.paidRemaining += count;
+  state.monthlyFreeRemaining = 0; // 플랜 구독자는 무료 크레딧 미지급 원칙
   const oneYearFromNow = Date.now() + 365 * 24 * 60 * 60 * 1000;
   // 기존 유효기간이 미래에 남아있다면 더 늦은 날짜로 갱신
   state.paidExpiresAt = state.paidExpiresAt && state.paidExpiresAt > Date.now()
@@ -166,6 +174,8 @@ export function clearAiUsageState(): void {
         monthlyFreeRemaining: 0,
         paidRemaining: 0,
         totalUsed: 0,
+        cloudCommentaryLimit: 0,
+        usedCloudCommentaryCount: 0,
         history: [],
       }
     }));

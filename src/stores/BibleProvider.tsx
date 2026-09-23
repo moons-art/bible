@@ -41,6 +41,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
   // ✅ 인덱싱 중복 방지를 위한 Ref
   const indexedVersionIds = useRef<Set<string>>(new Set());
+  // ✅ IndexedDB 중복 저장 방지를 위한 Ref
+  const savedVersionIdsRef = useRef<Set<string>>(new Set());
   // Firestore 구독 해제 함수 Ref
   const unsubscribeVerseDataRef = useRef<(() => void) | null>(null);
 
@@ -72,24 +74,37 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (prev.some(v => v.id === 'built-in-krv' || v.name === '개역개정')) return prev;
         (async () => {
           try {
-            const res = await fetch('/data/krv.txt');
-            if (res.ok) {
-              const buf = await res.arrayBuffer();
-              let text;
-              try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
-              catch { text = new TextDecoder('euc-kr').decode(buf); }
-              const parsed = await BibleParser.parseTxt('개역개정', text);
-              const krvVersion: BibleVersion = {
-                id: 'built-in-krv',
-                name: '개역개정',
-                verses: parsed.verses,
-                isSystem: false,
-                isBuiltIn: false
-              };
-              await bibleDB.saveVersion(krvVersion);
+            // ✅ IndexedDB 캐시 먼저 확인하여 4.7MB 다운로드 및 재파싱 생략
+            const cached = await bibleDB.getVersion('built-in-krv');
+            let krvVersion: BibleVersion | null = null;
+            if (cached && cached.verses && cached.verses.length > 0) {
+              krvVersion = cached;
+              savedVersionIdsRef.current.add('built-in-krv');
+            } else {
+              const res = await fetch('/data/krv.txt');
+              if (res.ok) {
+                const buf = await res.arrayBuffer();
+                let text;
+                try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+                catch { text = new TextDecoder('euc-kr').decode(buf); }
+                const parsed = await BibleParser.parseTxt('개역개정', text);
+                krvVersion = {
+                  id: 'built-in-krv',
+                  name: '개역개정',
+                  verses: parsed.verses,
+                  isSystem: false,
+                  isBuiltIn: false
+                };
+                await bibleDB.saveVersion(krvVersion);
+                savedVersionIdsRef.current.add('built-in-krv');
+              }
+            }
+
+            if (krvVersion) {
+              const finalKrv = krvVersion;
               setVersions(curr => {
                 if (curr.some(v => v.id === 'built-in-krv')) return curr;
-                const next = [...curr, krvVersion];
+                const next = [...curr, finalKrv];
                 // 저장된 순서에 맞게 위치 복원
                 try {
                   const savedOrderStr = localStorage.getItem('bible-version-order');
@@ -130,6 +145,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setVersions(prev => {
         if (prev.some(v => v.id === 'built-in-krv')) {
           bibleDB.deleteVersion('built-in-krv').catch(() => {});
+          savedVersionIdsRef.current.delete('built-in-krv');
           setSelectedVersionIds(sel => sel.filter(id => id !== 'built-in-krv'));
           return prev.filter(v => v.id !== 'built-in-krv');
         }
@@ -143,19 +159,32 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (prev.some(v => v.id === 'built-in-niv' || v.name === 'NIV')) return prev;
         (async () => {
           try {
-            const res = await fetch('/data/NIV_UTF8_LF.txt');
-            if (res.ok) {
-              const text = await res.text();
-              const parsed = await BibleParser.parseTxt('NIV', text);
-              const nivVersion: BibleVersion = {
-                id: 'built-in-niv',
-                name: 'NIV',
-                verses: parsed.verses,
-                isSystem: false,
-                isBuiltIn: false
-              };
-              await bibleDB.saveVersion(nivVersion);
-              setVersions(curr => curr.some(v => v.id === 'built-in-niv') ? curr : [...curr, nivVersion]);
+            // ✅ IndexedDB 캐시 먼저 확인하여 3.7MB 다운로드 및 재파싱 생략
+            const cached = await bibleDB.getVersion('built-in-niv');
+            let nivVersion: BibleVersion | null = null;
+            if (cached && cached.verses && cached.verses.length > 0) {
+              nivVersion = cached;
+              savedVersionIdsRef.current.add('built-in-niv');
+            } else {
+              const res = await fetch('/data/NIV_UTF8_LF.txt');
+              if (res.ok) {
+                const text = await res.text();
+                const parsed = await BibleParser.parseTxt('NIV', text);
+                nivVersion = {
+                  id: 'built-in-niv',
+                  name: 'NIV',
+                  verses: parsed.verses,
+                  isSystem: false,
+                  isBuiltIn: false
+                };
+                await bibleDB.saveVersion(nivVersion);
+                savedVersionIdsRef.current.add('built-in-niv');
+              }
+            }
+
+            if (nivVersion) {
+              const finalNiv = nivVersion;
+              setVersions(curr => curr.some(v => v.id === 'built-in-niv') ? curr : [...curr, finalNiv]);
               console.log('[BibleProvider] 관리자 권한으로 NIV가 자동 활성화되었습니다.');
             }
           } catch (e) {
@@ -169,6 +198,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setVersions(prev => {
         if (prev.some(v => v.id === 'built-in-niv')) {
           bibleDB.deleteVersion('built-in-niv').catch(() => {});
+          savedVersionIdsRef.current.delete('built-in-niv');
           setSelectedVersionIds(sel => sel.filter(id => id !== 'built-in-niv'));
           return prev.filter(v => v.id !== 'built-in-niv');
         }
@@ -232,6 +262,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Firestore 동기화 (로그인된 경우에만)
       if (googleUserId) {
         Object.keys(next).forEach(key => {
+          if (prev[key] === next[key]) return;
           if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) {
             const docRef = doc(db, 'users', googleUserId, 'verseData', key);
             const entry = next[key];
@@ -284,11 +315,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       } catch (e) { console.error("DB Load failed", e); }
 
-      // 0) 개역개정 빌트인 제거 (저작권 분쟁 방지: 사용자가 직접 파일 업로드할 때만 사용)
+      // 0) 개역개정 초기 목록 제외 (로그인 후 관리자 원격 권한 확인 시 자동 활성화)
       loaded = loaded.filter(v => v.id !== 'built-in-krv');
-      try {
-        bibleDB.deleteVersion('built-in-krv').catch(() => {});
-      } catch (e) {}
 
       // 1) 개역한글 (저작권 만료 퍼블릭 도메인) 빌트인 보장
       let korEntry = loaded.find(v => v.name === '개역한글' || v.id === 'built-in-kor-revised');
@@ -397,6 +425,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // 최초 접속: 개역한글 1개만
         setSelectedVersionIds(['built-in-kor-revised']);
       }
+      hydratedVersions.forEach(v => savedVersionIdsRef.current.add(v.id));
       setIsInitialized(true); // ✅ 초기 1회성 비동기 로딩 완료 선언
 
       // ✅ 2. 구글 드라이브(appDataFolder) 백그라운드 동기화 로직
@@ -467,13 +496,16 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [versions, isInitialized]);
 
-  // 2. IndexedDB 저장 (로딩 완료 플래그 적용하여 초기 덮어쓰기 방지)
+  // 2. IndexedDB 저장 (로딩 완료 플래그 적용하여 초기 덮어쓰기 방지 및 미변경 번역본 스킵)
   useEffect(() => {
     const saveToDB = async () => {
       if (!isInitialized) return; // 로딩 전 덮어쓰기 차단 가드
       try {
         for (const v of versions) {
-          await bibleDB.saveVersion(v);
+          if (!savedVersionIdsRef.current.has(v.id)) {
+            await bibleDB.saveVersion(v);
+            savedVersionIdsRef.current.add(v.id);
+          }
         }
         const miniState = versions.map(v => ({ id: v.id, name: v.name, isBuiltIn: v.isBuiltIn }));
         localStorage.setItem('bible-versions-meta', JSON.stringify(miniState));
@@ -490,6 +522,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (oldVersion) {
         bibleDB.deleteVersion(oldVersion.id).catch(console.error);
         indexedVersionIds.current.delete(oldVersion.id);
+        savedVersionIdsRef.current.delete(oldVersion.id);
       }
       return [...prev.filter(v => v.name !== version.name), version];
     });
@@ -518,6 +551,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setVersions(prev => prev.filter(v => v.id !== id));
     setSelectedVersionIds(prev => prev.filter(vid => vid !== id));
     indexedVersionIds.current.delete(id);
+    savedVersionIdsRef.current.delete(id);
     await bibleDB.deleteVersion(id);
   };
 
@@ -560,6 +594,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setVersions(builtIns);
         setSelectedVersionIds(builtIns.map(v => v.id));
         indexedVersionIds.current.clear();
+        savedVersionIdsRef.current.clear();
         
         // 구글 드라이브에서 모든 번역본 파일 삭제
         import('../api/gdriveWebService').then(async ({ gdriveWebService }) => {

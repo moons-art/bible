@@ -10,6 +10,7 @@ import {
 } from 'firebase/auth';
 import { auth, googleProvider } from '../api/firebaseConfig';
 import { syncUserProfile } from '../services/userService';
+import { PolicyViewModal, type PolicyModalType } from './PolicyViewModal';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -20,6 +21,10 @@ interface AuthModalProps {
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const [tab, setTab] = useState<'login' | 'signup'>('login');
   const [isResetMode, setIsResetMode] = useState(false);
+  const [policyModal, setPolicyModal] = useState<{ isOpen: boolean; tab: PolicyModalType }>({
+    isOpen: false,
+    tab: 'terms'
+  });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
@@ -29,6 +34,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // 이미 로그인된 상태에서 모달 진입 시 즉시 닫기
+  React.useEffect(() => {
+    if (isOpen && auth.currentUser) {
+      if (onSuccess) onSuccess();
+      onClose();
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -47,13 +60,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
     try {
       const result = await signInWithPopup(auth, googleProvider);
       if (result.user) {
-        try {
-          await syncUserProfile(result.user);
-        } catch (e) {
-          console.warn('[AuthModal] Google syncUserProfile non-fatal:', e);
-        }
+        // ✅ 안내창 0초 즉시 닫기 (지연 체감 완전 제거)
         if (onSuccess) onSuccess();
         onClose();
+
+        // 백그라운드에서 비동기 프로필 동기화 (App.tsx의 onAuthStateChanged와 함께 안전하게 처리)
+        syncUserProfile(result.user).catch((e) => {
+          console.warn('[AuthModal] Google syncUserProfile non-fatal:', e);
+        });
       }
     } catch (err: any) {
       console.error('[AuthModal] Google login error:', err);
@@ -127,25 +141,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
         if (displayName.trim()) {
           await updateProfile(cred.user, { displayName: displayName.trim() });
         }
-        try {
-          await syncUserProfile(cred.user);
-        } catch (e) {
-          console.warn('[AuthModal] syncUserProfile non-fatal:', e);
-        }
+        if (onSuccess) onSuccess();
+        onClose();
+        syncUserProfile(cred.user).catch((e) => console.warn('[AuthModal] syncUserProfile non-fatal:', e));
         alert('회원가입이 완료되었습니다! 환영합니다.');
+        return;
       } else {
         // 기존 로그인
         const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
-        try {
-          await syncUserProfile(cred.user);
-        } catch (e) {
-          console.warn('[AuthModal] syncUserProfile non-fatal:', e);
-        }
+        // ✅ 로그인 성공 시 안내창 즉시 닫기
+        if (onSuccess) onSuccess();
+        onClose();
+        syncUserProfile(cred.user).catch((e) => console.warn('[AuthModal] syncUserProfile non-fatal:', e));
+        return;
       }
-
-      // 로그인 성공 시 팝업 닫기 확실히 보장
-      if (onSuccess) onSuccess();
-      onClose();
     } catch (err: any) {
       console.error('[AuthModal] Email auth error:', err);
       if (err.code === 'auth/email-already-in-use') {
@@ -479,8 +488,38 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
               네이버
             </button>
           </div>
+
+          {/* 법적 고지: 서비스 이용약관 및 개인정보 처리방침 동의 안내 (스토어 심사 및 법적 요건 완벽 충족) */}
+          <div className="pt-2.5 border-t border-[#E7E5DF] text-center">
+            <p className="text-[10px] text-[#8C877D] leading-relaxed">
+              가입 또는 로그인 시 당사의{' '}
+              <button
+                type="button"
+                onClick={() => setPolicyModal({ isOpen: true, tab: 'terms' })}
+                className="text-[#C46A40] underline hover:text-[#B55434] font-medium transition-colors cursor-pointer"
+              >
+                서비스 이용약관
+              </button>
+              {' '}및{' '}
+              <button
+                type="button"
+                onClick={() => setPolicyModal({ isOpen: true, tab: 'privacy' })}
+                className="text-[#C46A40] underline hover:text-[#B55434] font-medium transition-colors cursor-pointer"
+              >
+                개인정보 처리방침
+              </button>
+              에 동의하는 것으로 간주됩니다.
+            </p>
+          </div>
         </div>
       </motion.div>
+
+      {/* 이용약관 & 개인정보 처리방침 열람 모달 */}
+      <PolicyViewModal
+        isOpen={policyModal.isOpen}
+        initialTab={policyModal.tab}
+        onClose={() => setPolicyModal({ isOpen: false, tab: 'terms' })}
+      />
     </div>
   );
 };

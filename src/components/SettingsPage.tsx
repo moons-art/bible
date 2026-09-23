@@ -1,8 +1,12 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, SlidersHorizontal, BookOpen, Cloud, Copy, 
-  FileEdit, Shield, Type, Space, AlignLeft 
+  FileEdit, Shield, Type, Space, AlignLeft, Building2, MessageCircle, ExternalLink,
+  CreditCard, History, HardDrive, Database
 } from 'lucide-react';
+import { PolicyViewModal, type PolicyModalType } from './PolicyViewModal';
+import { getSitePolicy, type SitePolicy, DEFAULT_SITE_POLICY } from '../services/policyService';
+import { useAiUsage } from '../hooks/useAiUsage';
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -44,6 +48,44 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   setSearchFontSize,
   onOpenAdminModal
 }) => {
+  const [policy, setPolicy] = useState<SitePolicy>(DEFAULT_SITE_POLICY);
+  const [policyModal, setPolicyModal] = useState<{ isOpen: boolean; tab: PolicyModalType }>({
+    isOpen: false,
+    tab: 'terms'
+  });
+
+  const {
+    isLoggedIn,
+    paidRemaining,
+    freeRemaining,
+    cloudCommentaryLimit,
+    subscribedPlan,
+    subscribedAt,
+    rechargeHistory,
+    cloudSubscribedAt,
+  } = useAiUsage();
+
+  const formatDate = (ts?: number) => {
+    if (!ts) return '-';
+    const d = new Date(ts);
+    return `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+  };
+
+  const storageStatusLabel = () => {
+    if (!isLoggedIn || cloudCommentaryLimit <= 0) return '기기 저장 (30일 보관)';
+    if (cloudCommentaryLimit >= 999999) return '주석 클라우드 무제한';
+    if (cloudCommentaryLimit >= 1000) return '주석 클라우드 1000';
+    return '주석 클라우드 300';
+  };
+
+  const storageStatusDate = () => {
+    if (!isLoggedIn || cloudCommentaryLimit <= 0) return null;
+    return formatDate(cloudSubscribedAt);
+  };
+
+  useEffect(() => {
+    getSitePolicy().then(setPolicy);
+  }, []);
   return (
     <div className="h-full overflow-y-auto bg-[#FAF9F5] text-[#2B2927] select-none custom-scrollbar">
       <div className="max-w-3xl mx-auto px-4 sm:px-8 py-8 space-y-7 pb-20">
@@ -79,6 +121,115 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             성경 본문의 글꼴 크기, 줄 간격, 구절 간격을 조절하여 가장 편안한 읽기 환경을 만들어보세요.
           </p>
         </div>
+
+        {/* ───── 구독 정보 섹션 ───── */}
+        {isLoggedIn && (
+          <section className="bg-white rounded-2xl border border-[#E5E0D8] p-5 sm:p-7 shadow-xs space-y-5">
+            {/* 섹션 헤더 */}
+            <div className="border-b border-[#F0EBE1] pb-3">
+              <h2 className="font-serif font-bold text-base text-[#2B2927] flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-[#C96442] stroke-[1.8px]" />
+                구독 정보
+              </h2>
+            </div>
+
+            {/* 현재 크레딧 상태 */}
+            <div className="flex flex-wrap gap-4 text-sm">
+              <div className="flex items-center gap-1.5 text-[#2B2927]">
+                <span className="font-semibold">잔여 크레딧</span>
+                <span className="text-[#C96442] font-bold">{paidRemaining + freeRemaining}</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[#2B2927]">
+                <span className="font-semibold">저장상태</span>
+                <span className="text-[#6E6A63] text-xs">{storageStatusLabel()}</span>
+              </div>
+            </div>
+
+            {/* 구독상태 */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 mb-1">
+                <CreditCard className="w-3.5 h-3.5 text-[#C96442]" />
+                <span className="text-xs font-semibold text-[#2B2927] uppercase tracking-wide">구독상태</span>
+              </div>
+              {subscribedPlan ? (
+                <div className="flex items-center justify-between text-sm pl-5">
+                  <span className="text-[#2B2927]">
+                    {subscribedPlan
+                      .replace('관리자 수동 지급', '관리자 지급')
+                      .replace('관리자 수동지급', '관리자 지급')}
+                  </span>
+                  <span className="text-[#8C877D] text-xs">{formatDate(subscribedAt)}</span>
+                </div>
+              ) : (
+                <p className="text-sm text-[#8C877D] pl-5">구독 중인 플랜이 없습니다.</p>
+              )}
+            </div>
+
+            {/* 충전기록 */}
+            <div className="space-y-1.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-1">
+                <div className="flex items-center gap-1.5">
+                  <History className="w-3.5 h-3.5 text-[#C96442]" />
+                  <span className="text-xs font-semibold text-[#2B2927] uppercase tracking-wide">충전기록</span>
+                </div>
+                <span className="text-[11px] text-[#8C877D] sm:text-right">
+                  ※ 유효기간이 적게 남은 크레딧부터 우선 차감됩니다.
+                </span>
+              </div>
+              {rechargeHistory && rechargeHistory.length > 0 ? (
+                <ul className="pl-5 space-y-1.5">
+                  {[...rechargeHistory].reverse().slice(0, 10).map((h: any) => {
+                    const displayPlan = h.planName
+                      ? h.planName.replace('관리자 수동 지급', '선물증정').replace('관리자 수동지급', '선물증정')
+                      : '';
+                    const expiresAt = h.expiresAt || (h.date + 365 * 24 * 60 * 60 * 1000);
+                    const diffDays = Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000));
+                    const expireText = diffDays > 0 ? `${diffDays}일 남음` : '만료됨';
+
+                    const remaining = h.remaining !== undefined ? h.remaining : h.amount;
+
+                    return (
+                      <li key={h.id} className="flex flex-col sm:flex-row sm:items-center justify-between text-sm py-1 border-b border-[#FAF5EE] last:border-0 gap-1.5">
+                        <span className="text-[#2B2927] flex items-center gap-1.5 flex-wrap">
+                          <strong className="font-semibold">{h.amount > 0 ? `+${h.amount} 크레딧` : '주석 클라우드'}</strong>
+                          {displayPlan && (
+                            <span className="text-[#6E6A63] text-xs font-normal">({displayPlan})</span>
+                          )}
+                          {h.amount > 0 && (
+                            <span className="text-[11px] font-medium text-[#2B2927] bg-[#F3EFE9] border border-[#E5E0D8] px-1.5 py-0.2 rounded">
+                              잔여 {remaining} 크레딧
+                            </span>
+                          )}
+                        </span>
+                        <div className="flex items-center gap-2 text-xs shrink-0">
+                          <span className="text-[#C96442] font-medium">유효기간 {expireText}</span>
+                          <span className="text-[#DDD8CE]">•</span>
+                          <span className="text-[#8C877D]">{formatDate(h.date)}</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-sm text-[#8C877D] pl-5">충전 기록이 없습니다.</p>
+              )}
+            </div>
+
+            {/* 저장상태 */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Database className="w-3.5 h-3.5 text-[#2B2927]" />
+                <span className="text-xs font-semibold text-[#2B2927] uppercase tracking-wide">저장상태</span>
+              </div>
+              <div className="flex items-center justify-between text-sm pl-5">
+                <span className="text-[#2B2927]">{storageStatusLabel()}</span>
+                {storageStatusDate() && (
+                  <span className="text-[#8C877D] text-xs">{storageStatusDate()}</span>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* 2. Core Section: Typography & Spacing with Live Preview */}
         <section className="bg-white rounded-2xl border border-[#E5E0D8] p-5 sm:p-7 shadow-xs space-y-6">
@@ -364,24 +515,93 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
         </section>
 
-        {/* 6. Footer & Admin Mode */}
-        <div className="pt-4 border-t border-[#E5E0D8] text-center space-y-1">
-          <div className="text-[11px] font-semibold tracking-wider text-[#8C877D] uppercase">
-            NATIONS BIBLE v2.0 • Claude Editorial Edition
+        {/* 6. Footer & Legal Information */}
+        <div className="pt-6 border-t border-[#E5E0D8] space-y-3">
+          {/* 사업자 상세 정보 요약 카드 */}
+          <div className="bg-white p-4 rounded-xl border border-[#E5E0D8] text-xs text-[#6E6A63] space-y-2">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 font-bold text-[#2B2927] flex-wrap">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Building2 className="w-4 h-4 text-[#C46A40]" />
+                  <span>{policy.businessName || '네이션스 솔루션'}</span>
+                </div>
+
+                {/* 네이션스 솔루션 글자 옆: 1:1 문의 버튼 */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <a
+                    href={policy.kakaoChatUrl || 'http://pf.kakao.com/_cxjBxaX/chat'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#FEE500] hover:bg-[#FDD800] text-[#3C1E1E] rounded-full text-xs font-bold transition-all shadow-2xs active:scale-95 cursor-pointer"
+                    title="1:1 문의 바로가기"
+                  >
+                    <svg className="w-3 h-3 stroke-[#3C1E1E] stroke-[2.8] fill-none shrink-0" viewBox="0 0 24 24">
+                      <path d="M12 3c-5.52 0-10 3.58-10 8 0 2.87 1.89 5.4 4.77 6.77l-1.2 4.43c-.11.41.34.75.7.53l5.24-3.48c.16.01.32.02.49.02 5.52 0 10-3.58 10-8s-4.48-8-10-8z" />
+                    </svg>
+                    <span>1:1 문의</span>
+                  </a>
+                </div>
+
+                {policy.representative && <span className="font-normal text-[#8C877D] text-xs">• 대표 {policy.representative}</span>}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] text-[#8C877D] pt-1">
+              {policy.businessNumber && <div>사업자등록번호: <span className="text-[#524E48] font-mono">{policy.businessNumber}</span></div>}
+              {policy.ecommerceNumber && <div>통신판매업신고: <span className="text-[#524E48] font-mono">{policy.ecommerceNumber}</span></div>}
+              <div>고객센터 / 문의: <a href={`mailto:${policy.contactEmail || 'ymoonsik@gmail.com'}`} className="text-[#C46A40] underline">{policy.contactEmail || 'ymoonsik@gmail.com'}</a></div>
+            </div>
+
+            {/* 약관 및 정책 링크 버튼들 */}
+            <div className="pt-2 border-t border-[#F0EBE1] flex items-center justify-between flex-wrap gap-2 text-[11px]">
+              <div className="flex items-center gap-2 text-[#6E6A63]">
+                <button
+                  type="button"
+                  onClick={() => setPolicyModal({ isOpen: true, tab: 'terms' })}
+                  className="hover:text-[#C46A40] underline cursor-pointer font-medium"
+                >
+                  서비스 이용약관
+                </button>
+                <span>•</span>
+                <button
+                  type="button"
+                  onClick={() => setPolicyModal({ isOpen: true, tab: 'privacy' })}
+                  className="hover:text-[#C46A40] underline cursor-pointer font-medium"
+                >
+                  개인정보 처리방침
+                </button>
+                <span>•</span>
+                <button
+                  type="button"
+                  onClick={() => setPolicyModal({ isOpen: true, tab: 'business' })}
+                  className="hover:text-[#C46A40] underline cursor-pointer font-medium"
+                >
+                  사업자 정보 전체보기
+                </button>
+              </div>
+
+              <button
+                onClick={onOpenAdminModal}
+                className="text-[#8C877D] hover:text-[#C46A40] underline transition-colors cursor-pointer text-[10px]"
+              >
+                관리자 모드
+              </button>
+            </div>
           </div>
-          <div className="text-[10px] text-[#A3A19B] flex items-center justify-center gap-2">
-            <span>© 2026 NATIONS Ministry. All rights reserved.</span>
-            <span>•</span>
-            <button
-              onClick={onOpenAdminModal}
-              className="text-[#8C877D] hover:text-[#C96442] underline transition-colors cursor-pointer"
-            >
-              관리자 모드
-            </button>
+
+          <div className="text-[11px] text-[#A3A19B] text-center">
+            {policy.copyright || 'Copyright © 2026 Nations. All rights reserved.'}
           </div>
         </div>
 
       </div>
+
+      {/* 이용약관 & 개인정보 처리방침 열람 모달 */}
+      <PolicyViewModal
+        isOpen={policyModal.isOpen}
+        initialTab={policyModal.tab}
+        onClose={() => setPolicyModal({ isOpen: false, tab: 'terms' })}
+      />
     </div>
   );
 };

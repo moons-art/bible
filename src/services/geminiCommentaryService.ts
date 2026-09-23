@@ -1,7 +1,8 @@
-import { consumeAiCredit, canUseAi } from './aiUsageService';
+import { consumeAiCredit, canUseAi, getAiUsageState } from './aiUsageService';
 import { BIBLE_LIST } from '../constants/bibleMeta';
 import { getCommentaryFromHistory, saveCommentaryToHistory } from './aiHistoryService';
-import { auth } from '../api/firebaseConfig';
+import { auth, db } from '../api/firebaseConfig';
+import { doc, setDoc, updateDoc, increment, getDoc } from 'firebase/firestore';
 import { consumeCreditInFirestore } from './userService';
 
 // 로컬 및 파이어베이스 Firestore 동시 1회 차감 헬퍼 함수
@@ -11,6 +12,56 @@ function deductCredit(refKey: string) {
     consumeCreditInFirestore(auth.currentUser.uid, refKey).catch(err => {
       console.warn('[geminiCommentaryService] consumeCreditInFirestore failed:', err);
     });
+  }
+}
+
+// 헬퍼: 조건 만족 시 클라우드 영구 저장
+async function saveToCloudIfEligible(result: any, type: 'commentary' | 'word' | 'passage') {
+  if (!auth.currentUser) return;
+  const uid = auth.currentUser.uid;
+  const state = getAiUsageState();
+  const limit = state.cloudCommentaryLimit || 0;
+  
+  if (limit <= 0) return; // 클라우드 이용권 없음
+  
+  try {
+    const userRef = doc(db, 'users', uid);
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) return;
+    
+    const profile = userSnap.data();
+    const currentCount = profile.usedCloudCommentaryCount || 0;
+    
+    // 무제한(30000 이상)이 아닌 경우 한도 체크
+    if (limit < 30000 && currentCount >= limit) {
+      console.warn('[geminiCommentaryService] Cloud commentary limit reached.');
+      return; 
+    }
+    
+    let docId = '';
+    if (type === 'commentary') {
+      docId = result.reference.replace(/\//g, '_');
+    } else {
+      docId = result.id.replace(/\//g, '_');
+    }
+    
+    const cloudRef = doc(db, 'users', uid, 'cloudCommentaries', docId);
+    const existingSnap = await getDoc(cloudRef);
+    
+    await setDoc(cloudRef, {
+      ...result,
+      type,
+      savedAt: Date.now()
+    }, { merge: true });
+    
+    // 기존에 저장된 적이 없는 문서라면 개수 증가
+    if (!existingSnap.exists()) {
+      await updateDoc(userRef, {
+        usedCloudCommentaryCount: increment(1)
+      });
+    }
+  } catch (err) {
+    console.error('[geminiCommentaryService] saveToCloudIfEligible failed:', err);
   }
 }
 
@@ -110,12 +161,49 @@ function cleanJsonString(raw: string): string {
 }
 
 /**
+ * 불완전 종료되거나 잘린 JSON을 안전하게 복구하여 파싱하는 헬퍼
+ */
+function safeParseJson<T>(raw: string): T {
+  const cleaned = cleanJsonString(raw);
+  try {
+    return JSON.parse(cleaned);
+  } catch (err) {
+    let repaired = cleaned.trim();
+    // 닫히지 않은 문자열 따옴표 보정
+    const quoteCount = (repaired.match(/(?<!\\)"/g) || []).length;
+    if (quoteCount % 2 !== 0) {
+      repaired += '"';
+    }
+    // 괄호 개수 보정
+    const openBraces = (repaired.match(/\{/g) || []).length;
+    const closeBraces = (repaired.match(/\}/g) || []).length;
+    const openBrackets = (repaired.match(/\[/g) || []).length;
+    const closeBrackets = (repaired.match(/\]/g) || []).length;
+
+    for (let i = 0; i < openBrackets - closeBrackets; i++) {
+      repaired += ']';
+    }
+    for (let i = 0; i < openBraces - closeBraces; i++) {
+      repaired += '}';
+    }
+    try {
+      return JSON.parse(repaired);
+    } catch {
+      throw err;
+    }
+  }
+}
+
+/**
  * 다중 모델 풀 기반 안전 호출 헬퍼
  * 한 모델에서 429(할당량 초과) 또는 503(일시 과부하)이 발생하면
  * 사용자에게 오류를 띄우지 않고 0.1초 만에 다음 가용 모델로 즉시 자동 전환(Fallback)합니다.
- * maxOutputTokens: 8192 설정으로 긴 구절에서도 원어가 중간에 잘리지 않도록 보장합니다.
  */
-async function callGeminiApiWithFallback(prompt: string, apiKey: string): Promise<string> {
+async function callGeminiApiWithFallback(
+  prompt: string, 
+  apiKey: string, 
+  maxTokens: number = 8192
+): Promise<string> {
   let lastError: any = null;
 
   for (const model of GEMINI_FLASH_MODELS) {
@@ -135,7 +223,7 @@ async function callGeminiApiWithFallback(prompt: string, apiKey: string): Promis
             responseMimeType: 'application/json',
             temperature: 0.2,
             topP: 0.95,
-            maxOutputTokens: 8192 // 원어 단어가 많은 구절도 잘리지 않고 끝까지 전문 생성 보장
+            maxOutputTokens: maxTokens
           }
         }),
         signal: controller.signal
@@ -146,7 +234,6 @@ async function callGeminiApiWithFallback(prompt: string, apiKey: string): Promis
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         console.warn(`[Nations AI] Model ${model} returned HTTP ${response.status}:`, errorData);
-        // 429(Rate Limit/Quota) 또는 503(Unavailable)인 경우 즉시 다음 모델로 자동 전환
         lastError = new Error(`HTTP_${response.status}`);
         continue;
       }
@@ -213,7 +300,40 @@ export function getCachedCommentary(reference: string): AiCommentaryData | null 
   return getCommentaryFromHistory(reference);
 }
 
-// --- 메인 주석 생성 함수 ---
+// 단어 데이터 정규화 헬퍼 (UI 호환성 100% 보장)
+function normalizeWord(rawWord: any): OriginalWordAnalysis {
+  const transliteration = String(rawWord.transliteration || '').trim();
+  let transliterationEn = rawWord.transliterationEn || '';
+  let transliterationKo = rawWord.transliterationKo || '';
+
+  if (!transliterationEn || !transliterationKo) {
+    if (transliteration.includes('/')) {
+      const parts = transliteration.split('/');
+      transliterationEn = transliterationEn || parts[0].trim();
+      transliterationKo = transliterationKo || parts[1].trim();
+    } else {
+      transliterationKo = transliterationKo || transliteration;
+    }
+  }
+
+  return {
+    wordOriginal: String(rawWord.wordOriginal || '').trim(),
+    transliteration,
+    transliterationEn,
+    transliterationKo,
+    strongNumber: String(rawWord.strongNumber || '').trim(),
+    root: String(rawWord.root || '').trim(),
+    rootMeaning: String(rawWord.rootMeaning || rawWord.lexicalMeaning || '').trim(),
+    rootBreakdown: String(rawWord.rootBreakdown || '').trim(),
+    parsing: String(rawWord.parsing || '').trim(),
+    lexicalMeaning: String(rawWord.lexicalMeaning || '').trim(),
+    contextualMeaning: String(rawWord.contextualMeaning || rawWord.lexicalMeaning || '').trim(),
+    koreanTranslation: String(rawWord.koreanTranslation || '').trim(),
+    scholarlyNote: rawWord.scholarlyNote ? String(rawWord.scholarlyNote).trim() : undefined
+  };
+}
+
+// --- 메인 주석 생성 함수 (병렬 2단계 분할 로딩 & 원어 전수 파싱) ---
 export async function generateBibleAiCommentary(params: {
   bookName: string;
   bookId?: string | number;
@@ -221,16 +341,19 @@ export async function generateBibleAiCommentary(params: {
   verse: number;
   scriptureText: string;
   forceRefresh?: boolean;
+  onPartialResult?: (data: Partial<AiCommentaryData>) => void;
 }): Promise<AiCommentaryData> {
-  const { bookName, bookId = 1, chapter, verse, scriptureText, forceRefresh = false } = params;
+  const { bookName, bookId = 1, chapter, verse, scriptureText, forceRefresh = false, onPartialResult } = params;
   const reference = `${bookName} ${chapter}:${verse}`;
   const testament = isOldTestament(bookId || bookName) ? '구약' : '신약';
   const originalLang = testament === '구약' ? '히브리어' : '헬라어';
+  const originalSource = testament === '구약' ? '히브리어 BHS' : '헬라어 NA28/UBS5';
 
   // 1. 10일 이내의 기존 기록 확인 (강제 새로고침이 아닌 경우 무료로 즉시 반환)
   if (!forceRefresh) {
     const cached = getCommentaryFromHistory(reference);
     if (cached) {
+      if (onPartialResult) onPartialResult(cached);
       return cached;
     }
   }
@@ -246,65 +369,71 @@ export async function generateBibleAiCommentary(params: {
     throw new Error('API_KEY_MISSING');
   }
 
-  // 4. 고도화된 시스템 프롬프트 (모든 단어 파싱 + 신학적/역사적 해설 대폭 확장)
-  const prompt = `[최고 권위 학술 성경 주석 요청]
-성경 본문: ${reference} (${testament})
+  // 4-1. [1단계: 원어 주석 전용 프롬프트] - 모든 단어 100% 전수 파싱 보장 & 토큰 다이어트
+  const promptWordParsing = `[최고 권위 학술 성경 원어 주석: 원어 전문 전수 파싱]
+성경 본문: ${reference} (${testament} 원문 ${originalSource})
 개역개정 본문: "${scriptureText}"
 
-당신은 공인 원어 사전(구약: BDB/HALOT, 신약: BDAG)과 신학적 원어 문법을 철저히 준수하는 세계 최고 권위의 성경 원어·역사 주석 학자입니다.
-지극히 학술적이고 연구적인 어조로 깊이 있게 분석하되, 강단 설교투(~하십시오, ~합시다 등)는 일체 배제하고 객관적 주해체로 작성하십시오. 반드시 아래 지침을 준수하여 JSON 형식으로만 응답하십시오:
+당신은 공인 원어 사전(구약: BDB/HALOT, 신약: BDAG)과 신학적 원어 문법을 철저히 준수하는 세계 최고 권위의 성경 원어 학자입니다.
+지극히 학술적이고 객관적인 주해체로 작성하십시오. 반드시 아래 지침을 준수하여 JSON 형식으로만 응답하십시오:
 
-1) 원어 주석 (originalLanguageCommentary):
-   - **모든 단어 전수 파싱 (절대 누락·생략 금지)**: 본 구절에 등장하는 모든 단어(전치사, 접속사, 명사, 동사, 불변사 등)를 본문 순서대로 빠짐없이 전부 추출하여 각각 파싱하십시오. 중간에 '등등', '생략' 등으로 줄이지 말고 본문의 첫 단어부터 마지막 단어까지 단 하나도 빠뜨림 없이 온전히 전수 분석하십시오.
-    - 각 단어별 분석:
-      * 정확한 원어 표기(모음부호 포함), 발음 음역(영어 발음과 한글 발음을 함께 병기: transliteration은 "kai / 카이", transliterationEn은 "kai", transliterationKo는 "카이"), 스트롱 번호
-      * 어근(root) 및 어근의 사전 기본형 뜻(rootMeaning): 본문 굴절 뜻이 아니라 사전 표제어의 순수한 기본형 원형 뜻을 표기하십시오. (예: γέγραπται의 경우 '기록되어 있다'가 아니라 원형 뜻인 '기록하다'로 표기)
-      * 합성어 어원 분해(rootBreakdown): 접두사가 결합된 합성어/복합어는 반드시 접두사와 기본 어근을 분해하십시오. (예: προσκόπτω의 경우 "πρός(~를 향해) + κόπτω(치다)", 단일어는 빈 문자열)
-      * 정밀 문법 파싱(품사/어간/시제/태/법/격/성/수/연계형 분해)
-      * 공인 사전(BDB, BDAG) 기반의 정확한 사전적 정의
-      * <개역개정> 본문에서의 실제 번역 어휘/뜻(koreanTranslation, 예: "이르되", "뛰어내리라", "사자들을" 등. 개역성경에 직접 대응되는 독립 번역이 없으면 빈 문자열("") 또는 생략)
-      * <개역개정> 문맥에서의 정확하고 깊이 있는 신학적 해설
-      * 학설상 이견이나 논쟁이 있는 부분은 자의적 결론 없이 반드시 '학설 분분' 또는 '불명확'으로 명시 (scholarlyNote)
-   - **신학적 해설 및 문맥 (syntacticSummary)**:
-     * 본문의 원어 문장 구조뿐만 아니라, 구속사적 의미, 성경 전체(신구약 관통)에서의 신학적 위치, 본문이 선언하는 핵심 진리를 **2~3개 이상의 깊이 있고 학술적인 상세 문단**으로 매우 풍성하게 서술하십시오.
+★ 원어 단어 전수 분석 지침 (가장 중요 - 절대 생략 금지):
+- 본 구절 원문(${originalLang} ${originalSource})의 첫 단어부터 마지막 단어까지 등장하는 모든 단어(명사, 동사, 전치사, 접속사, 고유명사 등)를 본문 순서대로 단 하나도 빠뜨림 없이 100% 전수 추출하여 분석하십시오.
+- 절대로 중간에 자의적으로 생략하거나 몇 단어만 추리지 마십시오. 수식절과 연대 표기, 인명, 지명 등 구절 전체의 모든 원어 어휘를 온전히 끝까지 파싱하십시오.
 
-2) 역사·문화·지리적 배경 (historicalBackground):
-   - **설명을 매우 길고 깊이 있게 작성하십시오.**
-   - 시대 및 문화적 배경 (eraAndCulture): 고대 근동(구약) 및 1세기 유대·그레코-로만(신약)의 역사적 배경, 당시 이스라엘 백성 및 초대교회의 정치·사회적 위기, 고대 주변 문서/관습과의 신학적 대조를 상세히 기술하십시오.
-   - 지리적, 사회적 정황 (geographicalSocialContext): 본문 사건이 일어난 실제 지리적 위치, 지형적 특징, 당시 사회적 신분/관습/생활상을 구체적으로 서술하십시오.
-   - 기록 목적 및 신학적 배경 (theologicalIntent): 저자가 당시 1차 수신자들에게 전달하고자 했던 절박한 신학적 메시지와 기록 동기를 심도 있게 분석하십시오.
+각 단어별 분석 항목:
+- wordOriginal: 모음부호 포함 정확한 원어 표기
+- transliteration: 영어발음 / 한글발음 병기 (예: "dibre / 디브레이", "kai / 카이")
+- koreanTranslation: <개역개정> 본문 대응 번역 어휘 (예: "말씀이라", "아모스가", 없을 시 빈값)
+- strongNumber: 스트롱 번호 (예: H1697, G3056)
+- root: 어근 표제어 원형 (예: דָּבַר, γράφω)
+- rootMeaning: 어근의 순수 기본형 원형 뜻 (예: "말하다", "기록하다")
+- parsing: 정밀 문법 파싱 (품사, 어간, 시제, 태, 법, 격, 성/수, 연계형)
+- lexicalMeaning: 공인 사전(BDB, BDAG) 기반 사전적 정의
+- contextualMeaning: 본문 문맥에서의 신학적 해설
 
-3) 설교 인사이트 (sermonInsight):
-   - 본문의 핵심 복음적 메시지 (coreMessage)
-   - 설교 작성 시 실제 활용할 수 있는 성경신학적 핵심 논점 2~3가지 (sermonPoints: string[])
-   - 현대 그리스도인의 삶을 조명하는 신학적 귀결과 묵상 (meditationApplication)
+syntacticSummary:
+- 본문 전체의 원어 문장 구조 및 구속사적 신학 맥락을 2~3개 문단으로 깊이 있게 서술하십시오.
 
 [JSON 스키마 규격]
 {
-  "reference": "${reference}",
-  "scriptureText": "${scriptureText}",
-  "testament": "${testament}",
-  "originalLanguageCommentary": {
-    "language": "${originalLang}",
-    "words": [
-      {
-        "wordOriginal": "원어",
-        "transliteration": "영어발음 / 한글발음 (예: kai / 카이)",
-        "transliterationEn": "영어 발음 (예: kai)",
-        "transliterationKo": "한글 발음 (예: 카이)",
-        "koreanTranslation": "개역개정 번역 어휘 (예: 이르되, 뛰어내리라 / 없을 시 빈값)",
-        "strongNumber": "스트롱코드",
-        "root": "어근 표제어 (예: γράφω, προσκόπτω)",
-        "rootMeaning": "어근 기본형 원형 뜻 (예: 기록하다, 부딪치다)",
-        "rootBreakdown": "합성어 어원 분해 (예: πρός(~를 향해) + κόπτω(치다) / 단일어는 빈값)",
-        "parsing": "정밀 문법 파싱",
-        "lexicalMeaning": "공인 사전적 정의",
-        "contextualMeaning": "개역개정 문맥적 신학 해설",
-        "scholarlyNote": "학설 분분 또는 특이사항 (선택사항)"
-      }
-    ],
-    "syntacticSummary": "2~3개 문단으로 구성된 깊이 있는 원어 문맥 및 신학적 해설"
-  },
+  "language": "${originalLang}",
+  "words": [
+    {
+      "wordOriginal": "원어",
+      "transliteration": "영어발음 / 한글발음",
+      "koreanTranslation": "개역개정 번역어휘",
+      "strongNumber": "스트롱코드",
+      "root": "어근 원형",
+      "rootMeaning": "원형 기본 뜻",
+      "parsing": "문법 파싱",
+      "lexicalMeaning": "사전적 정의",
+      "contextualMeaning": "문맥 해설"
+    }
+  ],
+  "syntacticSummary": "원어 문장 구조 및 신학적 맥락 요약"
+}`;
+
+  // 4-2. [2단계: 역사적 배경 & 설교 인사이트 전용 프롬프트] - 개혁주의 학술 주해
+  const promptContextAndSermon = `[최고 권위 학술 성경 주석: 역사적 배경 및 설교 인사이트]
+성경 본문: ${reference} (${testament})
+개역개정 본문: "${scriptureText}"
+
+당신은 역사적 정통 개혁주의와 성경신학(Redemptive-Historical Biblical Theology)에 정통한 세계 최고 권위의 성경 주석 학자입니다.
+지극히 학술적이고 깊이 있는 어조로 논증하되, JSON 형식으로만 응답하십시오:
+
+1) 역사·문화·지리적 배경 (historicalBackground):
+   - eraAndCulture: 고대 근동(구약) 및 1세기 유대·로마 문화(신약)의 역사적 배경, 당시 이스라엘 백성 및 초대교회의 정치·사회적 위기를 상세히 기술하십시오.
+   - geographicalSocialContext: 본문 사건의 실제 지리적 위치, 지형적 특징, 당시 사회적 신분/관습/생활상을 구체적으로 서술하십시오.
+   - theologicalIntent: 저자가 당시 1차 수신자들에게 전달하고자 했던 절박한 신학적 메시지와 기록 동기를 심도 있게 분석하십시오.
+
+2) 설교 인사이트 (sermonInsight):
+   - coreMessage: 본문의 핵심 복음적 메시지
+   - sermonPoints: 강단 설교 작성 시 활용할 수 있는 성경신학적 핵심 논점 2~3가지 (문자열 배열)
+   - meditationApplication: 현대 그리스도인의 삶을 조명하는 신학적 귀결과 묵상
+
+[JSON 스키마 규격]
+{
   "historicalBackground": {
     "eraAndCulture": "상세한 시대 및 문화적 배경",
     "geographicalSocialContext": "상세한 지리적 및 사회적 정황",
@@ -317,25 +446,91 @@ export async function generateBibleAiCommentary(params: {
   }
 }`;
 
-  // 5. 검증 완료된 고성능 Flash 모델 풀 자동 폴백 호출 (1순위 gemini-3.1-flash-lite 1.7초 초고속)
-  const rawText = await callGeminiApiWithFallback(prompt, apiKey);
-
   try {
-    const cleaned = cleanJsonString(rawText);
-    const parsedData: AiCommentaryData = JSON.parse(cleaned);
-    
-    // 30일간 로컬 기기 보관소에 저장
-    saveCommentaryToHistory(parsedData);
+    // 5. [초고속 병렬 호출] 원어 전수 파싱과 배경/설교를 동시에 요청
+    const taskWordParsing = callGeminiApiWithFallback(promptWordParsing, apiKey, 8192)
+      .then(raw => {
+        const parsed = safeParseJson<{
+          language: '히브리어' | '헬라어' | '아람어';
+          words: any[];
+          syntacticSummary: string;
+        }>(raw);
 
-    // 사용 횟수 1회 차감 (로컬 + Firestore DB 원자적 차감)
+        const words: OriginalWordAnalysis[] = (parsed.words || []).map(normalizeWord);
+        const originalLanguageCommentary = {
+          language: parsed.language || originalLang,
+          words,
+          syntacticSummary: parsed.syntacticSummary || ''
+        };
+
+        // 1단계 원어 파싱 완료 시 즉시 부분 결과 통보 (화면에 상단 원어 즉시 노출)
+        if (onPartialResult) {
+          onPartialResult({
+            reference,
+            scriptureText,
+            testament,
+            originalLanguageCommentary
+          });
+        }
+
+        return originalLanguageCommentary;
+      });
+
+    const taskContextAndSermon = callGeminiApiWithFallback(promptContextAndSermon, apiKey, 4096)
+      .then(raw => {
+        return safeParseJson<{
+          historicalBackground: {
+            eraAndCulture: string;
+            geographicalSocialContext: string;
+            theologicalIntent: string;
+          };
+          sermonInsight: {
+            coreMessage: string;
+            sermonPoints: string[];
+            meditationApplication: string;
+          };
+        }>(raw);
+      });
+
+    // 6. 두 병렬 작업 결과 취합
+    const [originalLangResult, contextAndSermonResult] = await Promise.all([
+      taskWordParsing,
+      taskContextAndSermon
+    ]);
+
+    const finalResult: AiCommentaryData = {
+      reference,
+      scriptureText,
+      testament,
+      originalLanguageCommentary: originalLangResult,
+      historicalBackground: contextAndSermonResult.historicalBackground || {
+        eraAndCulture: '',
+        geographicalSocialContext: '',
+        theologicalIntent: ''
+      },
+      sermonInsight: contextAndSermonResult.sermonInsight || {
+        coreMessage: '',
+        sermonPoints: [],
+        meditationApplication: ''
+      }
+    };
+
+    // 7. 30일간 로컬 기기 보관소에 저장
+    saveCommentaryToHistory(finalResult);
+
+    // 7.5 주석 클라우드 이용권이 있다면 영구 저장
+    saveToCloudIfEligible(finalResult, 'commentary');
+
+    // 8. 사용 횟수 1회 차감 (로컬 + Firestore DB 원자적 1회만 차감)
     deductCredit(reference);
 
-    return parsedData;
-  } catch (parseErr) {
-    console.error('Failed to parse Gemini JSON response:', parseErr, rawText);
-    throw new Error('JSON_PARSE_ERROR');
+    return finalResult;
+  } catch (err) {
+    console.error('[geminiCommentaryService] Commentary generation failed:', err);
+    throw err;
   }
 }
+
 
 // ========================================================
 // 1. 단어 심층 연구 시스템 (어원변천사 · 빈도수 · 신구약 교차 대조 · 용례)
@@ -553,6 +748,9 @@ export async function generateWordDeepStudy(params: {
     // 30일간 로컬 기기 보관소에 저장
     saveWordDeepStudyToStorage(result);
 
+    // 클라우드 영구 저장 시도
+    saveToCloudIfEligible(result, 'word');
+
     // 크레딧 1회 차감 (로컬 + Firestore DB 원자적 차감)
     deductCredit(`${reference}_${word.strongNumber}_etymology`);
 
@@ -756,8 +954,11 @@ export async function generatePassageTheologicalStudy(params: {
     // 30일간 로컬 기기 보관소에 저장
     savePassageTheologicalStudyToStorage(result);
 
+    // 클라우드 영구 저장 시도
+    saveToCloudIfEligible(result, 'passage');
+
     // 크레딧 1회 차감 (로컬 + Firestore DB 원자적 차감)
-    deductCredit(key);
+    deductCredit(`${reference}_passage_theology`);
 
     return result;
   } catch (parseErr) {

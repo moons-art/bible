@@ -11,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Trash2, 
   FileEdit, Eye, EyeOff, WifiOff, Sparkles, PanelLeft, ChevronsLeftRight, Copy, Columns,
   MoreVertical, ArrowUp, ArrowDown, SlidersHorizontal, GripVertical, ArrowLeft,
-  CreditCard, History, AlertCircle, LogOut
+  CreditCard, History, AlertCircle, LogOut, ExternalLink, Clock, HardDrive, Database
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { searchService, type SearchRange } from './services/searchService';
@@ -21,8 +21,11 @@ import { TooltipIcon } from './components/TooltipIcon';
 import { SettingsPage } from './components/SettingsPage';
 import { AiCommentaryPanel, ClaudeSparkleIcon, type AiTabType } from './components/AiCommentaryPanel';
 import { useAiUsage } from './hooks/useAiUsage';
+import { getCommentaryHistory } from './services/aiHistoryService';
 import { AuthModal } from './components/AuthModal';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
+import { PolicyViewModal, type PolicyModalType } from './components/PolicyViewModal';
+import { getSitePolicy, subscribeSitePolicy, type SitePolicy, DEFAULT_SITE_POLICY } from './services/policyService';
 import { isAdminUser, syncUserProfile } from './services/userService';
 import { auth } from './api/firebaseConfig';
 import { signOut } from 'firebase/auth';
@@ -199,8 +202,22 @@ const SearchInput = React.memo<{
 const MainApp: React.FC = () => {
   // 구글 API 초기화
   const [, setIsApiLoaded] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(IS_LOCAL_DEV);
-  const [userProfile, setUserProfile] = useState<{name: string, email: string, picture: string} | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    if (IS_LOCAL_DEV) return true;
+    try {
+      return !!localStorage.getItem('cached_auth_user');
+    } catch {
+      return false;
+    }
+  });
+  const [userProfile, setUserProfile] = useState<{name: string, email: string, picture: string} | null>(() => {
+    try {
+      const cached = localStorage.getItem('cached_auth_user');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -211,6 +228,19 @@ const MainApp: React.FC = () => {
     bonusCredits: number;
     totalCredits: number;
   } | null>(null);
+
+  // 서비스 정책, 사업자 정보 및 약관 모달 상태
+  const [policyData, setPolicyData] = useState<SitePolicy>(DEFAULT_SITE_POLICY);
+  const [policyModal, setPolicyModal] = useState<{ isOpen: boolean; tab: PolicyModalType }>({
+    isOpen: false,
+    tab: 'terms'
+  });
+
+  React.useEffect(() => {
+    getSitePolicy().then(setPolicyData).catch(() => {});
+    const unsubPolicy = subscribeSitePolicy(setPolicyData);
+    return () => unsubPolicy();
+  }, []);
 
   React.useEffect(() => {
     import('./services/promotionService').then(({ getPromotionSettings }) => {
@@ -232,6 +262,9 @@ const MainApp: React.FC = () => {
           picture: user.photoURL || '',
         };
         setUserProfile(profile);
+        try {
+          localStorage.setItem('cached_auth_user', JSON.stringify(profile));
+        } catch (e) {}
 
         // syncUserProfile: 실패 시 최대 3회 재시도
         let retries = 3;
@@ -276,6 +309,9 @@ const MainApp: React.FC = () => {
       } else {
         setIsAuthenticated(IS_LOCAL_DEV);
         setUserProfile(null);
+        try {
+          localStorage.removeItem('cached_auth_user');
+        } catch (e) {}
       }
     });
 
@@ -361,9 +397,13 @@ const MainApp: React.FC = () => {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarPinned, setIsSidebarPinned] = useState(false);
+  const DEFAULT_SIDEBAR_WIDTH = 236;
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() => {
     const saved = localStorage.getItem('bible-left-sidebar-width');
-    return saved ? Math.max(parseInt(saved, 10), 285) : 285;
+    if (!saved) return DEFAULT_SIDEBAR_WIDTH;
+    const parsed = parseInt(saved, 10);
+    // 기존에 너무 넓게(260 이상) 저장되어 있던 경우에도 컴팩트한 최적 너비로 자연스럽게 리셋
+    return (parsed > 260 || parsed < 210) ? DEFAULT_SIDEBAR_WIDTH : parsed;
   });
   const [isResizingLeftSidebar, setIsResizingLeftSidebar] = useState(false);
 
@@ -376,7 +416,7 @@ const MainApp: React.FC = () => {
         setIsSidebarPinned(false);
         setIsResizingLeftSidebar(false);
       } else {
-        const clampedWidth = Math.min(Math.max(newWidth, 240), 450);
+        const clampedWidth = Math.min(Math.max(newWidth, 210), 380);
         setLeftSidebarWidth(clampedWidth);
         localStorage.setItem('bible-left-sidebar-width', clampedWidth.toString());
       }
@@ -582,7 +622,7 @@ const MainApp: React.FC = () => {
   const [isResizing, setIsResizing] = useState(false);
 
   // AI 주석 상태
-  const { totalRemaining, totalCapacity, remainingDaysText } = useAiUsage();
+  const { totalRemaining, totalCapacity, remainingDaysText, cloudCommentaryLimit } = useAiUsage();
   const [isAiCommentaryOpen, setIsAiCommentaryOpen] = useState(false);
   const [aiPanelTab, setAiPanelTab] = useState<AiTabType>('all');
   const [aiRechargeTrigger, setAiRechargeTrigger] = useState(0);
@@ -595,6 +635,29 @@ const MainApp: React.FC = () => {
     return saved ? parseFloat(saved) : 45; // AI 주석창 기본 45% 너비
   });
   const [isAiResizing, setIsAiResizing] = useState(false);
+
+  // 저장된 주석 목록 수 실시간 상태
+  const [savedHistoryCount, setSavedHistoryCount] = useState<number>(() => {
+    try {
+      return getCommentaryHistory().length;
+    } catch {
+      return 0;
+    }
+  });
+
+  useEffect(() => {
+    const updateCount = () => {
+      try {
+        setSavedHistoryCount(getCommentaryHistory().length);
+      } catch {}
+    };
+    window.addEventListener('ai-history-updated', updateCount);
+    window.addEventListener('storage', updateCount);
+    return () => {
+      window.removeEventListener('ai-history-updated', updateCount);
+      window.removeEventListener('storage', updateCount);
+    };
+  }, []);
 
   const contentRef = React.useRef<HTMLDivElement>(null);
 
@@ -917,7 +980,7 @@ const MainApp: React.FC = () => {
                           className={`
                             group relative flex items-center gap-1.5 px-2 py-2 rounded-xl cursor-grab active:cursor-grabbing select-none transition-colors duration-150 hover:bg-[#F3EFE9]
                             ${selectedVersionIds.includes(v.id) 
-                              ? 'text-[#2B2927] font-semibold' 
+                              ? 'text-[#2B2927] font-medium' 
                               : 'text-[#4A4741]'}
                           `}
                           onClick={() => toggleVersion(v.id)}
@@ -930,12 +993,12 @@ const MainApp: React.FC = () => {
                             <GripVertical className="w-3.5 h-3.5 stroke-[1.8px]" />
                           </div>
 
-                          {/* 원형 체크 동그라미 */}
+                          {/* 원형 체크 동그라미 (글자색 #2B2927과 동일하게 변경) */}
                           <div className={`
                             w-4 h-4 shrink-0 rounded-full border flex items-center justify-center transition-colors
-                            ${selectedVersionIds.includes(v.id) ? 'bg-[#524E48] border-[#524E48]' : 'border-[#C2BBB0] bg-white'}
+                            ${selectedVersionIds.includes(v.id) ? 'bg-[#2B2927] border-[#2B2927]' : 'border-[#C2BBB0] bg-white'}
                           `}>
-                            {selectedVersionIds.includes(v.id) && <Check className="w-2.5 h-2.5 text-white stroke-[3px]" />}
+                            {selectedVersionIds.includes(v.id) && <Check className="w-2.5 h-2.5 text-white stroke-[2.2px]" />}
                           </div>
                           
                           <span className="flex-1 text-xs tracking-tight truncate leading-tight pointer-events-none select-none whitespace-nowrap">
@@ -1006,6 +1069,7 @@ const MainApp: React.FC = () => {
                   {/* 1. AI 주석 (활성화 되어도 색상 변경 없이 그대로 유지) */}
                   <button
                     onClick={() => {
+                      setAiRechargeTrigger(0);
                       setAiPanelTab('all');
                       setIsAiCommentaryOpen(true);
                       setIsSidebarOpen(false);
@@ -1030,18 +1094,18 @@ const MainApp: React.FC = () => {
                     className="w-full flex flex-col gap-1 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap"
                     title="AI 주석 잔여 횟수 확인 및 충전"
                   >
-                    <div className="w-full flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <CreditCard className="w-4 h-4 text-[#6E6A63] stroke-[1.5px] shrink-0" />
-                        <span className="whitespace-nowrap">충전 남은횟수</span>
+                    <div className="w-full flex items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <CreditCard className="w-3.5 h-3.5 text-[#6E6A63] stroke-[1.5px] shrink-0" />
+                        <span className="whitespace-nowrap">충전</span>
                       </div>
                       <span className="text-xs font-medium text-[#6E6A63] whitespace-nowrap">
-                        <strong className="font-bold text-[#2B2927]">{totalRemaining}회</strong>
-                        <span className="text-[#8C877D] font-normal"> / {totalCapacity}회</span>
+                        <span className="text-[#8C877D] font-normal mr-1">보유 크레딧:</span>
+                        <strong className="font-bold text-[#2B2927]">{totalRemaining}</strong>
                       </span>
                     </div>
-                    {/* 충전남은 횟수 아래에 남은 일수 */}
-                    <div className="w-full flex items-center justify-between pl-6 text-[11px] text-[#8C877D] whitespace-nowrap">
+                    {/* 충전 아래 유효기간 정보: 크레딧 수치 아래로 단정하게 우측 정렬 */}
+                    <div className="w-full flex items-center justify-end gap-1.5 text-[11px] text-[#8C877D] whitespace-nowrap">
                       <span>유효기간</span>
                       <span className="font-medium text-[#C46A40]">{remainingDaysText}</span>
                     </div>
@@ -1056,7 +1120,7 @@ const MainApp: React.FC = () => {
                       <div className="text-[11px] leading-snug space-y-1">
                         <div className="flex items-center gap-1.5 text-[#4A4741] font-semibold">
                           <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#C46A40] shrink-0" />
-                          <span>가입 시 AI 연구 크레딧 10회 제공</span>
+                          <span>{promoSettings?.enabled ? '신규 가입 특별 혜택 크레딧 제공' : '가입 시 AI 연구 크레딧 10회 제공'}</span>
                         </div>
                         {promoSettings?.enabled && (
                           <div className="text-[11px] font-bold text-[#C46A40] pl-5 flex items-center gap-1.5">
@@ -1074,7 +1138,7 @@ const MainApp: React.FC = () => {
                     </div>
                   )}
 
-                  {/* 3. 주석기록 30일 보관 */}
+                  {/* 3. 주석기록 30일 보관 / 클라우드 평생 보관 */}
                   <button
                     onClick={() => {
                       if (!isAuthenticated) {
@@ -1085,10 +1149,30 @@ const MainApp: React.FC = () => {
                       setIsAiCommentaryOpen(true);
                       setIsSidebarOpen(false);
                     }}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap"
+                    className="w-full flex flex-col gap-1 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap"
+                    title="저장된 주석 목록 및 보관 상태 확인"
                   >
-                    <History className="w-4 h-4 text-[#6E6A63] stroke-[1.5px] shrink-0" />
-                    <span>주석기록 30일 보관</span>
+                    <div className="w-full flex items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Database className="w-3.5 h-3.5 text-[#6E6A63] stroke-[1.5px] shrink-0" />
+                        <span className="whitespace-nowrap">저장</span>
+                      </div>
+                      <span className="text-xs font-medium text-[#2B2927] whitespace-nowrap">
+                        {cloudCommentaryLimit > 0 
+                          ? (cloudCommentaryLimit >= 30000 ? '주석 클라우드 무제한' : `주석 클라우드 ${cloudCommentaryLimit}`) 
+                          : '30일 기본 보관'}
+                      </span>
+                    </div>
+                    {/* 저장 아래 보관 상태 및 목록 수: 충전 유효기간과 완벽 정렬 */}
+                    <div className="w-full flex items-center justify-end gap-1.5 text-[11px] text-[#8C877D] whitespace-nowrap">
+                      <span>{cloudCommentaryLimit > 0 ? '서버보관 중' : '기기보관 중'}</span>
+                      <span 
+                        className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927] shrink-0"
+                        title={`현재 저장된 주석 목록: ${savedHistoryCount}개`}
+                      >
+                        {savedHistoryCount}
+                      </span>
+                    </div>
                   </button>
                 </div>
 
@@ -1111,28 +1195,6 @@ const MainApp: React.FC = () => {
                   </button>
                 ) : (
                   <div className="space-y-1.5">
-                    {/* 최고 관리자 전용 대시보드 진입 버튼 */}
-                    {isAdminUser(userProfile?.email) && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          setShowAdminDashboardModal(true);
-                        }}
-                        className="w-full flex items-center justify-between py-1.5 px-2.5 bg-[#FAF0EB] hover:bg-[#F5E2DA] border border-[#F1D3C6] text-[#C46A40] rounded-xl transition-all cursor-pointer shadow-2xs group"
-                        title="최고 관리자 전용 콘솔"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs">👑</span>
-                          <span className="text-xs font-bold text-[#C46A40]">관리자 대시보드</span>
-                        </div>
-                        <span className="text-[10px] bg-white text-[#C46A40] px-1.5 py-0.5 rounded font-bold border border-[#F1D3C6]">
-                          ADMIN
-                        </span>
-                      </button>
-                    )}
-
                     <div className="flex items-center justify-between bg-[#F3EFE9]/70 border border-[#E8E2D9] p-1.5 rounded-xl">
                       <div className="flex items-center gap-2 overflow-hidden">
                         {userProfile?.picture ? (
@@ -1144,9 +1206,25 @@ const MainApp: React.FC = () => {
                         )}
                         <span className="text-xs font-normal text-[#2B2927] truncate">{userProfile?.name || '사용자'}</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
+                      <div className="flex items-center gap-1 shrink-0">
+                        {/* 최고 관리자 전용 admin 링크 */}
+                        {isAdminUser(userProfile?.email) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              setShowAdminDashboardModal(true);
+                            }}
+                            className="px-1.5 py-0.5 text-[10px] font-medium text-[#7D786F] hover:text-[#2B2927] hover:bg-[#EBE5DC] rounded transition-all cursor-pointer"
+                            title="관리자 설정"
+                          >
+                            admin
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
                           e.stopPropagation();
                           e.preventDefault();
                           setAppConfirmDialog({
@@ -1168,6 +1246,7 @@ const MainApp: React.FC = () => {
                                 clearAiUsageState();
                               } catch (e) {}
                               // 로컬 스토리지의 모든 개인 데이터 및 세션 완벽 삭제
+                              localStorage.removeItem('cached_auth_user');
                               localStorage.removeItem('offline_user_profile');
                               localStorage.removeItem('gdrive_token');
                               localStorage.removeItem('gdrive_token_expires_at');
@@ -1185,7 +1264,8 @@ const MainApp: React.FC = () => {
                       </button>
                     </div>
                   </div>
-                )}
+                </div>
+              )}
 
                 {/* 설정 */}
                 <button 
@@ -1199,6 +1279,58 @@ const MainApp: React.FC = () => {
                   <Settings className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" />
                   <span className="text-xs font-normal">설정</span>
                 </button>
+
+                {/* 최하단 바닥글: 사업자 요약 정보 + 카카오톡 버튼 2개 + 약관/개인정보 모달 링크 */}
+                <div className="pt-2 mt-1 border-t border-[#F0EBE1] text-[10px] text-[#A39E94] leading-relaxed space-y-1.5">
+                  {/* 네이션스 솔루션 글자 옆 카카오 버튼 2개 */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-medium text-[#7D786F] shrink-0">
+                      {policyData.businessName || '네이션스 솔루션'}
+                    </span>
+
+                    <a
+                      href={policyData.kakaoChatUrl || 'http://pf.kakao.com/_cxjBxaX/chat'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#FEE500] hover:bg-[#FDD800] text-[#3C1E1E] text-[10px] font-bold rounded-full transition-all shadow-2xs active:scale-95 shrink-0 cursor-pointer"
+                      title="1:1 문의 바로가기"
+                    >
+                      <svg className="w-2.5 h-2.5 stroke-[#3C1E1E] stroke-[2.8] fill-none shrink-0" viewBox="0 0 24 24">
+                        <path d="M12 3c-5.52 0-10 3.58-10 8 0 2.87 1.89 5.4 4.77 6.77l-1.2 4.43c-.11.41.34.75.7.53l5.24-3.48c.16.01.32.02.49.02 5.52 0 10-3.58 10-8s-4.48-8-10-8z" />
+                      </svg>
+                      <span>1:1 문의</span>
+                    </a>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-[#8C877D] flex-wrap">
+                    {policyData.representative && (
+                      <span className="text-[#A39E94]">대표 {policyData.representative} •</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPolicyModal({ isOpen: true, tab: 'terms' })}
+                      className="hover:text-[#C46A40] hover:underline cursor-pointer"
+                    >
+                      이용약관
+                    </button>
+                    <span>•</span>
+                    <button
+                      type="button"
+                      onClick={() => setPolicyModal({ isOpen: true, tab: 'privacy' })}
+                      className="hover:text-[#C46A40] hover:underline cursor-pointer"
+                    >
+                      개인정보처리방침
+                    </button>
+                    <span>•</span>
+                    <button
+                      type="button"
+                      onClick={() => setPolicyModal({ isOpen: true, tab: 'business' })}
+                      className="hover:text-[#C46A40] hover:underline cursor-pointer"
+                    >
+                      사업자정보
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </motion.aside>
@@ -1247,6 +1379,7 @@ const MainApp: React.FC = () => {
                 <button 
                   onClick={() => {
                     const next = !isAiCommentaryOpen;
+                    setAiRechargeTrigger(0);
                     setIsAiCommentaryOpen(next);
                     if (next && !aiSelectedVerse) {
                       const vNum = leftNav.verse || 1;
@@ -1439,7 +1572,7 @@ const MainApp: React.FC = () => {
                         onTouchStart={() => {
                           setIsResizing(true);
                         }}
-                        className="absolute top-0 bottom-0 z-30 w-4 -ml-2 cursor-col-resize group/dual flex items-center justify-center transition-all opacity-0 hover:opacity-100 touch-none"
+                        className="absolute top-0 bottom-0 z-10 w-4 -ml-2 cursor-col-resize group/dual flex items-center justify-center transition-all opacity-0 hover:opacity-100 touch-none"
                         style={{ left: `${splitPosition}%` }}
                       >
                         <div className="w-0.5 h-full bg-[#D97757] transition-colors" />
@@ -1527,7 +1660,7 @@ const MainApp: React.FC = () => {
                       onTouchStart={() => {
                         setIsAiResizing(true);
                       }}
-                      className="absolute top-0 bottom-0 z-30 w-4 -ml-2 cursor-col-resize group/ai flex items-center justify-center transition-all opacity-0 hover:opacity-100 touch-none"
+                      className="absolute top-0 bottom-0 z-10 w-4 -ml-2 cursor-col-resize group/ai flex items-center justify-center transition-all opacity-0 hover:opacity-100 touch-none"
                       style={{ left: `${100 - aiSplitPosition}%` }}
                     >
                       <div className="w-0.5 h-full bg-[#C46A40] transition-colors" />
@@ -1542,10 +1675,14 @@ const MainApp: React.FC = () => {
                     >
                       <AiCommentaryPanel 
                         isOpen={isAiCommentaryOpen}
-                        onClose={() => setIsAiCommentaryOpen(false)}
+                        onClose={() => {
+                          setIsAiCommentaryOpen(false);
+                          setAiRechargeTrigger(0);
+                        }}
                         onOpenAuthModal={() => setShowAuthModal(true)}
                         initialTab={aiPanelTab}
                         openRechargeTrigger={aiRechargeTrigger}
+                        onResetRechargeTrigger={() => setAiRechargeTrigger(0)}
                         currentBookName={BIBLE_LIST.find(b => b.id === leftNav.bookId)?.name || leftNav.bookId}
                         currentBookId={leftNav.bookId}
                         currentChapter={leftNav.chapter}
@@ -2010,6 +2147,13 @@ const MainApp: React.FC = () => {
           />
         )}
       </AnimatePresence>
+
+      {/* 서비스 이용약관, 개인정보 처리방침, 사업자 정보 모달 */}
+      <PolicyViewModal
+        isOpen={policyModal.isOpen}
+        initialTab={policyModal.tab}
+        onClose={() => setPolicyModal({ isOpen: false, tab: 'terms' })}
+      />
 
       {/* ymoonsik@gmail.com 전용 통합 관리자 대시보드 */}
       <AnimatePresence>

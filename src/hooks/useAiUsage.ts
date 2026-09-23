@@ -10,11 +10,12 @@ import {
   type AiUsageState 
 } from '../services/aiUsageService';
 import { auth } from '../api/firebaseConfig';
-import { subscribeUserProfile, consumeCreditInFirestore, addCreditsToUser } from '../services/userService';
+import { subscribeUserProfile, consumeCreditInFirestore, addCreditsToUser, type UserProfile } from '../services/userService';
 
 export function useAiUsage() {
   const [usageState, setUsageState] = useState<AiUsageState>(getAiUsageState());
   const [currentUid, setCurrentUid] = useState<string | null>(auth.currentUser?.uid || null);
+  const [profileMeta, setProfileMeta] = useState<Pick<UserProfile, 'subscribedPlan' | 'subscribedAt' | 'rechargeHistory' | 'cloudSubscribedAt'>>({});
 
   // 1. Firebase Auth 상태 감지
   useEffect(() => {
@@ -38,12 +39,25 @@ export function useAiUsage() {
             paidRemaining: firestoreCredits.paidRemaining,
             paidExpiresAt: firestoreCredits.paidExpiresAt,
             totalUsed: firestoreCredits.totalUsed || 0,
+            cloudCommentaryLimit: profile.cloudCommentaryLimit || 0,
+            usedCloudCommentaryCount: profile.usedCloudCommentaryCount || 0,
           };
           try {
             localStorage.setItem('nations_ai_commentary_usage_v1', JSON.stringify(updated));
           } catch (e) {}
           return updated;
         });
+        setProfileMeta({
+          subscribedPlan: profile.subscribedPlan,
+          subscribedAt: profile.subscribedAt,
+          rechargeHistory: profile.rechargeHistory,
+          cloudSubscribedAt: profile.cloudSubscribedAt,
+        });
+
+        // 주석 클라우드 구독 회원인 경우, 기존 로컬 30일 기록을 클라우드로 자동 안전 동기화
+        if ((profile.cloudCommentaryLimit || 0) > 0) {
+          import('../services/aiHistoryService').then(m => m.syncLocalHistoryToCloud(currentUid)).catch(() => {});
+        }
       }
     }, auth.currentUser?.email);
 
@@ -55,7 +69,16 @@ export function useAiUsage() {
     const handleUpdate = (e: Event) => {
       const customEvent = e as CustomEvent<AiUsageState>;
       if (customEvent.detail) {
-        setUsageState(customEvent.detail);
+        setUsageState(prev => ({
+          ...prev,
+          ...customEvent.detail,
+          cloudCommentaryLimit: customEvent.detail.cloudCommentaryLimit !== undefined
+            ? customEvent.detail.cloudCommentaryLimit
+            : (prev.cloudCommentaryLimit || 0),
+          usedCloudCommentaryCount: customEvent.detail.usedCloudCommentaryCount !== undefined
+            ? customEvent.detail.usedCloudCommentaryCount
+            : (prev.usedCloudCommentaryCount || 0),
+        }));
       } else {
         setUsageState(getAiUsageState());
       }
@@ -77,13 +100,12 @@ export function useAiUsage() {
   const totalRemaining = freeRemaining + paidRemaining;
   const isAvailable = isLoggedIn && totalRemaining > 0;
 
-  // 총 한도 (무료 10회 + 유료 충전 잔여분 + 누적 사용분)
+  // 총 한도 (무료 사용자: 10회, 유료 구독자: 총 충전 크레딧 수)
   const totalCapacity = useMemo(() => {
     if (!isLoggedIn) return 10;
     if (paidRemaining <= 0) return 10;
-    // 무료(10회) + 유료(보너스/충전분) + 누적 사용량 합산으로 분모/분자 정밀 일치
-    return freeRemaining + paidRemaining + totalUsed;
-  }, [isLoggedIn, freeRemaining, paidRemaining, totalUsed]);
+    return paidRemaining + totalUsed;
+  }, [isLoggedIn, paidRemaining, totalUsed]);
 
   // 차감 로직 (로그인 시 Firestore 원자적 차감 + 로컬 스토리지 동시 업데이트)
   const consume = useCallback((reference: string) => {
@@ -117,11 +139,18 @@ export function useAiUsage() {
     freeRemaining,
     paidRemaining,
     totalUsed,
+    cloudCommentaryLimit: usageState.cloudCommentaryLimit || 0,
+    usedCloudCommentaryCount: usageState.usedCloudCommentaryCount || 0,
     isAvailable,
     isLoggedIn,
     consume,
     recharge,
     canUse: () => isAvailable,
+    // 구독 메타
+    subscribedPlan: profileMeta.subscribedPlan,
+    subscribedAt: profileMeta.subscribedAt,
+    rechargeHistory: profileMeta.rechargeHistory || [],
+    cloudSubscribedAt: profileMeta.cloudSubscribedAt,
   };
 }
 
