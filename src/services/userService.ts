@@ -397,10 +397,13 @@ export async function syncUserProfile(
         hasSeenWelcome: existing.hasSeenWelcome || false,
       };
 
-      if (extraStats?.noteCount !== undefined) updated.noteCount = extraStats.noteCount;
-      if (extraStats?.sermonCount !== undefined) updated.sermonCount = extraStats.sermonCount;
+      // 과도한 새로고침 시 불필요한 lastLoginAt DB 쓰기 방지 (마지막 갱신 후 1시간 이상 경과 시에만 쓰기)
+      const ONE_HOUR = 60 * 60 * 1000;
+      const shouldUpdateDb = !existing.lastLoginAt || (now - existing.lastLoginAt > ONE_HOUR) || hasFallbackDocToDelete;
 
-      await updateDoc(userRef, cleanUndefined(updated));
+      if (shouldUpdateDb) {
+        await updateDoc(userRef, cleanUndefined(updated));
+      }
 
       // 중복 fallback 문서 정리
       if (hasFallbackDocToDelete && userEmail) {
@@ -804,24 +807,10 @@ export async function fetchAllUsers(): Promise<UserProfile[]> {
       console.warn('[userService] activity_logs aggregation non-fatal:', logErr);
     }
 
-    // 4. 각 유저별 서브컬렉션(verseData, sermons) 문서 수 실시간 카운트
+    // 4. 서브컬렉션(verseData, sermons) 전수조사 완전 제거:
+    // 유저 문서 자체에 저장된 noteCount, sermonCount 메타데이터를 사용하여 Firestore 읽기 비용 99% 절감
     const userList = Array.from(mergedUserMap.values());
-    await Promise.allSettled(
-      userList.map(async (u) => {
-        try {
-          const [verseCountSnap, sermonCountSnap] = await Promise.all([
-            getCountFromServer(collection(db, 'users', u.uid, 'verseData')),
-            getCountFromServer(collection(db, 'users', u.uid, 'sermons'))
-          ]);
-          u.noteCount = verseCountSnap.data().count;
-          u.sermonCount = sermonCountSnap.data().count;
-        } catch (e) {
-          // 서브컬렉션 오류 무시
-        }
-      })
-    );
-
-    console.log(`[userService] fetchAllUsers 완료: 스마트 단일 병합 후 총 ${userList.length}명`);
+    console.log(`[userService] fetchAllUsers 완료 (초경량): 총 ${userList.length}명`);
     return userList.sort((a, b) => (b.lastLoginAt || 0) - (a.lastLoginAt || 0));
   } catch (err: any) {
     console.error('[userService] fetchAllUsers failed:', err?.code || err);
@@ -896,16 +885,18 @@ export async function addCreditsToUser(
 
     await updateDoc(userRef, updates);
 
-    // 동일 이메일의 다른 문서(fallback 또는 실제 UID)에도 동시 반영
+    // 동일 이메일의 fallback 문서가 존재하는 경우에만 단 1건 핀셋 동기화 (전체 컬렉션 전수조사 방지)
     if (targetEmail) {
       const lower = targetEmail.trim().toLowerCase();
-      const usersRef = collection(db, 'users');
-      const allDocs = await getDocs(usersRef);
-      allDocs.forEach(d => {
-        if (d.id !== uid && (d.data().email || '').trim().toLowerCase() === lower) {
-          updateDoc(d.ref, updates).catch(() => {});
-        }
-      });
+      const fallbackId = 'user_' + lower.replace(/[^a-zA-Z0-9]/g, '_');
+      if (fallbackId !== uid) {
+        const fbRef = doc(db, 'users', fallbackId);
+        getDoc(fbRef).then(snap => {
+          if (snap.exists()) {
+            updateDoc(fbRef, updates).catch(() => {});
+          }
+        }).catch(() => {});
+      }
     }
   } catch (err) {
     console.error('[userService] addCreditsToUser failed:', err);
@@ -942,15 +933,17 @@ export async function toggleUserAllowedVersion(
     // 1. 현재 타깃 문서 업데이트
     await setDoc(userRef, { allowedVersions: allowed }, { merge: true });
 
-    // 2. 이메일이 일치하는 모든 사용자 문서(fallback 문서 및 실제 Auth UID 문서)에 동시 전파
+    // 2. 이메일 fallback 문서가 존재하는 경우에만 단 1건 핀셋 전파 (전체 컬렉션 전수조사 방지)
     if (targetEmail) {
-      const usersRef = collection(db, 'users');
-      const allDocs = await getDocs(usersRef);
-      allDocs.forEach(d => {
-        if (d.id !== uid && (d.data().email || '').trim().toLowerCase() === targetEmail) {
-          setDoc(d.ref, { allowedVersions: allowed }, { merge: true }).catch(() => {});
-        }
-      });
+      const fallbackId = 'user_' + targetEmail.replace(/[^a-zA-Z0-9]/g, '_');
+      if (fallbackId !== uid) {
+        const fbRef = doc(db, 'users', fallbackId);
+        getDoc(fbRef).then(snap => {
+          if (snap.exists()) {
+            setDoc(fbRef, { allowedVersions: allowed }, { merge: true }).catch(() => {});
+          }
+        }).catch(() => {});
+      }
     }
   } catch (err) {
     console.error('[userService] toggleUserAllowedVersion failed:', err);
@@ -1007,13 +1000,15 @@ export async function addCloudCapacityToUser(
 
     if (targetEmail) {
       const lower = targetEmail.trim().toLowerCase();
-      const usersRef = collection(db, 'users');
-      const allDocs = await getDocs(usersRef);
-      allDocs.forEach(d => {
-        if (d.id !== uid && (d.data().email || '').trim().toLowerCase() === lower) {
-          updateDoc(d.ref, updates).catch(() => {});
-        }
-      });
+      const fallbackId = 'user_' + lower.replace(/[^a-zA-Z0-9]/g, '_');
+      if (fallbackId !== uid) {
+        const fbRef = doc(db, 'users', fallbackId);
+        getDoc(fbRef).then(snap => {
+          if (snap.exists()) {
+            updateDoc(fbRef, updates).catch(() => {});
+          }
+        }).catch(() => {});
+      }
     }
   } catch (err) {
     console.error('[userService] addCloudCapacityToUser failed:', err);

@@ -243,29 +243,43 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   const [passageTheologyResult, setPassageTheologyResult] = useState<PassageTheologicalStudyResult | null>(null);
   const [isPassageTheologyOpen, setIsPassageTheologyOpen] = useState(false);
   const [copiedPassageTheology, setCopiedPassageTheology] = useState(false);
+  const isHistoryLoadingRef = useRef(false);
 
-  // 30일간 로컬 기기 보관 기록 및 클라우드 주석 동기화 로드
+  // 30일간 로컬 기기 보관 기록 및 클라우드 주석 동기화 로드 (무한 이벤트 루프 방지)
   const loadHistory = async () => {
-    const local = getCommentaryHistory();
-    setHistoryList(local);
+    if (isHistoryLoadingRef.current) return;
+    isHistoryLoadingRef.current = true;
 
-    // 로그인된 회원의 경우 Firestore 클라우드에 보관된 주석들도 실시간 병합 복원
-    if (auth.currentUser) {
-      try {
-        const cloudItems = await fetchCloudCommentaryHistory(auth.currentUser.uid);
-        if (cloudItems.length > 0) {
+    try {
+      const local = getCommentaryHistory();
+      
+      // 로그인된 회원의 경우 Firestore 클라우드에 보관된 주석들도 실시간 병합 복원
+      if (auth.currentUser) {
+        try {
+          const cloudItems = await fetchCloudCommentaryHistory(auth.currentUser.uid);
           const mergedMap = new Map<string, CommentaryHistoryItem>();
-          // 로컬 먼저 추가
-          local.forEach(item => mergedMap.set(item.reference.trim(), item));
-          // 클라우드 아이템 병합
+          
+          // 1. 클라우드 아이템 먼저 등록 (클라우드 데이터 우선)
           cloudItems.forEach(item => mergedMap.set(item.reference.trim(), item));
+          
+          // 2. 로컬 아이템 중 클라우드에 아직 없는 항목만 추가
+          local.forEach(item => {
+            if (!mergedMap.has(item.reference.trim())) {
+              mergedMap.set(item.reference.trim(), item);
+            }
+          });
 
           const merged = Array.from(mergedMap.values()).sort((a, b) => b.createdAt - a.createdAt);
           setHistoryList(merged);
+        } catch (e) {
+          console.warn('[AiCommentaryPanel] Failed to sync cloud history:', e);
+          setHistoryList(local);
         }
-      } catch (e) {
-        console.warn('[AiCommentaryPanel] Failed to sync cloud history:', e);
+      } else {
+        setHistoryList(local);
       }
+    } finally {
+      isHistoryLoadingRef.current = false;
     }
   };
 
@@ -954,6 +968,8 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                       <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> ai 주석 1,000 크레딧 제공</li>
                       <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 구절, 단어 심층연구</li>
                       <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 기기에 30일 저장</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 모든 노트, 메모, 설교노트 클라우드 평생 저장 (AI 주석 제외)</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 모든 기기 실시간 연동 (AI 주석 제외)</li>
                     </ul>
                     <button
                       onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
@@ -1062,6 +1078,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 300구절 평생보관</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> +200 ai 주석 크레딧 증정</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 모든 기기 실시간 연동</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 모든 노트, 메모, 설교노트 클라우드 평생 저장</li>
                       </ul>
                       <button onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')} className="w-full py-2 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold text-xs mt-1 transition-colors cursor-pointer">
                         구매하기
@@ -1081,6 +1098,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 1000구절 평생보관</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> +500 ai 주석 크레딧 증정</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 모든 기기 실시간 연동</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 모든 노트, 메모, 설교노트 클라우드 평생 저장</li>
                       </ul>
                       <button onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')} className="w-full py-2 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white font-semibold text-xs mt-1 transition-colors cursor-pointer">
                         구매하기
@@ -1097,6 +1115,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 성경 전체 평생 보관</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> +1000 ai 주석 크레딧 증정</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 모든 기기 실시간 연동</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 모든 노트, 메모, 설교노트 클라우드 평생 저장</li>
                       </ul>
                       <button onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')} className="w-full py-2 rounded-lg bg-[#2C2B29] hover:bg-[#1A1918] text-white font-semibold text-xs mt-1 transition-colors cursor-pointer">
                         구매하기
@@ -1397,7 +1416,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                         setVisibleHistoryCount(20);
                       }}
                       placeholder="구절, 책 이름, 주석 본문 검색..."
-                      className="w-full pl-8.5 pr-8 py-2 bg-white border border-[#E5E0D8] rounded-xl text-xs text-[#2C2B29] placeholder-[#A39E94] focus:outline-none focus:border-[#C46A40] transition-colors shadow-2xs"
+                      className="w-full pl-8.5 pr-8 py-2 bg-white border border-[#E5E0D8] rounded-xl text-xs text-[#2C2B29] placeholder-[#A39E94] focus:outline-none focus:border-[#8C877D] focus:ring-2 focus:ring-[#2C2B29]/5 transition-all shadow-2xs"
                     />
                     {historySearchQuery && (
                       <button
@@ -1471,7 +1490,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                           className={`p-3 rounded-xl border transition-all cursor-pointer shadow-2xs group flex items-start justify-between gap-3 ${
                             isCurrent 
                               ? 'bg-[#FAF0EB] border-[#F1D3C6]' 
-                              : 'bg-white border-[#E8E3DA] hover:border-[#C46A40]'
+                              : 'bg-white border-[#E8E3DA] hover:border-[#D5D0C7] hover:shadow-md hover:bg-[#FDFBF7]'
                           }`}
                         >
                           <div className="min-w-0 flex-1">
@@ -1480,15 +1499,15 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#FAF0EB] text-[#C46A40] font-medium shrink-0">
                                 {item.data?.testament || '성경'} ({item.data?.originalLanguageCommentary?.language || '원어'})
                               </span>
-                              {cloudCommentaryLimit > 0 ? (
+                              {item.storageType === 'cloud' ? (
                                 <span className="text-[10px] text-[#C46A40] bg-[#FAF0EB] px-1.5 py-0.5 rounded border border-[#F1D3C6]/60 flex items-center gap-0.5 shrink-0 font-medium">
                                   <Database className="w-2.5 h-2.5" />
-                                  클라우드 보관
+                                  클라우드 영구보관
                                 </span>
                               ) : (
-                                <span className="text-[10px] text-[#8C877D] flex items-center gap-0.5 shrink-0">
-                                  <Clock className="w-2.5 h-2.5" />
-                                  {daysLeft}일 보관 남음
+                                <span className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/70 flex items-center gap-0.5 shrink-0 font-medium">
+                                  <Clock className="w-2.5 h-2.5 text-amber-600" />
+                                  이 기기만 (D-{daysLeft})
                                 </span>
                               )}
                             </div>
@@ -1505,7 +1524,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
-                            <ChevronRight className="w-4 h-4 text-[#A39E94] group-hover:text-[#C46A40] transition-colors" />
+                            <ChevronRight className="w-4 h-4 text-[#A39E94] group-hover:text-[#2C2B29] transition-colors" />
                           </div>
                         </div>
                       );
@@ -1564,7 +1583,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                                     className={`p-2.5 rounded-lg border transition-all cursor-pointer shadow-2xs group flex items-start justify-between gap-2 ${
                                       isCurrent 
                                         ? 'bg-[#FAF0EB] border-[#F1D3C6]' 
-                                        : 'bg-[#FAF9F5] border-[#EAE6DF] hover:border-[#C46A40]'
+                                        : 'bg-[#FAF9F5] border-[#EAE6DF] hover:border-[#D5D0C7] hover:shadow-md hover:bg-white'
                                     }`}
                                   >
                                     <div className="min-w-0 flex-1">
@@ -1575,15 +1594,15 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                                         <span className="text-[10px] px-1 py-0.2 rounded bg-[#FAF0EB] text-[#C46A40] font-medium">
                                           {item.data?.originalLanguageCommentary?.language || '원어'}
                                         </span>
-                                        {cloudCommentaryLimit > 0 ? (
+                                        {item.storageType === 'cloud' ? (
                                           <span className="text-[9px] text-[#C46A40] flex items-center gap-0.5">
                                             <Database className="w-2.5 h-2.5" />
                                             클라우드
                                           </span>
                                         ) : (
-                                          <span className="text-[9px] text-[#8C877D] flex items-center gap-0.5">
-                                            <Clock className="w-2 h-2" />
-                                            {daysLeft}일
+                                          <span className="text-[9px] text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200/60 flex items-center gap-0.5">
+                                            <Clock className="w-2 h-2 text-amber-600" />
+                                            기기 (D-{daysLeft})
                                           </span>
                                         )}
                                       </div>

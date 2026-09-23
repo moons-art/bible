@@ -101,12 +101,13 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
       clearTimeout(saveTimerRef.current);
     }
 
+    // 타이핑 중 과도한 DB 쓰기 방지: 1.2초 디바운스로 안정화 (타이핑 완료 시 1회만 반영)
     saveTimerRef.current = setTimeout(() => {
       syncToParent(val);
-    }, 250);
+    }, 1200);
   };
 
-  // 포커스 벗어날 때 즉시 동기화
+  // 포커스 벗어날 때(작성 완료 시) 즉시 동기화
   const handleBlur = () => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);

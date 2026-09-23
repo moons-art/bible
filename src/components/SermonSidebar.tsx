@@ -614,8 +614,8 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                 <ChevronLeft className="w-4 h-4 stroke-[1.5px]" />
               </button>
               <h2 className="text-base font-serif font-bold text-[#2C2B29] flex items-center gap-1.5">
-                <FileEdit className="w-4 h-4 text-[#C96442] stroke-[1.5px]" />
-                <span>{view === 'editor' ? '설교노트' : '설교 목록'}</span>
+                <FileEdit className="w-4 h-4 text-[#2C2B29] stroke-[1.5px]" />
+                <span>{view === 'editor' ? '설교노트' : '설교노트 목록'}</span>
               </h2>
             </div>
             <div className="flex items-center gap-2 relative z-[110]">
@@ -676,7 +676,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                     placeholder="설교 제목, 본문(예: 마 1 6, 롬 8:28)..." 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-[#FAF9F5] border border-[#E7E5DF] rounded-xl pl-9 pr-8 py-2 text-xs text-[#2C2B29] outline-none focus:bg-white focus:border-[#C96442] focus:ring-2 focus:ring-[#C96442]/10 transition-all placeholder:text-[#A3A19B]"
+                    className="w-full bg-[#FAF9F5] border border-[#E7E5DF] rounded-xl pl-9 pr-8 py-2 text-xs text-[#2C2B29] outline-none focus:bg-white focus:border-[#8C877D] focus:ring-2 focus:ring-[#2C2B29]/5 transition-all placeholder:text-[#A3A19B]"
                   />
                   {searchQuery && (
                     <button
@@ -694,12 +694,12 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                     onClick={() => setListTab('recent')}
                     className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                       listTab === 'recent'
-                        ? 'bg-white text-[#C96442] shadow-xs'
+                        ? 'bg-white text-[#2C2B29] shadow-xs'
                         : 'text-[#6A6864] hover:text-[#2C2B29]'
                     }`}
                   >
                     <span>최신순</span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#FAF0EB] text-[#C96442]">
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${listTab === 'recent' ? 'bg-[#F0EEE6] text-[#2C2B29]' : 'text-[#8C877D]'}`}>
                       {filteredSermons.length}
                     </span>
                   </button>
@@ -707,11 +707,11 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                     onClick={() => setListTab('byBook')}
                     className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                       listTab === 'byBook'
-                        ? 'bg-white text-[#C96442] shadow-xs'
+                        ? 'bg-white text-[#2C2B29] shadow-xs'
                         : 'text-[#6A6864] hover:text-[#2C2B29]'
                     }`}
                   >
-                    <BookOpen className="w-3.5 h-3.5 stroke-[1.5px]" />
+                    <BookOpen className={`w-3.5 h-3.5 stroke-[1.5px] ${listTab === 'byBook' ? 'text-[#2C2B29]' : 'text-[#6A6864]'}`} />
                     <span>권별 모아보기</span>
                   </button>
                 </div>
@@ -720,7 +720,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
               <div className="flex-1 overflow-y-auto p-3.5 space-y-2 bg-[#FAF9F5] custom-scrollbar">
                 <button 
                   onClick={createNewEditor}
-                  className="w-full flex items-center justify-center gap-2 p-2.5 border-2 border-dashed border-[#F1D3C6] rounded-xl text-[#C96442] text-xs font-semibold bg-[#FAF0EB]/40 hover:bg-[#FAF0EB] transition-all active:scale-[0.99]"
+                  className="w-full flex items-center justify-center gap-2 p-2.5 border-2 border-dashed border-[#E5E0D8] rounded-xl text-[#4A4741] text-xs font-semibold bg-white/70 hover:bg-white hover:border-[#C4BFAF] hover:shadow-xs transition-all active:scale-[0.99]"
                 >
                   <Plus className="w-4 h-4 stroke-[1.5px]" /> 새 설교문 작성하기
                 </button>
@@ -735,31 +735,24 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                     <div 
                       key={s.id} 
                       onClick={() => openEditor(s.id)}
-                      className="p-3 bg-white border border-[#E7E5DF] rounded-xl shadow-2xs hover:border-[#C96442] transition-all cursor-pointer group flex flex-col gap-1.5"
+                      className="p-3 bg-white border border-[#E7E5DF] rounded-xl shadow-2xs hover:border-[#D5D0C7] hover:shadow-md hover:bg-[#FDFBF7] transition-all cursor-pointer group flex flex-col gap-1.5"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {s.extractedBook?.parsedRef && (
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#FAF0EB] text-[#C96442] border border-[#F1D3C6] shrink-0">
-                                {s.extractedBook.parsedRef}
-                              </span>
-                            )}
-                            <h3 className="font-semibold text-xs text-[#2C2B29] group-hover:text-[#C96442] transition-colors truncate">
-                              {s.title}
-                            </h3>
-                          </div>
-                          {s.content && (
-                            <p className="text-[11px] text-[#6A6864] line-clamp-1 mt-1 font-serif">
-                              {s.content.replace(/[#*`\n]/g, ' ').trim()}
+                          <h3 className="font-semibold text-xs text-[#2C2B29] transition-colors truncate">
+                            {s.title}
+                          </h3>
+                          <div className="flex items-center justify-between gap-2 mt-1">
+                            <p className="text-[11px] text-[#6A6864] line-clamp-1 font-serif flex-1 min-w-0">
+                              {s.content ? s.content.replace(/[#*`\n]/g, ' ').trim() : ''}
                             </p>
-                          )}
-                          <p className="text-[10px] text-[#A3A19B] flex items-center gap-1 mt-1.5">
-                            <Calendar className="w-3 h-3 stroke-[1.5px]" /> {s.date}
-                          </p>
+                            <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1">
+                              <Calendar className="w-3 h-3 stroke-[1.5px]" /> {s.date}
+                            </span>
+                          </div>
                         </div>
                         <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <div className="w-7 h-7 rounded-lg bg-[#FAF0EB] flex items-center justify-center text-[#C96442]">
+                          <div className="w-7 h-7 rounded-lg bg-[#F5F3ED] flex items-center justify-center text-[#2C2B29]">
                             <FileEdit className="w-3.5 h-3.5 stroke-[1.5px]" />
                           </div>
                           <button 
@@ -789,13 +782,13 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                         <div key={book.id} className="bg-white border border-[#E7E5DF] rounded-xl overflow-hidden shadow-2xs">
                           <button
                             onClick={() => toggleBookExpand(book.id)}
-                            className={`w-full flex items-center justify-between p-3 bg-[#FDFBF7] hover:bg-[#FAF0EB]/40 transition-colors text-left ${isExpanded ? 'border-b border-[#E7E5DF]' : ''}`}
+                            className={`w-full flex items-center justify-between p-3 bg-[#FDFBF7] hover:bg-[#F3EFE9] transition-colors text-left ${isExpanded ? 'border-b border-[#E7E5DF]' : ''}`}
                           >
                             <div className="flex items-center gap-2">
-                              <BookOpen className="w-4 h-4 text-[#C96442] stroke-[1.5px]" />
+                              <BookOpen className="w-4 h-4 text-[#8C877D] stroke-[1.5px]" />
                               <span className="font-serif font-bold text-xs text-[#2C2B29]">{book.name}</span>
-                              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-[#FAF0EB] text-[#C96442] border border-[#F1D3C6]">
-                                {bookSermons.length}편
+                              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#F0EEE6] text-[#2C2B29]">
+                                {bookSermons.length}
                               </span>
                             </div>
                             <div className="text-[#8C877D]">
@@ -809,22 +802,20 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                                 <div
                                   key={s.id}
                                   onClick={() => openEditor(s.id)}
-                                  className="p-2.5 bg-white border border-[#EAE7E0] hover:border-[#C96442] rounded-lg transition-all cursor-pointer group flex items-start justify-between gap-2"
+                                  className="p-2.5 bg-white border border-[#EAE7E0] hover:border-[#D5D0C7] hover:shadow-md hover:bg-[#FDFBF7] rounded-lg transition-all cursor-pointer group flex items-start justify-between gap-2"
                                 >
                                   <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-1.5">
-                                      {s.extractedBook?.parsedRef && (
-                                        <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-[#FAF0EB] text-[#C96442]">
-                                          {s.extractedBook.parsedRef}
-                                        </span>
-                                      )}
-                                      <h4 className="font-semibold text-xs text-[#2C2B29] group-hover:text-[#C96442] truncate">
-                                        {s.title}
-                                      </h4>
+                                    <h4 className="font-semibold text-xs text-[#2C2B29] truncate">
+                                      {s.title}
+                                    </h4>
+                                    <div className="flex items-center justify-between gap-2 mt-1">
+                                      <p className="text-[10px] text-[#6A6864] line-clamp-1 font-serif flex-1 min-w-0">
+                                        {s.content ? s.content.replace(/[#*`\n]/g, ' ').trim() : ''}
+                                      </p>
+                                      <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1">
+                                        <Calendar className="w-2.5 h-2.5" /> {s.date}
+                                      </span>
                                     </div>
-                                    <p className="text-[10px] text-[#A3A19B] mt-1 flex items-center gap-1">
-                                      <Calendar className="w-2.5 h-2.5" /> {s.date}
-                                    </p>
                                   </div>
                                   <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button 
@@ -853,8 +844,8 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                           <div className="flex items-center gap-2">
                             <Folder className="w-4 h-4 text-[#8C877D] stroke-[1.5px]" />
                             <span className="font-serif font-bold text-xs text-[#2C2B29]">주제별 / 일반 설교</span>
-                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-[#F3EFE9] text-[#6E6A63] border border-[#E5E0D8]">
-                              {bookGroups.etcList.length}편
+                            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#F0EEE6] text-[#2C2B29]">
+                              {bookGroups.etcList.length}
                             </span>
                           </div>
                           <div className="text-[#8C877D]">
@@ -869,15 +860,20 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                               <div
                                 key={s.id}
                                 onClick={() => openEditor(s.id)}
-                                className="p-2.5 bg-white border border-[#EAE7E0] hover:border-[#C96442] rounded-lg transition-all cursor-pointer group flex items-start justify-between gap-2"
+                                className="p-2.5 bg-white border border-[#EAE7E0] hover:border-[#D5D0C7] hover:shadow-md hover:bg-[#FDFBF7] rounded-lg transition-all cursor-pointer group flex items-start justify-between gap-2"
                               >
                                 <div className="flex-1 min-w-0">
-                                  <h4 className="font-semibold text-xs text-[#2C2B29] group-hover:text-[#C96442] truncate">
+                                  <h4 className="font-semibold text-xs text-[#2C2B29] truncate">
                                     {s.title}
                                   </h4>
-                                  <p className="text-[10px] text-[#A3A19B] mt-1 flex items-center gap-1">
-                                    <Calendar className="w-2.5 h-2.5" /> {s.date}
-                                  </p>
+                                  <div className="flex items-center justify-between gap-2 mt-1">
+                                    <p className="text-[10px] text-[#6A6864] line-clamp-1 font-serif flex-1 min-w-0">
+                                      {s.content ? s.content.replace(/[#*`\n]/g, ' ').trim() : ''}
+                                    </p>
+                                    <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1">
+                                      <Calendar className="w-2.5 h-2.5" /> {s.date}
+                                    </span>
+                                  </div>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <button 

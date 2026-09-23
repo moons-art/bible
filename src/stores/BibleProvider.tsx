@@ -32,7 +32,49 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>(['built-in-kor-revised', 'built-in-eng-nrsv']);
   const [lineHeight, setLineHeight] = useState<number>(1.6);
   const [copyMode, setCopyMode] = useState<CopyMode>('default');
-  const [showVersionInCopy, setShowVersionInCopy] = useState<boolean>(true);
+  const [showVersionInCopy, setShowVersionInCopy] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('bible-copy-show-version');
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch { return true; }
+  });
+  const [copyMultiOption, setCopyMultiOption] = useState<'kr' | 'en' | 'kr+en' | 'all'>(() => {
+    try {
+      const saved = localStorage.getItem('bible-copy-multi-option');
+      return (saved as any) || 'kr+en';
+    } catch { return 'kr+en'; }
+  });
+  const [mainKrVersionId, setMainKrVersionId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('bible-copy-main-kr') || '';
+    } catch { return ''; }
+  });
+  const [mainEnVersionId, setMainEnVersionId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('bible-copy-main-en') || '';
+    } catch { return ''; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('bible-copy-show-version', JSON.stringify(showVersionInCopy)); } catch {}
+  }, [showVersionInCopy]);
+
+  useEffect(() => {
+    try { localStorage.setItem('bible-copy-multi-option', copyMultiOption); } catch {}
+  }, [copyMultiOption]);
+
+  useEffect(() => {
+    if (mainKrVersionId) {
+      try { localStorage.setItem('bible-copy-main-kr', mainKrVersionId); } catch {}
+    }
+  }, [mainKrVersionId]);
+
+  useEffect(() => {
+    if (mainEnVersionId) {
+      try { localStorage.setItem('bible-copy-main-en', mainEnVersionId); } catch {}
+    }
+  }, [mainEnVersionId]);
+
   const [verseData, setVerseData] = useState<Record<string, { note?: string; crossRef?: string; sermon?: string }>>({});
   const [showAnnotations, setShowAnnotations] = useState<boolean>(true);
   const [googleUserId, setGoogleUserId] = useState<string | null>(null);
@@ -45,6 +87,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const savedVersionIdsRef = useRef<Set<string>>(new Set());
   // Firestore 구독 해제 함수 Ref
   const unsubscribeVerseDataRef = useRef<(() => void) | null>(null);
+  // 원격 데이터 수신 시 Firestore 역전송(Echo) 무한 루프 방지 플래그
+  const isRemoteSyncRef = useRef<boolean>(false);
 
   // ── Firestore verseData 동기화 함수 ─────────────────────────────────────
   const subscribeToVerseData = (uid: string) => {
@@ -57,7 +101,12 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       snapshot.forEach(docSnap => {
         data[docSnap.id] = docSnap.data() as any;
       });
+      isRemoteSyncRef.current = true;
       setVerseData(data);
+      // React 상태 반영 후 플래그 안전 해제
+      setTimeout(() => {
+        isRemoteSyncRef.current = false;
+      }, 50);
     }, (error) => {
       console.warn('[BibleProvider] Firestore offline/sync error (정상 - 오프라인 캐시 사용 중):', error.code);
     });
@@ -259,7 +308,12 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setVerseData(prev => {
       const next = typeof newData === 'function' ? newData(prev) : newData;
 
-      // Firestore 동기화 (로그인된 경우에만)
+      // 원격 동기화 수신 중일 때는 Firestore 역전송 완전 차단
+      if (isRemoteSyncRef.current) {
+        return next;
+      }
+
+      // Firestore 동기화 (로그인된 사용자가 직접 수정한 경우에만)
       if (googleUserId) {
         Object.keys(next).forEach(key => {
           if (prev[key] === next[key]) return;
@@ -625,6 +679,9 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return next;
       }),
       setCopyMode, setShowVersionInCopy,
+      copyMultiOption, setCopyMultiOption,
+      mainKrVersionId, setMainKrVersionId,
+      mainEnVersionId, setMainEnVersionId,
       lineHeight, setLineHeight: (val) => setLineHeight(Math.max(1.3, val)),
       verseData, setVerseData: syncVerseData,
       showAnnotations, setShowAnnotations

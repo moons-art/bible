@@ -493,7 +493,26 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             번역본 텍스트 지원 형식 안내
           </h2>
 
-          <div className="text-xs text-[#4A4741] space-y-2.5 leading-relaxed">
+          {/* 개역개정, NIV 기타 번역본 사용법 무료문의 (제목 바로 아래 배치, 설명글 제거) */}
+          <div className="p-3 bg-[#FAF9F5] rounded-xl border border-[#E8E2D8] flex items-center justify-between gap-3">
+            <span className="text-xs font-semibold text-[#2B2927]">
+              개역개정, NIV 기타 번역본 사용법 무료문의
+            </span>
+            <a
+              href={policy.kakaoChatUrl || 'http://pf.kakao.com/_cxjBxaX/chat'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#FEE500] hover:bg-[#FDD800] text-[#3C1E1E] rounded-full text-xs font-bold transition-all shadow-2xs active:scale-95 cursor-pointer shrink-0"
+              title="카톡 1:1 무료문의 바로가기"
+            >
+              <svg className="w-3.5 h-3.5 stroke-[#3C1E1E] stroke-[2.8] fill-none shrink-0" viewBox="0 0 24 24">
+                <path d="M12 3c-5.52 0-10 3.58-10 8 0 2.87 1.89 5.4 4.77 6.77l-1.2 4.43c-.11.41.34.75.7.53l5.24-3.48c.16.01.32.02.49.02 5.52 0 10-3.58 10-8s-4.48-8-10-8z" />
+              </svg>
+              <span>카톡 1:1 문의</span>
+            </a>
+          </div>
+
+          <div className="text-xs text-[#4A4741] space-y-2.5 leading-relaxed pt-1">
             <p className="text-[11px] text-[#6E6A63]">
               개인 소장용 성경 텍스트(.txt) 파일을 업로드하여 나만의 번역본을 추가할 수 있습니다.
             </p>

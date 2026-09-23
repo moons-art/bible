@@ -11,7 +11,8 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Trash2, 
   FileEdit, Eye, EyeOff, WifiOff, Sparkles, PanelLeft, ChevronsLeftRight, Copy, Columns,
   MoreVertical, ArrowUp, ArrowDown, SlidersHorizontal, GripVertical, ArrowLeft,
-  CreditCard, History, AlertCircle, LogOut, ExternalLink, Clock, HardDrive, Database, Folder, FolderOpen
+  CreditCard, History, AlertCircle, LogOut, ExternalLink, Clock, HardDrive, Database, Folder, FolderOpen,
+  Gift, MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { searchService, type SearchRange } from './services/searchService';
@@ -21,7 +22,7 @@ import { TooltipIcon } from './components/TooltipIcon';
 import { SettingsPage } from './components/SettingsPage';
 import { AiCommentaryPanel, ClaudeSparkleIcon, type AiTabType } from './components/AiCommentaryPanel';
 import { useAiUsage } from './hooks/useAiUsage';
-import { getCommentaryHistory, getCloudCommentaryCount } from './services/aiHistoryService';
+import { getCommentaryHistory, getCloudCommentaryCount, getTotalMergedCommentaryCount } from './services/aiHistoryService';
 import { getBibleReferenceMatchScore, parseBibleReference, isBibleReferenceMatch } from './utils/referenceParser';
 import { AuthModal } from './components/AuthModal';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
@@ -384,6 +385,12 @@ const MainApp: React.FC = () => {
     setCopyMode,
     showVersionInCopy,
     setShowVersionInCopy,
+    copyMultiOption,
+    setCopyMultiOption,
+    mainKrVersionId,
+    setMainKrVersionId,
+    mainEnVersionId,
+    setMainEnVersionId,
     lineHeight,
     setLineHeight,
     verseData,
@@ -408,13 +415,13 @@ const MainApp: React.FC = () => {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarPinned, setIsSidebarPinned] = useState(false);
-  const DEFAULT_SIDEBAR_WIDTH = 236;
+  const DEFAULT_SIDEBAR_WIDTH = 260;
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(() => {
     const saved = localStorage.getItem('bible-left-sidebar-width');
     if (!saved) return DEFAULT_SIDEBAR_WIDTH;
     const parsed = parseInt(saved, 10);
-    // 기존에 너무 넓게(260 이상) 저장되어 있던 경우에도 컴팩트한 최적 너비로 자연스럽게 리셋
-    return (parsed > 260 || parsed < 210) ? DEFAULT_SIDEBAR_WIDTH : parsed;
+    // 기존에 250 미만으로 너무 좁게 저장되어 있던 경우에도 최적 너비로 자연스럽게 상향
+    return (parsed > 380 || parsed < 250) ? DEFAULT_SIDEBAR_WIDTH : parsed;
   });
   const [isResizingLeftSidebar, setIsResizingLeftSidebar] = useState(false);
 
@@ -546,24 +553,21 @@ const MainApp: React.FC = () => {
     localStorage.setItem('bible-search-font-size', searchFontSize.toString());
   }, [searchFontSize]);
 
-  // 복사 설정 서브 아코디언 및 세부 지정 상태
+  // 복사 설정 서브 아코디언 상태
   const [showCopySettingsAccordion, setShowCopySettingsAccordion] = useState(false);
-  const [mainKrVersionId, setMainKrVersionId] = useState<string>('');
-  const [mainEnVersionId, setMainEnVersionId] = useState<string>('');
-  const [copyMultiOption, setCopyMultiOption] = useState<'kr' | 'en' | 'kr+en' | 'all'>('kr+en');
 
   // 번역본 한글 / 영어 자동 분류
   const krVersions = React.useMemo(() => versions.filter(v => /[가-힣]/.test(v.name) || !/[a-zA-Z]/.test(v.name)), [versions]);
   const enVersions = React.useMemo(() => versions.filter(v => /[a-zA-Z]/.test(v.name)), [versions]);
 
   React.useEffect(() => {
-    if (krVersions.length > 0 && !mainKrVersionId) {
+    if (krVersions.length > 0 && (!mainKrVersionId || !krVersions.some(v => v.id === mainKrVersionId))) {
       setMainKrVersionId(krVersions[0].id);
     }
-    if (enVersions.length > 0 && !mainEnVersionId) {
+    if (enVersions.length > 0 && (!mainEnVersionId || !enVersions.some(v => v.id === mainEnVersionId))) {
       setMainEnVersionId(enVersions[0].id);
     }
-  }, [krVersions, enVersions, mainKrVersionId, mainEnVersionId]);
+  }, [krVersions, enVersions, mainKrVersionId, mainEnVersionId, setMainKrVersionId, setMainEnVersionId]);
 
   const sermonSidebarRef = useRef<SermonSidebarRef>(null);
 
@@ -692,7 +696,7 @@ const MainApp: React.FC = () => {
   const [isResizing, setIsResizing] = useState(false);
 
   // AI 주석 상태
-  const { totalRemaining, totalCapacity, remainingDaysText, cloudCommentaryLimit } = useAiUsage();
+  const { totalRemaining, totalCapacity, remainingDaysText, cloudCommentaryLimit, usedCloudCommentaryCount } = useAiUsage();
   const [isAiCommentaryOpen, setIsAiCommentaryOpen] = useState(false);
   const [aiPanelTab, setAiPanelTab] = useState<AiTabType>('all');
   const [aiRechargeTrigger, setAiRechargeTrigger] = useState(0);
@@ -706,7 +710,7 @@ const MainApp: React.FC = () => {
   });
   const [isAiResizing, setIsAiResizing] = useState(false);
 
-  // 저장된 주석 목록 수 실시간 상태
+  // 저장된 주석 목록 수 실시간 상태 (AI 패널의 기록 수와 100% 동일하게 일치)
   const [savedHistoryCount, setSavedHistoryCount] = useState<number>(() => {
     try {
       return getCommentaryHistory().length;
@@ -719,19 +723,28 @@ const MainApp: React.FC = () => {
     const updateCount = async () => {
       try {
         const { auth } = await import('./api/firebaseConfig');
-        if (auth.currentUser) {
-          const count = await getCloudCommentaryCount(auth.currentUser.uid);
-          setSavedHistoryCount(count);
-        } else {
-          setSavedHistoryCount(getCommentaryHistory().length);
-        }
+        const count = await getTotalMergedCommentaryCount(auth.currentUser?.uid || null);
+        setSavedHistoryCount(count);
       } catch {
         setSavedHistoryCount(getCommentaryHistory().length);
       }
     };
+
+    // 초기 마운트 시 즉시 실행
+    updateCount();
+
+    // Firebase Auth 상태 변경 시에도 카운트 즉시 재계산
+    let unsubAuth: (() => void) | undefined;
+    import('./api/firebaseConfig').then(({ auth }) => {
+      unsubAuth = auth.onAuthStateChanged(() => {
+        updateCount();
+      });
+    }).catch(() => {});
+
     window.addEventListener('ai-history-updated', updateCount);
     window.addEventListener('storage', updateCount);
     return () => {
+      if (unsubAuth) unsubAuth();
       window.removeEventListener('ai-history-updated', updateCount);
       window.removeEventListener('storage', updateCount);
     };
@@ -1040,20 +1053,37 @@ const MainApp: React.FC = () => {
                     번역본 목록
                   </div>
 
-                  {/* + 번역본 추가 (NEW 뱃지 제거, 목록 바로 위에 위치) */}
-                  <button
-                    onClick={() => {
-                      if (!isAuthenticated) {
-                        alert('번역본을 추가하려면 먼저 구글 계정으로 로그인해 주세요.');
-                        return;
-                      }
-                      setShowUploadModal(true);
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 mb-1 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all group cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4 text-[#6E6A63] stroke-[1.8px]" />
-                    <span>번역본 추가</span>
-                  </button>
+                  {/* + 번역본 추가 (우측 끝에 삼선 아이콘 및 마우스 오버 시 '방법: 카톡무료문의' 툴팁) */}
+                  <div className="w-full flex items-center justify-between px-2.5 py-1 mb-1 rounded-xl hover:bg-[#F3EFE9] transition-all group">
+                    <button
+                      onClick={() => {
+                        if (!isAuthenticated) {
+                          alert('번역본을 추가하려면 먼저 구글 계정으로 로그인해 주세요.');
+                          return;
+                        }
+                        setShowUploadModal(true);
+                      }}
+                      className="flex-1 flex items-center gap-2 py-1 text-xs font-normal text-[#4A4741] cursor-pointer text-left"
+                    >
+                      <Plus className="w-4 h-4 text-[#6E6A63] stroke-[1.8px] shrink-0" />
+                      <span>번역본 추가</span>
+                    </button>
+
+                    <a
+                      href={policyData.kakaoChatUrl || 'http://pf.kakao.com/_cxjBxaX/chat'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="relative p-1 text-[#8C877D] hover:text-[#2B2927] hover:bg-[#DED8CE]/60 rounded-md transition-all opacity-40 group-hover:opacity-100 cursor-pointer group/menu shrink-0"
+                      title="방법: 카톡무료문의"
+                    >
+                      <MoreVertical className="w-3.5 h-3.5 stroke-[1.8px]" />
+                      
+                      {/* 마우스 호버 시 뜨는 플로팅 툴팁 */}
+                      <span className="absolute right-0 top-full mt-1 hidden group-hover/menu:flex items-center gap-1 px-2 py-1 bg-[#2C2B29] text-[#FAF9F5] text-[10px] rounded-lg shadow-md whitespace-nowrap z-50 pointer-events-none">
+                        방법: 카톡무료문의
+                      </span>
+                    </a>
+                  </div>
                   
                   {/* 번역본 아이템 목록 (드래그로 잡고 이동 가능한 Reorder 목록) */}
                   {versions.length === 0 ? (
@@ -1199,33 +1229,33 @@ const MainApp: React.FC = () => {
                     {/* 충전 아래 유효기간 정보: 크레딧 수치 아래로 단정하게 우측 정렬 */}
                     <div className="w-full flex items-center justify-end gap-1.5 text-[11px] text-[#8C877D] whitespace-nowrap">
                       <span>유효기간</span>
-                      <span className="font-medium text-[#C46A40]">{remainingDaysText}</span>
+                      <span className={`font-medium ${remainingDaysText === '-' ? 'text-[#2B2927]' : 'text-[#C46A40]'}`}>
+                        {remainingDaysText}
+                      </span>
                     </div>
                   </button>
 
-                  {/* 비로그인 시 충전 남은횟수 및 유효기간 아래: 가입 혜택 안내 카드 */}
-                  {!isAuthenticated && (
+                  {/* 비로그인 시 충전 남은횟수 및 유효기간 아래: 가입 혜택 안내 (위아래 충전/저장과 여백/아이콘 완전 정렬) */}
+                  {!isAuthenticated && promoSettings?.enabled && (
                     <div
                       onClick={() => setShowAuthModal(true)}
-                      className="mx-0.5 my-1.5 p-2.5 rounded-xl bg-[#FAF0EB]/80 hover:bg-[#FAF0EB] border border-[#F1D3C6] cursor-pointer transition-all shadow-2xs group"
+                      className="w-full flex flex-col gap-1 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap group"
                     >
-                      <div className="text-[11px] leading-snug space-y-1">
-                        <div className="flex items-center gap-1.5 text-[#4A4741] font-semibold">
-                          <ClaudeSparkleIcon className="w-3.5 h-3.5 text-[#C46A40] shrink-0" />
-                          <span>{promoSettings?.enabled ? '신규 가입 특별 혜택 크레딧 제공' : '가입 시 AI 연구 크레딧 10회 제공'}</span>
+                      <div className="w-full flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Gift className="w-3.5 h-3.5 text-[#6E6A63] stroke-[1.5px] shrink-0" />
+                          <span className="whitespace-nowrap text-[#4A4741]">
+                            {(promoSettings.name && !promoSettings.name.includes('10회') && !promoSettings.name.includes('크레딧') && !promoSettings.name.includes('가입')) ? promoSettings.name : '특별혜택기간'}
+                          </span>
                         </div>
-                        {promoSettings?.enabled && (
-                          <div className="text-[11px] font-bold text-[#C46A40] pl-5 flex items-center gap-1.5">
-                            <span className="px-1.5 py-0.2 bg-white border border-[#F1D3C6] rounded text-[10px]">
-                              {(promoSettings.name && !promoSettings.name.includes('10회') && !promoSettings.name.includes('크레딧') && !promoSettings.name.includes('가입')) ? promoSettings.name : '특별혜택기간'}
-                            </span>
-                            <span>{(promoSettings.description || '200크레딧 제공').replace(/^(?:특별혜택기간|프로모션)\s*:\s*/, '').replace(/200\s*크[래레]딧\s*제공/, '200크레딧 제공').replace('크래딧', '크레딧').trim()}</span>
-                          </div>
-                        )}
+                        <span className="text-xs font-medium text-[#2B2927] whitespace-nowrap">
+                          {(promoSettings.description || '200크레딧 제공').replace(/^(?:특별혜택기간|프로모션)\s*:\s*/, '').replace(/200\s*크[래레]딧\s*제공/, '200크레딧 제공').replace('크래딧', '크레딧').trim()}
+                        </span>
                       </div>
-                      <div className="mt-1.5 pt-1.5 border-t border-[#F1D3C6]/60 flex items-center justify-between text-[10px] text-[#C46A40]">
-                        <span className="font-normal text-[#8C877D]">지메일로 원클릭 가입</span>
-                        <span className="font-semibold group-hover:underline">혜택 받기 →</span>
+                      <div className="w-full flex items-center justify-end">
+                        <span className="text-[11px] font-medium text-[#C46A40] group-hover:underline cursor-pointer">
+                          혜택 받기 →
+                        </span>
                       </div>
                     </div>
                   )}
@@ -1258,12 +1288,17 @@ const MainApp: React.FC = () => {
                     {/* 저장 아래 보관 상태 및 목록 수: 충전 유효기간과 완벽 정렬 */}
                     <div className="w-full flex items-center justify-end gap-1.5 text-[11px] text-[#8C877D] whitespace-nowrap">
                       <span>{cloudCommentaryLimit > 0 ? '서버보관 중' : '기기보관 중'}</span>
-                      <span 
-                        className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927] shrink-0"
-                        title={`현재 저장된 주석 목록: ${savedHistoryCount}개`}
-                      >
-                        {savedHistoryCount}
-                      </span>
+                      {(() => {
+                        const effectiveCount = Math.max(savedHistoryCount, cloudCommentaryLimit > 0 ? (usedCloudCommentaryCount || 0) : 0);
+                        return (
+                          <span 
+                            className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927] shrink-0"
+                            title={`현재 저장된 주석 목록: ${effectiveCount}개`}
+                          >
+                            {effectiveCount}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </button>
                 </div>
@@ -2034,21 +2069,12 @@ const MainApp: React.FC = () => {
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
               className="relative w-full max-w-xl bg-[#FAF9F5] rounded-2xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[82vh]"
             >
-              {/* Header (AI 주석 기록창 헤더와 동일) */}
+              {/* Header (구절주석 검색) */}
               <div className="p-4 border-b border-[#E7E5DF] bg-[#FAF9F5] space-y-3 shrink-0">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-4 h-4 text-[#8C877D]" />
-                      <Database className="w-4 h-4 text-[#8C877D]" />
-                      <span className="font-serif font-bold text-sm text-[#2C2B29]">구절 주석 보관함</span>
-                      <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927]">
-                        {filteredNoteEntries.length}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#8C877D] mt-0.5">
-                      성경 구절에 작성된 주석을 안전하게 보관하여 어디서나 열람할 수 있습니다.
-                    </p>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-[#2C2B29] stroke-[1.8px] shrink-0" />
+                    <span className="font-serif font-bold text-sm text-[#2C2B29]">구절주석 검색 <span className="font-normal text-xs text-[#8C877D]">내 개인 주석</span></span>
                   </div>
                   <button 
                     onClick={() => setShowNoteSearch(false)} 
@@ -2068,7 +2094,7 @@ const MainApp: React.FC = () => {
                     placeholder="구절, 책 이름, 주석 본문 검색..."
                     value={noteSearchQuery}
                     onChange={e => setNoteSearchQuery(e.target.value)}
-                    className="w-full bg-white border border-[#E7E5DF] rounded-xl pl-9 pr-8 py-2.5 text-xs text-[#2C2B29] outline-none shadow-2xs focus:border-[#C46A40] transition-all placeholder:text-[#A39E94]"
+                    className="w-full bg-white border border-[#E7E5DF] rounded-xl pl-9 pr-8 py-2.5 text-xs text-[#2C2B29] outline-none shadow-2xs focus:border-[#8C877D] focus:ring-2 focus:ring-[#2C2B29]/5 transition-all placeholder:text-[#A39E94]"
                   />
                   {noteSearchQuery && (
                     <button
@@ -2127,8 +2153,8 @@ const MainApp: React.FC = () => {
                     return (
                       <div 
                         key={verseKey} 
-                        className={`p-2.5 px-3 bg-white border rounded-xl hover:border-[#C46A40] hover:bg-[#FDFBF7] transition-all flex flex-col gap-1 shadow-2xs ${
-                          isExactMatch ? 'border-[#C46A40] ring-2 ring-[#C46A40]/10 bg-[#FAF0EB]/20' : 'border-[#E7E5DF]'
+                        className={`p-2.5 px-3 bg-white border rounded-xl hover:border-[#D5D0C7] hover:shadow-md hover:bg-[#FDFBF7] transition-all flex flex-col gap-1 shadow-2xs ${
+                          isExactMatch ? 'border-[#8C877D] ring-2 ring-[#2C2B29]/5 bg-[#FAF0EB]/20' : 'border-[#E7E5DF]'
                         }`}
                       >
                         <div className="flex items-center justify-between gap-2">
@@ -2137,7 +2163,7 @@ const MainApp: React.FC = () => {
                               {bookName} {chStr}:{vsStr}
                             </span>
                             {isExactMatch && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-[#C46A40] text-white">
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-[#524E48] text-white">
                                 구절 일치
                               </span>
                             )}
@@ -2193,9 +2219,9 @@ const MainApp: React.FC = () => {
                             className={`w-full p-2.5 px-3 bg-[#FAF9F5] hover:bg-[#F3EFE9] transition-colors flex items-center justify-between text-left cursor-pointer ${isExpanded ? 'border-b border-[#EFECE6]' : ''}`}
                           >
                             <div className="flex items-center gap-2">
-                              <BookOpen className="w-3.5 h-3.5 text-[#C46A40] stroke-[1.8]" />
+                              <BookOpen className="w-3.5 h-3.5 text-[#8C877D] stroke-[1.8]" />
                               <span className="font-serif font-bold text-xs text-[#2C2B29]">{book.name}</span>
-                              <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927]">
+                              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#F0EEE6] text-[#2C2B29]">
                                 {bookEntries.length}
                               </span>
                             </div>
@@ -2211,7 +2237,7 @@ const MainApp: React.FC = () => {
                                 return (
                                   <div
                                     key={verseKey}
-                                    className="p-2.5 rounded-lg border border-[#EAE6DF] bg-[#FAF9F5] hover:border-[#C46A40] transition-all flex flex-col gap-1 shadow-2xs"
+                                    className="p-2.5 rounded-lg border border-[#EAE6DF] bg-[#FAF9F5] hover:border-[#D5D0C7] hover:shadow-md hover:bg-white transition-all flex flex-col gap-1 shadow-2xs"
                                   >
                                     <div className="flex items-center justify-between gap-2">
                                       <span className="font-serif font-bold text-xs text-[#2C2B29]">
@@ -2280,21 +2306,12 @@ const MainApp: React.FC = () => {
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
               className="relative w-full max-w-xl bg-[#FAF9F5] rounded-2xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[82vh]"
             >
-              {/* Header (AI 주석 기록창 헤더와 동일) */}
+              {/* Header (구절노트 검색) */}
               <div className="p-4 border-b border-[#E7E5DF] bg-[#FAF9F5] space-y-3 shrink-0">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-4 h-4 text-[#8C877D]" />
-                      <FileEdit className="w-4 h-4 text-[#8C877D]" />
-                      <span className="font-serif font-bold text-sm text-[#2C2B29]">구절 메모 보관함</span>
-                      <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927]">
-                        {filteredSermonEntries.length}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#8C877D] mt-0.5">
-                      성경 구절에 기록된 묵상 메모를 안전하게 보관하여 어디서나 열람할 수 있습니다.
-                    </p>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileEdit className="w-4 h-4 text-[#2C2B29] stroke-[1.8px] shrink-0" />
+                    <span className="font-serif font-bold text-sm text-[#2C2B29]">구절노트 검색 <span className="font-normal text-xs text-[#8C877D]">내 개인 메모</span></span>
                   </div>
                   <button 
                     onClick={() => setShowSermonSearch(false)} 
@@ -2314,7 +2331,7 @@ const MainApp: React.FC = () => {
                     placeholder="구절, 책 이름, 메모 본문 검색..."
                     value={sermonSearchQuery}
                     onChange={e => setSermonSearchQuery(e.target.value)}
-                    className="w-full bg-white border border-[#E7E5DF] rounded-xl pl-9 pr-8 py-2.5 text-xs text-[#2C2B29] outline-none shadow-2xs focus:border-[#C46A40] transition-all placeholder:text-[#A39E94]"
+                    className="w-full bg-white border border-[#E7E5DF] rounded-xl pl-9 pr-8 py-2.5 text-xs text-[#2C2B29] outline-none shadow-2xs focus:border-[#8C877D] focus:ring-2 focus:ring-[#2C2B29]/5 transition-all placeholder:text-[#A39E94]"
                   />
                   {sermonSearchQuery && (
                     <button
@@ -2373,8 +2390,8 @@ const MainApp: React.FC = () => {
                     return (
                       <div 
                         key={verseKey} 
-                        className={`p-2.5 px-3 bg-white border rounded-xl hover:border-[#6E6A63] hover:bg-[#FDFBF7] transition-all flex flex-col gap-1 shadow-2xs ${
-                          isExactMatch ? 'border-[#6E6A63] ring-2 ring-[#6E6A63]/10 bg-[#F3EFE9]/30' : 'border-[#E7E5DF]'
+                        className={`p-2.5 px-3 bg-white border rounded-xl hover:border-[#D5D0C7] hover:shadow-md hover:bg-[#FDFBF7] transition-all flex flex-col gap-1 shadow-2xs ${
+                          isExactMatch ? 'border-[#8C877D] ring-2 ring-[#2C2B29]/5 bg-[#F3EFE9]/30' : 'border-[#E7E5DF]'
                         }`}
                       >
                         <div className="flex items-center justify-between gap-2">
@@ -2383,7 +2400,7 @@ const MainApp: React.FC = () => {
                               {bookName} {chStr}:{vsStr}
                             </span>
                             {isExactMatch && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-[#6E6A63] text-white">
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-[#524E48] text-white">
                                 구절 일치
                               </span>
                             )}
@@ -2439,9 +2456,9 @@ const MainApp: React.FC = () => {
                             className={`w-full p-2.5 px-3 bg-[#FAF9F5] hover:bg-[#F3EFE9] transition-colors flex items-center justify-between text-left cursor-pointer ${isExpanded ? 'border-b border-[#EFECE6]' : ''}`}
                           >
                             <div className="flex items-center gap-2">
-                              <BookOpen className="w-3.5 h-3.5 text-[#6E6A63] stroke-[1.8]" />
+                              <BookOpen className="w-3.5 h-3.5 text-[#8C877D] stroke-[1.8]" />
                               <span className="font-serif font-bold text-xs text-[#2C2B29]">{book.name}</span>
-                              <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927]">
+                              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#F0EEE6] text-[#2C2B29]">
                                 {bookEntries.length}
                               </span>
                             </div>
@@ -2457,7 +2474,7 @@ const MainApp: React.FC = () => {
                                 return (
                                   <div
                                     key={verseKey}
-                                    className="p-2.5 rounded-lg border border-[#EAE6DF] bg-[#FAF9F5] hover:border-[#6E6A63] transition-all flex flex-col gap-1 shadow-2xs"
+                                    className="p-2.5 rounded-lg border border-[#EAE6DF] bg-[#FAF9F5] hover:border-[#D5D0C7] hover:shadow-md hover:bg-white transition-all flex flex-col gap-1 shadow-2xs"
                                   >
                                     <div className="flex items-center justify-between gap-2">
                                       <span className="font-serif font-bold text-xs text-[#2C2B29]">

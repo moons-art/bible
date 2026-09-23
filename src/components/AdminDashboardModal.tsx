@@ -5,7 +5,8 @@ import {
   X, ShieldCheck, Users, Sparkles, RefreshCw, Search, 
   BookOpen, Clock, Laptop, Check, AlertCircle, Award, 
   Activity, Trash2, FileText, Database, Gift, Tag, UserPlus, CheckCircle2,
-  KeyRound, Building2, MessageCircle, Calendar
+  KeyRound, Building2, MessageCircle, Calendar,
+  CreditCard, Coins, Copy, ExternalLink, Smartphone
 } from 'lucide-react';
 import {
   getSitePolicy,
@@ -63,13 +64,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [policySubTab, setPolicySubTab] = useState<'business' | 'terms' | 'privacy'>('business');
   const [isSavingPolicy, setIsSavingPolicy] = useState(false);
   
-  // 유저 목록 상태
+  // 유저 목록 상태 및 20명 페이징 / 회원 상세 모달 상태
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'recent' | 'created' | 'aiUsed' | 'materials'>('recent');
+  const [sortBy, setSortBy] = useState<'recent' | 'loginCount' | 'payment' | 'materials' | 'aiUsed' | 'created'>('recent');
   const [actionLoadingUid, setActionLoadingUid] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const USERS_PER_PAGE = 20;
+  const [selectedUserForDetail, setSelectedUserForDetail] = useState<UserProfile | null>(null);
 
   // 활동 로그 상태
   const [logs, setLogs] = useState<ActivityLogEntry[]>([]);
@@ -361,6 +365,26 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     });
   };
 
+  // 회원의 결제 내역에서 총 결제 금액 계산
+  const calculateTotalPaymentAmount = (history?: RechargeHistoryItem[]) => {
+    if (!history || history.length === 0) return 0;
+    return history.reduce((sum, item) => {
+      const anyItem = item as any;
+      if (anyItem.price && typeof anyItem.price === 'number') return sum + anyItem.price;
+      const plan = (item.planName || '').toLowerCase();
+      if (plan.includes('관리자') || plan.includes('프로모션') || plan.includes('이벤트') || plan.includes('가입') || plan.includes('추천')) {
+        return sum; // 무료 보너스/이벤트
+      }
+      if (item.amount === 100 || plan.includes('베이직')) return sum + 9900;
+      if (item.amount === 300 || plan.includes('프로')) return sum + 24900;
+      if (item.amount === 1000 || plan.includes('프리미엄')) return sum + 69000;
+      if (plan.includes('300구절') || plan.includes('클라우드 300')) return sum + 3300;
+      if (plan.includes('1000구절') || plan.includes('클라우드 1000')) return sum + 9900;
+      if (plan.includes('무제한')) return sum + 29900;
+      return sum;
+    }, 0);
+  };
+
   // 7. 보너스 충전 처리 (+10회 / +50회 / +100회 - 인앱 확인 모달)
   const handleAddCredits = (user: UserProfile, count: number) => {
     const userName = user.displayName || user.email || '회원';
@@ -375,6 +399,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         try {
           await addCreditsToUser(user.uid, count, '관리자 수동 지급');
           showToast(`"${userName}" 회원에게 +${count}회 충전 완료!`);
+          const newHistoryItem: RechargeHistoryItem = {
+            id: `${Date.now()}_admin`,
+            amount: count,
+            planName: '관리자 수동 지급',
+            date: Date.now(),
+            expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000,
+            remaining: count,
+          };
           setUsers(prev => prev.map(u => {
             if (u.uid === user.uid) {
               return {
@@ -382,11 +414,23 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 aiCredits: {
                   ...u.aiCredits,
                   paidRemaining: (u.aiCredits?.paidRemaining || 0) + count
-                }
+                },
+                rechargeHistory: [...(u.rechargeHistory || []), newHistoryItem]
               };
             }
             return u;
           }));
+          setSelectedUserForDetail(prev => {
+            if (!prev || prev.uid !== user.uid) return prev;
+            return {
+              ...prev,
+              aiCredits: {
+                ...prev.aiCredits,
+                paidRemaining: (prev.aiCredits?.paidRemaining || 0) + count
+              },
+              rechargeHistory: [...(prev.rechargeHistory || []), newHistoryItem]
+            };
+          });
         } catch (err) {
           console.error('Failed to add credits:', err);
           showToast('보너스 충전 중 오류가 발생했습니다.');
@@ -420,6 +464,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         try {
           await addCreditsToUser(user.uid, n, '관리자 수동 직접 입력 충전');
           showToast(`"${userName}" 회원에게 +${n}회 충전 완료!`);
+          const newHistoryItem: RechargeHistoryItem = {
+            id: `${Date.now()}_admin_custom`,
+            amount: n,
+            planName: '관리자 수동 직접 충전',
+            date: Date.now(),
+            expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000,
+            remaining: n,
+          };
           setUsers(prev => prev.map(u => {
             if (u.uid === user.uid) {
               return {
@@ -427,11 +479,23 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 aiCredits: {
                   ...u.aiCredits,
                   paidRemaining: (u.aiCredits?.paidRemaining || 0) + n
-                }
+                },
+                rechargeHistory: [...(u.rechargeHistory || []), newHistoryItem]
               };
             }
             return u;
           }));
+          setSelectedUserForDetail(prev => {
+            if (!prev || prev.uid !== user.uid) return prev;
+            return {
+              ...prev,
+              aiCredits: {
+                ...prev.aiCredits,
+                paidRemaining: (prev.aiCredits?.paidRemaining || 0) + n
+              },
+              rechargeHistory: [...(prev.rechargeHistory || []), newHistoryItem]
+            };
+          });
         } catch (err) {
           console.error('Failed to add credits:', err);
           showToast('충전 중 오류가 발생했습니다.');
@@ -466,6 +530,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             }
             return u;
           }));
+          setSelectedUserForDetail(prev => {
+            if (!prev || prev.uid !== user.uid) return prev;
+            return {
+              ...prev,
+              cloudCommentaryLimit: (prev.cloudCommentaryLimit || 0) + capacity
+            };
+          });
         } catch (err) {
           console.error('Failed to add cloud capacity:', err);
           showToast('주석 클라우드 용량 추가 중 오류가 발생했습니다.');
@@ -507,6 +578,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             }
             return u;
           }));
+          setSelectedUserForDetail(prev => {
+            if (!prev || prev.uid !== user.uid) return prev;
+            const prevAllowed = prev.allowedVersions || [];
+            const nextAllowed = isCurrentlyAllowed 
+              ? prevAllowed.filter(id => id !== versionId)
+              : [...prevAllowed, versionId];
+            return { ...prev, allowedVersions: nextAllowed };
+          });
         } catch (err) {
           console.error('Failed to toggle version:', err);
           showToast('번역본 권한 변경 중 오류가 발생했습니다.');
@@ -564,6 +643,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     })
     .sort((a, b) => {
       if (sortBy === 'recent') return (b.lastLoginAt || 0) - (a.lastLoginAt || 0);
+      if (sortBy === 'loginCount') {
+        const diff = (b.loginCount || 1) - (a.loginCount || 1);
+        if (diff !== 0) return diff;
+        return (b.lastLoginAt || 0) - (a.lastLoginAt || 0);
+      }
+      if (sortBy === 'payment') {
+        const payA = calculateTotalPaymentAmount(a.rechargeHistory);
+        const payB = calculateTotalPaymentAmount(b.rechargeHistory);
+        const diff = payB - payA;
+        if (diff !== 0) return diff;
+        return (b.rechargeHistory?.length || 0) - (a.rechargeHistory?.length || 0);
+      }
       if (sortBy === 'created') return (b.createdAt || 0) - (a.createdAt || 0);
       if (sortBy === 'aiUsed') return (b.aiCredits?.totalUsed || 0) - (a.aiCredits?.totalUsed || 0);
       if (sortBy === 'materials') {
@@ -573,6 +664,15 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       }
       return 0;
     });
+
+  // 페이징 계산
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / USERS_PER_PAGE));
+  const paginatedUsers = filteredUsers.slice((currentPage - 1) * USERS_PER_PAGE, currentPage * USERS_PER_PAGE);
+
+  // 검색어/정렬 변경 시 1페이지로 리셋
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, sortBy]);
 
   // 활동 로그 검색 및 필터링
   const filteredLogs = logs.filter(l => {
@@ -802,6 +902,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         최근 접속순
                       </button>
                       <button
+                        onClick={() => setSortBy('loginCount')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${sortBy === 'loginCount' ? 'bg-[#FAF0EB] text-[#C46A40] border border-[#F1D3C6]' : 'text-[#6E6A63] hover:bg-[#F5F3ED]'}`}
+                      >
+                        접속 많은순
+                      </button>
+                      <button
+                        onClick={() => setSortBy('payment')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${sortBy === 'payment' ? 'bg-[#FAF0EB] text-[#C46A40] border border-[#F1D3C6]' : 'text-[#6E6A63] hover:bg-[#F5F3ED]'}`}
+                      >
+                        결제금액순
+                      </button>
+                      <button
                         onClick={() => setSortBy('materials')}
                         className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${sortBy === 'materials' ? 'bg-[#FAF0EB] text-[#C46A40] border border-[#F1D3C6]' : 'text-[#6E6A63] hover:bg-[#F5F3ED]'}`}
                       >
@@ -828,20 +940,21 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       <table className="w-full text-left border-collapse text-xs">
                         <thead>
                           <tr className="bg-[#F7F5F0] border-b border-[#E7E5DF] text-[#6E6A63]">
-                            <th className="py-3 px-4 font-bold">회원 정보</th>
-                            <th className="py-3 px-4 font-bold">접속 & 기기</th>
-                            <th className="py-3 px-3 font-bold text-center">보관 및 작성 자료</th>
-                            <th className="py-3 px-4 font-bold text-center">AI 크레딧 & 충전 내역</th>
-                            <th className="py-3 px-4 font-bold text-center">주석 클라우드</th>
-                            <th className="py-3 px-4 font-bold text-center">보너스 충전</th>
-                            <th className="py-3 px-4 font-bold text-center">특별 번역본</th>
-                            <th className="py-3 px-3 font-bold text-center">계정 관리</th>
+                            <th className="py-3 px-4 font-bold">이름</th>
+                            <th className="py-3 px-4 font-bold">이메일</th>
+                            <th className="py-3 px-3 font-bold text-center">기기수</th>
+                            <th className="py-3 px-3 font-bold text-center">남은 크레딧</th>
+                            <th className="py-3 px-3 font-bold text-center">총 결제수</th>
+                            <th className="py-3 px-3 font-bold text-center">최근 결제일</th>
+                            <th className="py-3 px-3 font-bold text-center">앱 접속수</th>
+                            <th className="py-3 px-4 font-bold text-center">최근 접속일</th>
+                            <th className="py-3 px-3 font-bold text-center">상세</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#EFECE6]">
-                          {filteredUsers.length === 0 ? (
+                          {paginatedUsers.length === 0 ? (
                             <tr>
-                              <td colSpan={8} className="py-12 text-center">
+                              <td colSpan={9} className="py-12 text-center">
                                 {fetchError ? (
                                   <div className="flex flex-col items-center gap-2 text-red-500">
                                     <AlertCircle className="w-8 h-8" />
@@ -853,311 +966,86 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                   <div className="flex flex-col items-center gap-2 text-[#A39E94]">
                                     <Users className="w-8 h-8 opacity-40" />
                                     <p className="font-medium">{searchQuery ? '검색된 회원이 없습니다.' : '등록된 회원이 없습니다.'}</p>
-                                    {!searchQuery && <p className="text-[11px]">로그인 활동 로그를 통해 자동 복원됩니다.</p>}
                                   </div>
                                 )}
                               </td>
                             </tr>
                           ) : (
-                            filteredUsers.map((user) => {
-                              const isAllowedKrv = (user.allowedVersions || []).includes('built-in-krv');
-                              const isAllowedNiv = (user.allowedVersions || []).includes('built-in-niv');
-                              const isBusy = !!actionLoadingUid && actionLoadingUid.startsWith(user.uid);
-
-                              // 충전 기록 계산
+                            paginatedUsers.map((user) => {
                               const recHistory = user.rechargeHistory || [];
                               const latestRecharge = recHistory.length > 0 ? recHistory[recHistory.length - 1] : null;
-                              const now = Date.now();
-                              const expiresAt = latestRecharge?.expiresAt || user.aiCredits?.paidExpiresAt;
-                              const daysLeft = expiresAt ? Math.max(0, Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24))) : null;
-
-                              // 기기 목록 계산
                               const userDevices = (user.devices && user.devices.length > 0) 
                                 ? user.devices 
-                                : (user.deviceInfo ? [{ device: user.deviceInfo, lastLoginAt: user.lastLoginAt || now, loginCount: user.loginCount || 1 }] : []);
-
-                              // 클라우드 구독 상태 계산
-                              const isCloudSubscribed = (user.cloudCommentaryLimit || 0) > 0;
-                              const cloudPlanName = user.subscribedPlan || (user.cloudCommentaryLimit && user.cloudCommentaryLimit >= 30000 ? '무제한 ALL' : `클라우드 ${user.cloudCommentaryLimit || 0}`);
-                              const cloudSubDate = user.cloudSubscribedAt || user.subscribedAt;
+                                : (user.deviceInfo ? [{ device: user.deviceInfo, lastLoginAt: user.lastLoginAt || Date.now(), loginCount: user.loginCount || 1 }] : []);
+                              const totalRemainingCredits = (user.aiCredits?.freeRemaining || 0) + (user.aiCredits?.paidRemaining || 0);
 
                               return (
-                                <tr key={user.uid} className="hover:bg-[#FAF9F5] transition-colors">
-                                  {/* 회원 정보 (이름, 이메일, UID, 가입일) */}
-                                  <td className="py-3 px-4">
-                                    <div className="flex items-center gap-2.5">
-                                      {user.photoURL ? (
-                                        <img src={user.photoURL} alt="" className="w-7 h-7 rounded-full object-cover border border-[#E7E5DF]" />
-                                      ) : (
-                                        <div className="w-7 h-7 rounded-full bg-[#F5F3ED] text-[#6E6A63] font-bold text-xs flex items-center justify-center border border-[#E7E5DF]">
-                                          {(user.displayName || user.email || 'U')[0].toUpperCase()}
-                                        </div>
+                                <tr 
+                                  key={user.uid} 
+                                  onClick={() => setSelectedUserForDetail(user)}
+                                  className="hover:bg-[#FAF0EB]/40 transition-colors cursor-pointer group"
+                                >
+                                  {/* 1. 이름 */}
+                                  <td className="py-3.5 px-4 font-bold text-[#2C2B29] whitespace-nowrap">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-6 h-6 rounded-full bg-[#EAE5DC] text-[#4A4741] font-bold text-[11px] flex items-center justify-center shrink-0">
+                                        {(user.displayName || user.email || 'U')[0].toUpperCase()}
+                                      </div>
+                                      <span className="group-hover:text-[#C46A40] transition-colors">{user.displayName || '이름 없음'}</span>
+                                      {isAdminUser(user.email) && (
+                                        <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[9px] font-bold rounded">ADMIN</span>
                                       )}
-                                      <div>
-                                        <div className="font-bold text-[#2C2B29] flex items-center gap-1.5">
-                                          <span>{user.displayName || '이름 없음'}</span>
-                                          {isAdminUser(user.email) && (
-                                            <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[9px] font-bold rounded">
-                                              ADMIN
-                                            </span>
-                                          )}
-                                        </div>
-                                        <p className="text-[11px] text-[#8C877D] font-mono select-all">{user.email || '이메일 없음'}</p>
-                                        <p className="text-[9px] text-[#A39E94] font-mono truncate max-w-[150px]" title={user.uid}>UID: {user.uid}</p>
-                                        <div className="text-[10px] text-[#8C877D] mt-1 flex items-center gap-1">
-                                          <Calendar className="w-3 h-3 text-[#A39E94]" />
-                                          <span>가입: {user.createdAt ? new Date(user.createdAt).toLocaleDateString('ko-KR') : '-'}</span>
-                                        </div>
-                                      </div>
                                     </div>
                                   </td>
 
-                                  {/* 최근 접속 & 기기 (기기 종류 및 총 기기 수) */}
-                                  <td className="py-3 px-4">
-                                    <div className="text-[11px] text-[#2C2B29] font-medium flex items-center gap-1.5">
-                                      <span>
-                                        {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('ko-KR', {
-                                          month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                                        }) : '-'}
-                                      </span>
-                                      <span className="px-1.5 py-0.2 bg-slate-100 text-slate-700 text-[9px] font-bold rounded border border-slate-200">
-                                        기기 {userDevices.length}대
-                                      </span>
-                                    </div>
-                                    <div className="text-[10px] text-[#8C877D] flex items-center gap-1 mt-0.5">
-                                      <span>로그인 {user.loginCount || 1}회</span>
-                                      {user.activityCount ? (
-                                        <>
-                                          <span className="text-[#DDD8CE]">|</span>
-                                          <span className="text-indigo-600 font-semibold">활동 {user.activityCount}회</span>
-                                        </>
-                                      ) : null}
-                                    </div>
-
-                                    {/* 기기 종류 태그들 */}
-                                    <div className="flex flex-wrap gap-1 mt-1.5 max-w-[220px]">
-                                      {userDevices.map((d, dIdx) => (
-                                        <span 
-                                          key={dIdx}
-                                          title={`최근 접속: ${new Date(d.lastLoginAt).toLocaleString('ko-KR')} (총 ${d.loginCount || 1}회 접속)`}
-                                          className="px-1.5 py-0.5 bg-[#FAF9F5] border border-[#E7E5DF] hover:border-slate-400 text-[#6E6A63] text-[9px] rounded font-medium inline-flex items-center gap-1 cursor-help transition-colors"
-                                        >
-                                          <Laptop className="w-2.5 h-2.5 text-[#A39E94]" />
-                                          {d.device}
-                                        </span>
-                                      ))}
-                                    </div>
-
-                                    {user.lastAction && (
-                                      <div className="text-[9px] text-[#A39E94] mt-1">
-                                        마지막 액션: <span className="text-[#6E6A63]">{user.lastAction}</span>
-                                      </div>
-                                    )}
+                                  {/* 2. 이메일 */}
+                                  <td className="py-3.5 px-4 text-[#5A564F] font-mono text-xs select-all">
+                                    {user.email || '이메일 없음'}
                                   </td>
 
-                                  {/* 보관 및 작성 자료 (말씀메모, 설교노트, AI주석 저장수) */}
-                                  <td className="py-3 px-3 text-center">
-                                    <div className="flex flex-col gap-1 items-center">
-                                      <div className="inline-flex items-center gap-1.5 text-[11px] bg-[#FAF9F5] px-2.5 py-1 rounded-lg border border-[#E7E5DF]">
-                                        <span title="기록한 말씀 주석/메모 건수" className="font-semibold text-slate-700">말씀메모 {user.noteCount || 0}</span>
-                                        <span className="text-[#DDD8CE]">|</span>
-                                        <span title="작성한 설교 노트 편수" className="font-semibold text-indigo-700">설교 {user.sermonCount || 0}</span>
-                                      </div>
-                                      <div className="text-[10px] text-[#8C877D] mt-0.5">
-                                        AI주석 보관: <strong className="text-slate-800 font-semibold">{user.usedCloudCommentaryCount || 0}</strong> / {user.cloudCommentaryLimit || 0}
-                                      </div>
-                                    </div>
+                                  {/* 3. 기기수 */}
+                                  <td className="py-3.5 px-3 text-center">
+                                    <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-full font-bold text-[11px]">
+                                      {userDevices.length}대
+                                    </span>
                                   </td>
 
-                                  {/* AI 잔여 횟수 & 충전 내역 */}
-                                  <td className="py-3 px-4 text-center">
-                                    <div className="flex flex-col items-center">
-                                      <div className="font-bold text-xs text-[#2C2B29]">
-                                        <span className="text-[#C46A40]">
-                                          {(user.aiCredits?.freeRemaining || 0) + (user.aiCredits?.paidRemaining || 0)}회
-                                        </span>
-                                        <span className="text-[10px] text-[#8C877D] font-normal ml-1">
-                                          (무료 {user.aiCredits?.freeRemaining || 0} / 유료 {user.aiCredits?.paidRemaining || 0})
-                                        </span>
-                                      </div>
-                                      <span className="text-[10px] text-[#8C877D]">
-                                        누적 {user.aiCredits?.totalUsed || 0}회 연구됨
-                                      </span>
-
-                                      {/* 최근 충전 내역 및 유효기간 */}
-                                      <div className="mt-1 pt-1 border-t border-[#EFECE6] w-full text-center">
-                                        {latestRecharge ? (
-                                          <div className="flex flex-col items-center">
-                                            <span className="text-[10px] font-semibold text-[#C46A40]">
-                                              최근: +{latestRecharge.amount}회 ({latestRecharge.planName})
-                                            </span>
-                                            <span className="text-[9px] text-[#8C877D]">
-                                              {new Date(latestRecharge.date).toLocaleDateString('ko-KR')}
-                                              {daysLeft !== null && ` • ${daysLeft}일 남음`}
-                                            </span>
-                                          </div>
-                                        ) : (
-                                          <span className="text-[9px] text-[#A39E94]">충전 기록 없음</span>
-                                        )}
-                                      </div>
-                                    </div>
+                                  {/* 4. 남은 크레딧 */}
+                                  <td className="py-3.5 px-3 text-center font-bold text-[#C46A40]">
+                                    {totalRemainingCredits}회
                                   </td>
 
-                                  {/* 주석 클라우드 상태 & 지급 */}
-                                  <td className="py-3 px-3 text-center">
-                                    <div className="flex flex-col gap-1.5 items-center justify-center">
-                                      {/* 구독 상태 배지 */}
-                                      {isCloudSubscribed ? (
-                                        <div className="text-center">
-                                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold rounded-full">
-                                            구독 중 ({cloudPlanName})
-                                          </span>
-                                          <div className="text-[9px] text-[#8C877D] mt-0.5">
-                                            구독일: {cloudSubDate ? new Date(cloudSubDate).toLocaleDateString('ko-KR') : '-'}
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium rounded-full">
-                                          기본 30일 보관
-                                        </span>
-                                      )}
-
-                                      {/* 관리자 수동 지급 버튼 */}
-                                      <div className="flex items-center gap-1 mt-0.5">
-                                        <button
-                                          type="button"
-                                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCloudCapacity(user, 300); }}
-                                          disabled={isBusy}
-                                          className="px-2 py-0.5 bg-white hover:bg-slate-50 active:bg-slate-100 border border-[#DDD8CE] hover:border-slate-300 text-slate-700 rounded text-[10px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                                          title="300구절 클라우드 추가"
-                                        >
-                                          +300
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCloudCapacity(user, 1000); }}
-                                          disabled={isBusy}
-                                          className="px-2 py-0.5 bg-white hover:bg-slate-50 active:bg-slate-100 border border-[#DDD8CE] hover:border-slate-300 text-slate-700 rounded text-[10px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                                          title="1000구절 클라우드 추가"
-                                        >
-                                          +1000
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCloudCapacity(user, 30000); }}
-                                          disabled={isBusy}
-                                          className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-900 text-white rounded text-[9px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                                          title="성경 전체 무제한 클라우드 지급"
-                                        >
-                                          무제한
-                                        </button>
-                                      </div>
-                                    </div>
+                                  {/* 5. 총 결제수 */}
+                                  <td className="py-3.5 px-3 text-center font-semibold text-[#2C2B29]">
+                                    {recHistory.length}건
                                   </td>
 
-                                  {/* 보너스 충전 (10회/50회/100회/직접입력) */}
-                                  <td className="py-3 px-3 text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCredits(user, 10); }}
-                                        disabled={isBusy}
-                                        className="px-2 py-1 bg-white hover:bg-[#FAF0EB] active:bg-[#F5E2DA] border border-[#DDD8CE] hover:border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                                        title="10회 보너스 충전"
-                                      >
-                                        +10회
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCredits(user, 50); }}
-                                        disabled={isBusy}
-                                        className="px-2 py-1 bg-white hover:bg-[#FAF0EB] active:bg-[#F5E2DA] border border-[#DDD8CE] hover:border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                                        title="50회 보너스 충전"
-                                      >
-                                        +50회
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleAddCredits(user, 100); }}
-                                        disabled={isBusy}
-                                        className="px-2 py-1 bg-[#FAF0EB] hover:bg-[#F5E2DA] active:bg-[#EDD1C4] border border-[#F1D3C6] text-[#C46A40] rounded-lg text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                                        title="100회 보너스 충전"
-                                      >
-                                        +100회
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleCustomAddCredits(user); }}
-                                        disabled={isBusy}
-                                        className="px-2 py-1 hover:bg-[#F5F3ED] text-[#8C877D] hover:text-[#2C2B29] rounded-lg text-[10px] font-semibold transition-colors cursor-pointer border border-[#DDD8CE]"
-                                        title="직접 숫자 입력 충전"
-                                      >
-                                        직접
-                                      </button>
-                                    </div>
+                                  {/* 6. 최근 결제일 */}
+                                  <td className="py-3.5 px-3 text-center text-[11px] text-[#78746D] whitespace-nowrap">
+                                    {latestRecharge ? new Date(latestRecharge.date).toLocaleDateString('ko-KR') : '-'}
                                   </td>
 
-                                  {/* 원격 특별 번역본 권한 부여 (개역개정 / NIV) */}
-                                  <td className="py-3 px-3 text-center">
-                                    <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                      {/* 개역개정 */}
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleToggleVersion(user, 'built-in-krv', '개역개정'); }}
-                                        disabled={isBusy}
-                                        className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-all border shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
-                                          isAllowedKrv 
-                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100' 
-                                            : 'bg-[#FAF9F5] text-[#8C877D] border-[#DDD8CE] hover:bg-[#F5F3ED]'
-                                        }`}
-                                        title="원격으로 개역개정 활성화"
-                                      >
-                                        <BookOpen className="w-3 h-3" />
-                                        <span>{isAllowedKrv ? '개역개정 ✓' : '개역개정'}</span>
-                                      </button>
-
-                                      {/* NIV */}
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleToggleVersion(user, 'built-in-niv', 'NIV'); }}
-                                        disabled={isBusy}
-                                        className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-all border shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-50 ${
-                                          isAllowedNiv 
-                                            ? 'bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100' 
-                                            : 'bg-[#FAF9F5] text-[#8C877D] border-[#DDD8CE] hover:bg-[#F5F3ED]'
-                                        }`}
-                                        title="원격으로 NIV(영어) 활성화"
-                                      >
-                                        <BookOpen className="w-3 h-3" />
-                                        <span>{isAllowedNiv ? 'NIV ✓' : 'NIV'}</span>
-                                      </button>
-                                    </div>
+                                  {/* 7. 앱 접속수 */}
+                                  <td className="py-3.5 px-3 text-center font-medium text-[#5A564F]">
+                                    {user.loginCount || 1}회
                                   </td>
 
-                                  {/* 계정 관리 (비번 초기화 이메일 발송 & 회원 영구 삭제) */}
-                                  <td className="py-3 px-3 text-center">
-                                    <div className="flex items-center justify-center gap-1.5">
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); handleResetPassword(user); }}
-                                        disabled={isBusy || !user.email}
-                                        className="px-2 py-1 bg-white hover:bg-amber-50 border border-[#DDD8CE] hover:border-amber-300 text-[#6E6A63] hover:text-amber-800 rounded-lg text-[10px] font-semibold transition-all shadow-2xs cursor-pointer flex items-center gap-1 disabled:opacity-40"
-                                        title={`${user.email} 주소로 공식 비밀번호 재설정 링크 이메일 발송`}
-                                      >
-                                        <KeyRound className="w-3 h-3 text-amber-600" />
-                                        <span>비번 초기화</span>
-                                      </button>
+                                  {/* 8. 최근 접속일 */}
+                                  <td className="py-3.5 px-4 text-center text-[11px] text-[#78746D] whitespace-nowrap">
+                                    {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('ko-KR', {
+                                      month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                                    }) : '-'}
+                                  </td>
 
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); handleDeleteUser(user); }}
-                                        disabled={isBusy}
-                                        className="p-1.5 bg-white hover:bg-red-50 border border-[#DDD8CE] hover:border-red-300 text-[#8C877D] hover:text-red-600 rounded-lg transition-all shadow-2xs cursor-pointer disabled:opacity-40"
-                                        title="회원 데이터 영구 삭제"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
+                                  {/* 9. 관리 버튼 */}
+                                  <td className="py-3.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedUserForDetail(user)}
+                                      className="px-2.5 py-1 bg-white hover:bg-[#FAF0EB] border border-[#DDD8CE] hover:border-[#F1D3C6] text-[#C46A40] rounded-lg text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                                    >
+                                      관리
+                                    </button>
                                   </td>
                                 </tr>
                               );
@@ -1166,6 +1054,36 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         </tbody>
                       </table>
                     </div>
+
+                    {/* 20명 단위 페이징 컨트롤러 */}
+                    {totalPages > 1 && (
+                      <div className="px-4 py-3 bg-[#FAF9F5] border-t border-[#E7E5DF] flex items-center justify-between text-xs text-[#6E6A63]">
+                        <div>
+                          총 <strong>{filteredUsers.length}</strong>명 중 {(currentPage - 1) * USERS_PER_PAGE + 1} - {Math.min(currentPage * USERS_PER_PAGE, filteredUsers.length)}명 표시
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                            disabled={currentPage === 1}
+                            className="px-2.5 py-1 bg-white border border-[#DDD8CE] rounded-lg disabled:opacity-40 hover:bg-[#F3EFE9] transition-colors cursor-pointer"
+                          >
+                            이전
+                          </button>
+                          <span className="px-2 font-bold text-[#2C2B29]">
+                            {currentPage} / {totalPages}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                            disabled={currentPage === totalPages}
+                            className="px-2.5 py-1 bg-white border border-[#DDD8CE] rounded-lg disabled:opacity-40 hover:bg-[#F3EFE9] transition-colors cursor-pointer"
+                          >
+                            다음
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1911,6 +1829,402 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             </>
           )}
         </div>
+
+        {/* 회원 상세 관리 모달 (Master-Detail 구조: 회원 행 클릭 시 1:1 온디맨드 팝업) */}
+        {typeof document !== 'undefined' && createPortal(
+          <AnimatePresence>
+            {selectedUserForDetail && (
+              <div
+                className="fixed inset-0 z-[99999] flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-xs"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) {
+                    e.stopPropagation();
+                    setSelectedUserForDetail(null);
+                  }
+                }}
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-4xl bg-[#FAF9F5] border border-[#E7E5DF] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] text-left"
+                >
+                  {/* 상세 모달 헤더 */}
+                  <div className="p-5 sm:p-6 bg-white border-b border-[#E7E5DF] flex items-center justify-between shrink-0">
+                    <div className="flex items-center gap-3.5 min-w-0">
+                      <div className="w-12 h-12 rounded-2xl bg-[#FAF0EB] text-[#C46A40] border border-[#F1D3C6] font-bold text-lg flex items-center justify-center shrink-0">
+                        {(selectedUserForDetail.displayName || selectedUserForDetail.email || 'U')[0].toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-base sm:text-lg font-bold text-[#2C2B29] truncate">
+                            {selectedUserForDetail.displayName || '이름 없음'}
+                          </h3>
+                          {isAdminUser(selectedUserForDetail.email) && (
+                            <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-md border border-amber-200">
+                              최고관리자 (ADMIN)
+                            </span>
+                          )}
+                          <span className="px-2 py-0.5 bg-[#FAF0EB] text-[#C46A40] text-[10px] font-semibold rounded-md border border-[#F1D3C6]">
+                            UID: {selectedUserForDetail.uid.slice(0, 10)}...
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#78746D] font-mono mt-0.5 truncate select-all">
+                          {selectedUserForDetail.email || '이메일 없음'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedUserForDetail(null)}
+                        className="p-2 text-[#8C877D] hover:text-[#2C2B29] hover:bg-[#F3EFE9] rounded-xl transition-colors cursor-pointer"
+                        title="닫기"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 상세 모달 본문 (스크롤) */}
+                  <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6 custom-scrollbar text-xs">
+                    {/* 1. 결제 & 크레딧 종합 KPI 요약 카드 (4열) */}
+                    <div>
+                      <h4 className="text-xs font-bold text-[#6E6A63] uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                        <CreditCard className="w-4 h-4 text-[#C46A40]" />
+                        <span>결제 및 크레딧 종합 현황</span>
+                      </h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="p-4 bg-white rounded-2xl border border-[#E7E5DF] shadow-2xs">
+                          <span className="text-[10px] font-bold text-[#8C877D] uppercase">총 결제 누적 금액</span>
+                          <p className="text-lg font-bold font-serif text-[#C46A40] mt-0.5">
+                            {calculateTotalPaymentAmount(selectedUserForDetail.rechargeHistory).toLocaleString()}원
+                          </p>
+                          <span className="text-[10px] text-[#A39E94]">
+                            총 {(selectedUserForDetail.rechargeHistory || []).length}건 결제/충전
+                          </span>
+                        </div>
+
+                        <div className="p-4 bg-white rounded-2xl border border-[#E7E5DF] shadow-2xs">
+                          <span className="text-[10px] font-bold text-[#8C877D] uppercase">남은 AI 크레딧</span>
+                          <p className="text-lg font-bold font-serif text-[#2C2B29] mt-0.5">
+                            {((selectedUserForDetail.aiCredits?.paidRemaining || 0) + (selectedUserForDetail.aiCredits?.freeRemaining || 0)).toLocaleString()}회
+                          </p>
+                          <span className="text-[10px] text-[#A39E94]">
+                            유료 {selectedUserForDetail.aiCredits?.paidRemaining || 0} / 무료 {selectedUserForDetail.aiCredits?.freeRemaining || 0}
+                          </span>
+                        </div>
+
+                        <div className="p-4 bg-white rounded-2xl border border-[#E7E5DF] shadow-2xs">
+                          <span className="text-[10px] font-bold text-[#8C877D] uppercase">주석 클라우드 보관한도</span>
+                          <p className="text-lg font-bold font-serif text-indigo-700 mt-0.5">
+                            {(selectedUserForDetail.cloudCommentaryLimit || 0) >= 30000 
+                              ? '무제한(전권)' 
+                              : `${(selectedUserForDetail.cloudCommentaryLimit || 0).toLocaleString()}구절`}
+                          </p>
+                          <span className="text-[10px] text-[#A39E94]">
+                            현재 보관: {selectedUserForDetail.usedCloudCommentaryCount || 0}구절
+                          </span>
+                        </div>
+
+                        <div className="p-4 bg-white rounded-2xl border border-[#E7E5DF] shadow-2xs">
+                          <span className="text-[10px] font-bold text-[#8C877D] uppercase">앱 접속 현황</span>
+                          <p className="text-lg font-bold font-serif text-emerald-700 mt-0.5">
+                            총 {selectedUserForDetail.loginCount || 1}회 접속
+                          </p>
+                          <span className="text-[10px] text-[#A39E94]">
+                            최근: {selectedUserForDetail.lastLoginAt ? new Date(selectedUserForDetail.lastLoginAt).toLocaleDateString('ko-KR') : '-'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2. 결제 & 충전 히스토리 내역 (전체 목록) */}
+                    <div className="bg-white rounded-2xl border border-[#E7E5DF] p-4 sm:p-5 shadow-2xs">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="font-bold text-xs text-[#2C2B29] flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-[#C46A40]" />
+                          <span>상세 결제 및 충전 히스토리 ({(selectedUserForDetail.rechargeHistory || []).length}건)</span>
+                        </h4>
+                        <span className="text-[11px] text-[#8C877D]">
+                          총 결제 합계: <strong className="text-[#C46A40]">{calculateTotalPaymentAmount(selectedUserForDetail.rechargeHistory).toLocaleString()}원</strong>
+                        </span>
+                      </div>
+
+                      {(!selectedUserForDetail.rechargeHistory || selectedUserForDetail.rechargeHistory.length === 0) ? (
+                        <div className="py-8 text-center text-[#A39E94] bg-[#FAF9F5] rounded-xl border border-dashed border-[#DDD8CE]">
+                          <p>결제 및 충전 이력이 존재하지 않습니다.</p>
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto custom-scrollbar">
+                          <table className="w-full text-left border-collapse text-[11px]">
+                            <thead>
+                              <tr className="bg-[#FAF9F5] border-b border-[#E7E5DF] text-[#6E6A63]">
+                                <th className="py-2.5 px-3 font-bold">결제/충전 일시</th>
+                                <th className="py-2.5 px-3 font-bold">플랜 / 지급 사유</th>
+                                <th className="py-2.5 px-3 font-bold text-center">충전량</th>
+                                <th className="py-2.5 px-3 font-bold text-center">결제금액</th>
+                                <th className="py-2.5 px-3 font-bold text-center">유효기간</th>
+                                <th className="py-2.5 px-3 font-bold text-center">잔여량</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#EFECE6]">
+                              {selectedUserForDetail.rechargeHistory.map((item, idx) => {
+                                const anyItem = item as any;
+                                let itemPrice = anyItem.price;
+                                if (!itemPrice) {
+                                  const plan = (item.planName || '').toLowerCase();
+                                  if (plan.includes('관리자') || plan.includes('프로모션') || plan.includes('이벤트') || plan.includes('가입') || plan.includes('추천')) {
+                                    itemPrice = 0;
+                                  } else if (item.amount === 100 || plan.includes('베이직')) {
+                                    itemPrice = 9900;
+                                  } else if (item.amount === 300 || plan.includes('프로')) {
+                                    itemPrice = 24900;
+                                  } else if (item.amount === 1000 || plan.includes('프리미엄')) {
+                                    itemPrice = 69000;
+                                  } else if (plan.includes('300구절') || plan.includes('클라우드 300')) {
+                                    itemPrice = 3300;
+                                  } else if (plan.includes('1000구절') || plan.includes('클라우드 1000')) {
+                                    itemPrice = 9900;
+                                  } else if (plan.includes('무제한')) {
+                                    itemPrice = 29900;
+                                  } else {
+                                    itemPrice = 0;
+                                  }
+                                }
+
+                                return (
+                                  <tr key={item.id || idx} className="hover:bg-[#FAF0EB]/30 transition-colors">
+                                    <td className="py-2 px-3 text-[#5A564F] whitespace-nowrap">
+                                      {item.date ? new Date(item.date).toLocaleString('ko-KR', {
+                                        year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                                      }) : '-'}
+                                    </td>
+                                    <td className="py-2 px-3 font-medium text-[#2C2B29]">
+                                      {item.planName || '충전 플랜'}
+                                    </td>
+                                    <td className="py-2 px-3 text-center font-bold text-[#C46A40]">
+                                      +{item.amount}회
+                                    </td>
+                                    <td className="py-2 px-3 text-center font-semibold text-[#2C2B29]">
+                                      {itemPrice > 0 ? `${itemPrice.toLocaleString()}원` : <span className="text-emerald-600 font-normal">무료 지급</span>}
+                                    </td>
+                                    <td className="py-2 px-3 text-center text-[#78746D] whitespace-nowrap">
+                                      {item.expiresAt ? new Date(item.expiresAt).toLocaleDateString('ko-KR') : '365일'}
+                                    </td>
+                                    <td className="py-2 px-3 text-center font-mono text-[#5A564F]">
+                                      {item.remaining !== undefined ? `${item.remaining}회` : '-'}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 3. 접속 기기 세션 현황 */}
+                    <div className="bg-white rounded-2xl border border-[#E7E5DF] p-4 sm:p-5 shadow-2xs">
+                      <h4 className="font-bold text-xs text-[#2C2B29] flex items-center gap-2 mb-3">
+                        <Smartphone className="w-4 h-4 text-slate-700" />
+                        <span>접속 기기 세션 현황 (다중 기기 관리)</span>
+                      </h4>
+                      {(() => {
+                        const devices = (selectedUserForDetail.devices && selectedUserForDetail.devices.length > 0)
+                          ? selectedUserForDetail.devices
+                          : (selectedUserForDetail.deviceInfo ? [{ device: selectedUserForDetail.deviceInfo, lastLoginAt: selectedUserForDetail.lastLoginAt || Date.now(), loginCount: selectedUserForDetail.loginCount || 1 }] : []);
+
+                        if (devices.length === 0) {
+                          return <p className="text-xs text-[#8C877D]">기록된 접속 기기 정보가 없습니다.</p>;
+                        }
+
+                        return (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                            {devices.map((dev, idx) => (
+                              <div key={idx} className="p-3 bg-[#FAF9F5] border border-[#DDD8CE] rounded-xl flex flex-col gap-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-[#2C2B29] truncate">{dev.device}</span>
+                                  <span className="px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-[10px] font-bold shrink-0">
+                                    {dev.loginCount || 1}회
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-[#78746D]">
+                                  최근: {dev.lastLoginAt ? new Date(dev.lastLoginAt).toLocaleString('ko-KR', {
+                                    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                                  }) : '-'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* 4. 관리자 원격 권한 제어 & 지급 조치 도구 (하단) */}
+                    <div className="bg-white rounded-2xl border border-[#E7E5DF] p-4 sm:p-5 shadow-2xs space-y-4">
+                      <h4 className="font-bold text-xs text-[#2C2B29] flex items-center gap-2 border-b border-[#F0EBE1] pb-2.5">
+                        <ShieldCheck className="w-4 h-4 text-[#C46A40]" />
+                        <span>관리자 원격 권한 제어 및 즉시 지급</span>
+                      </h4>
+
+                      {/* 4-1. 특별 번역본 열람 권한 */}
+                      <div className="space-y-2">
+                        <label className="block text-[11px] font-bold text-[#5A564F]">
+                          특별 번역본 열람 권한 제어
+                        </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {/* 개역개정 토글 카드 */}
+                          {(() => {
+                            const isAllowed = (selectedUserForDetail.allowedVersions || []).includes('built-in-krv');
+                            return (
+                              <div 
+                                onClick={() => handleToggleVersion(selectedUserForDetail, 'built-in-krv', '개역개정')}
+                                className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                                  isAllowed ? 'bg-emerald-50/70 border-emerald-300' : 'bg-[#FAF9F5] border-[#DDD8CE] hover:bg-white'
+                                }`}
+                              >
+                                <div>
+                                  <span className="font-bold text-[#2C2B29] block">개역개정 (KRV)</span>
+                                  <span className="text-[10px] text-[#78746D]">표준 한글 성경 번역본</span>
+                                </div>
+                                <div className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
+                                  isAllowed ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-700'
+                                }`}>
+                                  {isAllowed ? '✓ 허용됨' : '차단/미제공'}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* NIV 토글 카드 */}
+                          {(() => {
+                            const isAllowed = (selectedUserForDetail.allowedVersions || []).includes('built-in-niv');
+                            return (
+                              <div 
+                                onClick={() => handleToggleVersion(selectedUserForDetail, 'built-in-niv', 'NIV 영어성경')}
+                                className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                                  isAllowed ? 'bg-blue-50/70 border-blue-300' : 'bg-[#FAF9F5] border-[#DDD8CE] hover:bg-white'
+                                }`}
+                              >
+                                <div>
+                                  <span className="font-bold text-[#2C2B29] block">NIV (New International)</span>
+                                  <span className="text-[10px] text-[#78746D]">표준 영어 성경 번역본</span>
+                                </div>
+                                <div className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
+                                  isAllowed ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
+                                }`}>
+                                  {isAllowed ? '✓ 허용됨' : '차단/미제공'}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      {/* 4-2. AI 연구 크레딧 즉시 지급 */}
+                      <div className="space-y-2 pt-2 border-t border-[#F0EBE1]">
+                        <label className="block text-[11px] font-bold text-[#5A564F]">
+                          AI 연구 크레딧 즉시 지급
+                        </label>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {[10, 50, 100].map(cnt => (
+                            <button
+                              key={cnt}
+                              type="button"
+                              onClick={() => handleAddCredits(selectedUserForDetail, cnt)}
+                              className="px-3.5 py-2 bg-[#FAF0EB] hover:bg-[#F5E2D8] border border-[#F1D3C6] text-[#C46A40] font-bold rounded-xl transition-all cursor-pointer text-xs"
+                            >
+                              +{cnt}회 충전
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => handleCustomAddCredits(selectedUserForDetail)}
+                            className="px-3.5 py-2 bg-white hover:bg-[#F3EFE9] border border-[#DDD8CE] text-[#5A564F] font-bold rounded-xl transition-all cursor-pointer text-xs"
+                          >
+                            직접 수량 입력
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 4-3. 주석 클라우드 보관 용량 수동 설정 */}
+                      <div className="space-y-2 pt-2 border-t border-[#F0EBE1]">
+                        <label className="block text-[11px] font-bold text-[#5A564F]">
+                          주석 클라우드 영구 보관 용량 추가
+                        </label>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleAddCloudCapacity(selectedUserForDetail, 300)}
+                            className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold rounded-xl transition-all cursor-pointer text-xs"
+                          >
+                            +300구절 영구보관
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAddCloudCapacity(selectedUserForDetail, 1000)}
+                            className="px-3.5 py-2 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 font-bold rounded-xl transition-all cursor-pointer text-xs"
+                          >
+                            +1,000구절 영구보관
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAddCloudCapacity(selectedUserForDetail, 31102)}
+                            className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold rounded-xl transition-all cursor-pointer text-xs"
+                          >
+                            ⭐ 무제한(성경 31,102절 전체)
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 4-4. 계정 관리 액션 */}
+                      <div className="flex items-center justify-between pt-3 border-t border-[#F0EBE1] flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSendPasswordReset(selectedUserForDetail)}
+                          className="px-3 py-1.5 bg-white border border-[#DDD8CE] hover:bg-[#F3EFE9] text-[#5A564F] rounded-lg font-semibold transition-all cursor-pointer text-xs flex items-center gap-1.5"
+                        >
+                          <KeyRound className="w-3.5 h-3.5 text-blue-600" />
+                          <span>비밀번호 재설정 이메일 발송</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const u = selectedUserForDetail;
+                            handleDeleteUser(u);
+                            setSelectedUserForDetail(null);
+                          }}
+                          className="px-3 py-1.5 bg-red-50 border border-red-200 hover:bg-red-100 text-red-600 rounded-lg font-semibold transition-all cursor-pointer text-xs flex items-center gap-1.5"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>회원 데이터 영구 삭제</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 상세 모달 푸터 */}
+                  <div className="p-4 bg-[#FAF9F5] border-t border-[#E7E5DF] flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedUserForDetail(null)}
+                      className="px-5 py-2 bg-[#2C2B29] hover:bg-black text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                    >
+                      확인 완료
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
 
         {/* 인앱 커스텀 확인 다이얼로그 (createPortal로 부모 transform 간섭 완전 차단 및 깜빡임 해결) */}
         {typeof document !== 'undefined' && createPortal(

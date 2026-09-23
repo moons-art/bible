@@ -11,11 +11,15 @@ export interface CommentaryHistoryItem {
   createdAt: number;
   expiresAt: number; // createdAt + 30일 (ms)
   data: AiCommentaryData;
+  storageType?: 'cloud' | 'local'; // 'cloud'는 서버 영구 보관, 'local'은 해당 기기 30일 보관
 }
 
 const STORAGE_KEY = 'nations_ai_commentary_history_v1';
 const RETENTION_PERIOD_MS = 30 * 24 * 60 * 60 * 1000; // 30일 (밀리초)
 const MAX_HISTORY_ITEMS = 30; // localStorage 5MB 초과 방지를 위한 최대 보관 개수
+
+// 동일 세션 내 syncLocalHistoryToCloud 중복 실행 방지 메모리 가드
+const syncedSessions = new Set<string>();
 
 // 30일 지난 만료 항목 자동 청소 및 현재 기록 목록 반환
 export function getCommentaryHistory(): CommentaryHistoryItem[] {
@@ -33,7 +37,10 @@ export function getCommentaryHistory(): CommentaryHistoryItem[] {
       if (item.id && (item.id.includes('_etymology') || item.id.includes('_passage'))) return false;
       if ((item as any).type && (item as any).type !== 'commentary') return false;
       return true;
-    });
+    }).map(item => ({
+      ...item,
+      storageType: item.storageType || 'local' as const
+    }));
 
     // 만료된 항목이나 부속 연구가 제거된 경우 스토리지 즉시 동기화
     if (validItems.length !== items.length) {
@@ -60,7 +67,7 @@ export function getCommentaryFromHistory(reference: string): AiCommentaryData | 
 }
 
 // 주석 분석 결과를 30일 보관용으로 저장 (최대 30개 및 용량 안전 가드)
-export function saveCommentaryToHistory(data: AiCommentaryData): void {
+export function saveCommentaryToHistory(data: AiCommentaryData, storageType: 'cloud' | 'local' = 'local'): void {
   try {
     const now = Date.now();
     const history = getCommentaryHistory();
@@ -79,6 +86,7 @@ export function saveCommentaryToHistory(data: AiCommentaryData): void {
       createdAt: now,
       expiresAt: now + RETENTION_PERIOD_MS,
       data,
+      storageType,
     };
 
     filtered.unshift(newItem);
@@ -152,11 +160,15 @@ export function getRemainingDays(expiresAt: number): number {
 
 // 주석 클라우드 구독 시, 기존 로컬 30일 보관 기록을 Firestore 클라우드로 자동 안전 동기화(이동/승격)
 export async function syncLocalHistoryToCloud(uid: string): Promise<number> {
+  // 세션당 1회만 실행하도록 무한 반복 원천 차단
+  if (syncedSessions.has(uid)) return 0;
+  syncedSessions.add(uid);
+
   try {
     const history = getCommentaryHistory();
     if (history.length === 0) return 0;
 
-    const { doc, getDoc, setDoc, updateDoc, increment } = await import('firebase/firestore');
+    const { doc, getDoc, setDoc, updateDoc, increment, collection, getDocs } = await import('firebase/firestore');
     const { db } = await import('../api/firebaseConfig');
 
     const userRef = doc(db, 'users', uid);
@@ -167,13 +179,16 @@ export async function syncLocalHistoryToCloud(uid: string): Promise<number> {
     const limit = profile.cloudCommentaryLimit || 0;
     if (limit <= 0) return 0; // 클라우드 구독 회원이 아니면 패스
 
+    // 기존 클라우드 문서 ID들을 1회의 getDocs로 수집하여 개별 getDoc 30회 폭증 방지
+    const cloudColRef = collection(db, 'users', uid, 'cloudCommentaries');
+    const existingSnap = await getDocs(cloudColRef);
+    const existingIds = new Set(existingSnap.docs.map(d => d.id));
+
     let syncedCount = 0;
     for (const item of history) {
       const docId = item.reference.replace(/\//g, '_').trim();
-      const cloudRef = doc(db, 'users', uid, 'cloudCommentaries', docId);
-      const existingSnap = await getDoc(cloudRef);
-
-      if (!existingSnap.exists()) {
+      if (!existingIds.has(docId)) {
+        const cloudRef = doc(db, 'users', uid, 'cloudCommentaries', docId);
         await setDoc(cloudRef, {
           ...item.data,
           reference: item.reference,
@@ -182,6 +197,7 @@ export async function syncLocalHistoryToCloud(uid: string): Promise<number> {
           type: 'commentary',
           syncedFromLocal: true,
         }, { merge: true });
+        existingIds.add(docId);
         syncedCount++;
       }
     }
@@ -190,7 +206,7 @@ export async function syncLocalHistoryToCloud(uid: string): Promise<number> {
       await updateDoc(userRef, {
         usedCloudCommentaryCount: increment(syncedCount)
       });
-      console.log(`[aiHistoryService] ☁️ 로컬 주석 기록 ${syncedCount}개가 클라우드로 자동 동기화되었습니다.`);
+      console.log(`[aiHistoryService] ☁️ 로컬 주석 기록 ${syncedCount}개가 클라우드로 안전하게 일괄 동기화되었습니다.`);
     }
 
     return syncedCount;
@@ -233,7 +249,8 @@ export async function fetchCloudCommentaryHistory(uid: string): Promise<Commenta
         scriptureText: data.scriptureText || '',
         createdAt: data.savedAt || Date.now(),
         expiresAt: Date.now() + 100 * 365 * 24 * 60 * 60 * 1000, // 클라우드 영구 보관 (100년)
-        data: data as any,
+        data: (data.data || data) as any,
+        storageType: 'cloud',
       });
     });
 
@@ -252,30 +269,18 @@ export async function fetchCloudCommentaryHistory(uid: string): Promise<Commenta
  */
 export async function getCloudCommentaryCount(uid: string): Promise<number> {
   try {
-    const { collection, getCountFromServer, query, where, doc, updateDoc, getDocs } = await import('firebase/firestore');
+    const { collection, getDocs } = await import('firebase/firestore');
     const { db } = await import('../api/firebaseConfig');
     const colRef = collection(db, 'users', uid, 'cloudCommentaries');
+    const snap = await getDocs(colRef);
     
-    // 1. type == 'commentary' 쿼리로 0초 만에 고속 집계
-    const q = query(colRef, where('type', '==', 'commentary'));
-    const snap = await getCountFromServer(q);
-    let count = snap.data().count;
-
-    // 2. 만약 과거 문서 중 type 필드가 누락된 경우를 대비한 안전 체크
-    if (count === 0) {
-      const allSnap = await getCountFromServer(colRef);
-      if (allSnap.data().count > 0) {
-        const docsSnap = await getDocs(colRef);
-        count = docsSnap.docs.filter(d => {
-          const dt = d.data();
-          return dt.type === 'commentary' || (!dt.type && !d.id.includes('_'));
-        }).length;
-      }
-    }
-
-    // 상위 유저 문서의 usedCloudCommentaryCount 필드도 순수 성경구절 주석 수로 백그라운드 자동 보정
-    const userRef = doc(db, 'users', uid);
-    updateDoc(userRef, { usedCloudCommentaryCount: count }).catch(() => {});
+    // 단어 심층 연구, 구절 신학 연구를 제외한 순수 성경 구절 주석 개수 집계
+    const count = snap.docs.filter(d => {
+      const dt = d.data();
+      if (dt.type && dt.type !== 'commentary') return false;
+      if (d.id.includes('_etymology') || d.id.includes('_passage')) return false;
+      return true;
+    }).length;
 
     return count;
   } catch (err) {
@@ -283,4 +288,30 @@ export async function getCloudCommentaryCount(uid: string): Promise<number> {
     return 0;
   }
 }
+
+/**
+ * AI 패널의 historyList와 100% 동일하게 로컬과 클라우드를 합산한 총 주석 개수를 계산
+ */
+export async function getTotalMergedCommentaryCount(uid?: string | null): Promise<number> {
+  const local = getCommentaryHistory();
+  if (!uid) {
+    return local.length;
+  }
+
+  try {
+    const cloudItems = await fetchCloudCommentaryHistory(uid);
+    if (!cloudItems || cloudItems.length === 0) {
+      return local.length;
+    }
+
+    const mergedMap = new Map<string, boolean>();
+    local.forEach(item => mergedMap.set(item.reference.trim(), true));
+    cloudItems.forEach(item => mergedMap.set(item.reference.trim(), true));
+    return mergedMap.size;
+  } catch (err) {
+    console.warn('[aiHistoryService] getTotalMergedCommentaryCount fallback:', err);
+    return local.length;
+  }
+}
+
 

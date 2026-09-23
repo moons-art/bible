@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: "AIzaSyA6hBoSPjoeYbxrEYfRB-HmFjoDFT0vahQ",
@@ -21,6 +21,9 @@ export const db = initializeFirestore(app, {
   })
 });
 
-// Initialize Auth
+// Initialize Auth with permanent local persistence (자동 로그인 보장)
 export const auth = getAuth(app);
+setPersistence(auth, browserLocalPersistence).catch((err) => {
+  console.warn('[firebaseConfig] Auth persistence set error:', err);
+});
 export const googleProvider = new GoogleAuthProvider();

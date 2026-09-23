@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Mail, Lock, Sparkles, CheckCircle2, AlertCircle, ArrowRight, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { X, Mail, Lock, Sparkles, CheckCircle2, AlertCircle, ArrowRight, KeyRound, Eye, EyeOff, ChevronDown, ChevronUp } from 'lucide-react';
 import { 
   signInWithPopup, 
   signInWithEmailAndPassword, 
@@ -20,6 +20,7 @@ interface AuthModalProps {
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const [tab, setTab] = useState<'login' | 'signup'>('login');
+  const [showEmailAuth, setShowEmailAuth] = useState(false);
   const [isResetMode, setIsResetMode] = useState(false);
   const [policyModal, setPolicyModal] = useState<{ isOpen: boolean; tab: PolicyModalType }>({
     isOpen: false,
@@ -255,239 +256,257 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             <span>Google 계정으로 계속하기</span>
           </button>
 
-          {/* Divider */}
-          <div className="relative flex items-center justify-center my-1">
+          {/* Divider & Toggle Button */}
+          <div className="relative flex items-center justify-center my-1.5">
             <div className="border-t border-[#E7E5DF] w-full" />
-            <span className="bg-[#FAF9F5] px-3 text-[11px] text-[#A39E94] shrink-0 font-sans">
-              또는 일반 이메일로 계속하기
-            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setShowEmailAuth(prev => !prev);
+                setErrorMsg(null);
+                setSuccessMsg(null);
+              }}
+              className="bg-[#FAF9F5] px-3 py-1 text-[11px] text-[#8C877D] hover:text-[#2C2B29] shrink-0 font-sans flex items-center gap-1.5 transition-colors cursor-pointer rounded-full border border-transparent hover:border-[#E7E5DF]"
+            >
+              <span>또는 일반 이메일로 계속하기</span>
+              {showEmailAuth ? (
+                <ChevronUp className="w-3.5 h-3.5 stroke-[2px]" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 stroke-[2px]" />
+              )}
+            </button>
           </div>
 
-          {/* 비밀번호 재설정 모드일 때 */}
-          {isResetMode ? (
-            <div className="flex flex-col gap-3 bg-white p-4 rounded-2xl border border-[#E7E5DF] shadow-2xs">
-              <div className="flex items-center gap-2 text-[#2C2B29]">
-                <KeyRound className="w-4 h-4 text-[#C46A40]" />
-                <h3 className="font-bold text-xs">비밀번호 재설정 이메일 발송</h3>
-              </div>
-              <p className="text-[11px] text-[#6E6A63] leading-relaxed">
-                가입하신 이메일 주소를 입력하시면 비밀번호를 안전하게 재설정할 수 있는 확인 메일을 보내드립니다.
-              </p>
-
-              {errorMsg && (
-                <div className="p-2.5 bg-red-50 border border-red-200 text-red-600 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{errorMsg}</span>
-                </div>
-              )}
-
-              {successMsg && (
-                <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>{successMsg}</span>
-                </div>
-              )}
-
-              <form onSubmit={handlePasswordReset} className="flex flex-col gap-3 mt-1">
-                <div>
-                  <label className="block text-[11px] font-semibold text-[#6E6A63] mb-1">이메일 주소</label>
-                  <div className="relative">
-                    <input
-                      type="email"
-                      placeholder="example@naver.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full bg-[#FAF9F5] border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2 pl-9 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94]"
-                      required
-                    />
-                    <Mail className="w-4 h-4 text-[#A39E94] absolute left-3 top-2.5 stroke-[1.6px]" />
+          {/* 일반 이메일 영역 (클릭 시 펼침/접힘) */}
+          {showEmailAuth && (
+            <div className="flex flex-col gap-3 pt-1">
+              {/* 비밀번호 재설정 모드일 때 */}
+              {isResetMode ? (
+                <div className="flex flex-col gap-3 bg-white p-4 rounded-2xl border border-[#E7E5DF] shadow-2xs">
+                  <div className="flex items-center gap-2 text-[#2C2B29]">
+                    <KeyRound className="w-4 h-4 text-[#C46A40]" />
+                    <h3 className="font-bold text-xs">비밀번호 재설정 이메일 발송</h3>
                   </div>
-                </div>
+                  <p className="text-[11px] text-[#6E6A63] leading-relaxed">
+                    가입하신 이메일 주소를 입력하시면 비밀번호를 안전하게 재설정할 수 있는 확인 메일을 보내드립니다.
+                  </p>
 
-                <div className="flex items-center gap-2 mt-1">
-                  <button
-                    type="submit"
-                    disabled={isLoading}
-                    className="flex-1 py-2 bg-[#C46A40] hover:bg-[#B55434] active:bg-[#9B4527] text-white rounded-xl text-xs font-semibold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
-                  >
-                    확인 메일 보내기
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setIsResetMode(false); setErrorMsg(null); setSuccessMsg(null); }}
-                    className="px-3 py-2 bg-[#F5F3ED] hover:bg-[#EAE4DA] text-[#6E6A63] rounded-xl text-xs font-medium transition-colors cursor-pointer"
-                  >
-                    로그인으로 돌아가기
-                  </button>
-                </div>
-              </form>
-            </div>
-          ) : (
-            <>
-              {/* 안내 문구: 로그인 후 무료 사용 안내 */}
-              <p className="text-[11px] text-[#78746D] text-center leading-relaxed font-medium">
-                로그인후 ai 주석을 제외한 모든 기능을 편하게 무료사용하실 수 있습니다.
-              </p>
+                  {errorMsg && (
+                    <div className="p-2.5 bg-red-50 border border-red-200 text-red-600 rounded-xl text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{errorMsg}</span>
+                    </div>
+                  )}
 
-              {/* 3. 이메일 탭 (로그인 / 회원가입) */}
-              <div className="flex bg-[#F0EEE6] p-1 rounded-xl">
-                <button
-                  onClick={() => { setTab('login'); setPasswordConfirm(''); setErrorMsg(null); setSuccessMsg(null); }}
-                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${tab === 'login' ? 'bg-white text-[#2C2B29] shadow-2xs' : 'text-[#8C877D] hover:text-[#2C2B29]'}`}
-                >
-                  로그인
-                </button>
-                <button
-                  onClick={() => { setTab('signup'); setPasswordConfirm(''); setErrorMsg(null); setSuccessMsg(null); }}
-                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${tab === 'signup' ? 'bg-white text-[#2C2B29] shadow-2xs' : 'text-[#8C877D] hover:text-[#2C2B29]'}`}
-                >
-                  간편 회원가입
-                </button>
-              </div>
+                  {successMsg && (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>{successMsg}</span>
+                    </div>
+                  )}
 
-              {/* Error Message */}
-              {errorMsg && (
-                <div className="p-2.5 bg-red-50 border border-red-200 text-red-600 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{errorMsg}</span>
-                </div>
-              )}
+                  <form onSubmit={handlePasswordReset} className="flex flex-col gap-3 mt-1">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#6E6A63] mb-1">이메일 주소</label>
+                      <div className="relative">
+                        <input
+                          type="email"
+                          placeholder="example@naver.com"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          className="w-full bg-[#FAF9F5] border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2 pl-9 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94]"
+                          required
+                        />
+                        <Mail className="w-4 h-4 text-[#A39E94] absolute left-3 top-2.5 stroke-[1.6px]" />
+                      </div>
+                    </div>
 
-              {/* 4. 이메일 폼 */}
-              <form onSubmit={handleEmailAuth} className="flex flex-col gap-3">
-                {tab === 'signup' && (
-                  <div>
-                    <label className="block text-[11px] font-semibold text-[#6E6A63] mb-1">
-                      이름 <span className="text-[#C46A40] font-bold">(반드시 본명)</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="홍길동 (본명 입력)"
-                      value={displayName}
-                      onChange={(e) => setDisplayName(e.target.value)}
-                      className="w-full bg-white border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94]"
-                      required
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-[#6E6A63] mb-1">이메일 주소</label>
-                  <div className="relative">
-                    <input
-                      type="email"
-                      placeholder="example@naver.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full bg-white border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2 pl-9 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94]"
-                      required
-                    />
-                    <Mail className="w-4 h-4 text-[#A39E94] absolute left-3 top-2.5 stroke-[1.6px]" />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[11px] font-semibold text-[#6E6A63]">
-                      비밀번호 {tab === 'signup' ? '(6자 이상)' : ''}
-                    </label>
-                    {tab === 'login' && (
+                    <div className="flex items-center gap-2 mt-1">
+                      <button
+                        type="submit"
+                        disabled={isLoading}
+                        className="flex-1 py-2 bg-[#C46A40] hover:bg-[#B55434] active:bg-[#9B4527] text-white rounded-xl text-xs font-semibold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                      >
+                        확인 메일 보내기
+                      </button>
                       <button
                         type="button"
-                        onClick={() => { setIsResetMode(true); setErrorMsg(null); setSuccessMsg(null); }}
-                        className="text-[10px] text-[#C46A40] hover:underline cursor-pointer"
+                        onClick={() => { setIsResetMode(false); setErrorMsg(null); setSuccessMsg(null); }}
+                        className="px-3 py-2 bg-[#F5F3ED] hover:bg-[#EAE4DA] text-[#6E6A63] rounded-xl text-xs font-medium transition-colors cursor-pointer"
                       >
-                        비밀번호를 잊으셨나요?
+                        로그인으로 돌아가기
                       </button>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="w-full bg-white border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2 pl-9 pr-10 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94]"
-                      required
-                    />
-                    <Lock className="w-4 h-4 text-[#A39E94] absolute left-3 top-2.5 stroke-[1.6px]" />
+                    </div>
+                  </form>
+                </div>
+              ) : (
+                <>
+                  {/* 안내 문구: 로그인 후 무료 사용 안내 */}
+                  <p className="text-[11px] text-[#78746D] text-center leading-relaxed font-medium">
+                    로그인후 ai 주석을 제외한 모든 기능을 편하게 무료사용하실 수 있습니다.
+                  </p>
+
+                  {/* 3. 이메일 탭 (로그인 / 회원가입) */}
+                  <div className="flex bg-[#F0EEE6] p-1 rounded-xl">
                     <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-2.5 text-[#A39E94] hover:text-[#2C2B29] transition-colors cursor-pointer"
-                      title={showPassword ? '비밀번호 숨기기' : '비밀번호 보기'}
+                      onClick={() => { setTab('login'); setPasswordConfirm(''); setErrorMsg(null); setSuccessMsg(null); }}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${tab === 'login' ? 'bg-white text-[#2C2B29] shadow-2xs' : 'text-[#8C877D] hover:text-[#2C2B29]'}`}
                     >
-                      {showPassword ? <EyeOff className="w-4 h-4 stroke-[1.6px]" /> : <Eye className="w-4 h-4 stroke-[1.6px]" />}
+                      로그인
+                    </button>
+                    <button
+                      onClick={() => { setTab('signup'); setPasswordConfirm(''); setErrorMsg(null); setSuccessMsg(null); }}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${tab === 'signup' ? 'bg-white text-[#2C2B29] shadow-2xs' : 'text-[#8C877D] hover:text-[#2C2B29]'}`}
+                    >
+                      간편 회원가입
                     </button>
                   </div>
-                </div>
 
-                {tab === 'signup' && (
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block text-[11px] font-semibold text-[#6E6A63]">비밀번호 확인</label>
-                      {password && passwordConfirm && (
-                        <span className={`text-[10px] font-medium ${password === passwordConfirm ? 'text-emerald-600' : 'text-red-500'}`}>
-                          {password === passwordConfirm ? '✓ 일치합니다' : '✕ 일치하지 않습니다'}
-                        </span>
-                      )}
+                  {/* Error Message */}
+                  {errorMsg && (
+                    <div className="p-2.5 bg-red-50 border border-red-200 text-red-600 rounded-xl text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{errorMsg}</span>
                     </div>
-                    <div className="relative">
-                      <input
-                        type={showPasswordConfirm ? 'text' : 'password'}
-                        placeholder="••••••••"
-                        value={passwordConfirm}
-                        onChange={(e) => setPasswordConfirm(e.target.value)}
-                        className={`w-full bg-white border rounded-xl px-3.5 py-2 pl-9 pr-10 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94] ${
-                          passwordConfirm && password !== passwordConfirm 
-                            ? 'border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-400/10' 
-                            : 'border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10'
-                        }`}
-                        required
-                      />
-                      <Lock className="w-4 h-4 text-[#A39E94] absolute left-3 top-2.5 stroke-[1.6px]" />
-                      <button
-                        type="button"
-                        onClick={() => setShowPasswordConfirm(!showPasswordConfirm)}
-                        className="absolute right-3 top-2.5 text-[#A39E94] hover:text-[#2C2B29] transition-colors cursor-pointer"
-                        title={showPasswordConfirm ? '비밀번호 숨기기' : '비밀번호 보기'}
-                      >
-                        {showPasswordConfirm ? <EyeOff className="w-4 h-4 stroke-[1.6px]" /> : <Eye className="w-4 h-4 stroke-[1.6px]" />}
-                      </button>
-                    </div>
-                  </div>
-                )}
+                  )}
 
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="mt-2 w-full py-2.5 bg-[#C46A40] hover:bg-[#B55434] active:bg-[#9B4527] text-white rounded-xl text-xs font-semibold transition-all shadow-2xs hover:shadow-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  {/* 4. 이메일 폼 */}
+                  <form onSubmit={handleEmailAuth} className="flex flex-col gap-3">
+                    {tab === 'signup' && (
+                      <div>
+                        <label className="block text-[11px] font-semibold text-[#6E6A63] mb-1">
+                          이름 <span className="text-[#C46A40] font-bold">(반드시 본명)</span>
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="홍길동 (본명 입력)"
+                          value={displayName}
+                          onChange={(e) => setDisplayName(e.target.value)}
+                          className="w-full bg-white border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94]"
+                          required
+                        />
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-[#6E6A63] mb-1">이메일 주소</label>
+                      <div className="relative">
+                        <input
+                          type="email"
+                          placeholder="example@naver.com"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          className="w-full bg-white border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2 pl-9 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94]"
+                          required
+                        />
+                        <Mail className="w-4 h-4 text-[#A39E94] absolute left-3 top-2.5 stroke-[1.6px]" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[11px] font-semibold text-[#6E6A63]">
+                          비밀번호 {tab === 'signup' ? '(6자 이상)' : ''}
+                        </label>
+                        {tab === 'login' && (
+                          <button
+                            type="button"
+                            onClick={() => { setIsResetMode(true); setErrorMsg(null); setSuccessMsg(null); }}
+                            className="text-[10px] text-[#C46A40] hover:underline cursor-pointer"
+                          >
+                            비밀번호를 잊으셨나요?
+                          </button>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          placeholder="••••••••"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          className="w-full bg-white border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2 pl-9 pr-10 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94]"
+                          required
+                        />
+                        <Lock className="w-4 h-4 text-[#A39E94] absolute left-3 top-2.5 stroke-[1.6px]" />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-2.5 text-[#A39E94] hover:text-[#2C2B29] transition-colors cursor-pointer"
+                          title={showPassword ? '비밀번호 숨기기' : '비밀번호 보기'}
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4 stroke-[1.6px]" /> : <Eye className="w-4 h-4 stroke-[1.6px]" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {tab === 'signup' && (
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-[11px] font-semibold text-[#6E6A63]">비밀번호 확인</label>
+                          {password && passwordConfirm && (
+                            <span className={`text-[10px] font-medium ${password === passwordConfirm ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {password === passwordConfirm ? '✓ 일치합니다' : '✕ 일치하지 않습니다'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="relative">
+                          <input
+                            type={showPasswordConfirm ? 'text' : 'password'}
+                            placeholder="••••••••"
+                            value={passwordConfirm}
+                            onChange={(e) => setPasswordConfirm(e.target.value)}
+                            className={`w-full bg-white border rounded-xl px-3.5 py-2 pl-9 pr-10 text-xs text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94] ${
+                              passwordConfirm && password !== passwordConfirm 
+                                ? 'border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-400/10' 
+                                : 'border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10'
+                            }`}
+                            required
+                          />
+                          <Lock className="w-4 h-4 text-[#A39E94] absolute left-3 top-2.5 stroke-[1.6px]" />
+                          <button
+                            type="button"
+                            onClick={() => setShowPasswordConfirm(!showPasswordConfirm)}
+                            className="absolute right-3 top-2.5 text-[#A39E94] hover:text-[#2C2B29] transition-colors cursor-pointer"
+                            title={showPasswordConfirm ? '비밀번호 숨기기' : '비밀번호 보기'}
+                          >
+                            {showPasswordConfirm ? <EyeOff className="w-4 h-4 stroke-[1.6px]" /> : <Eye className="w-4 h-4 stroke-[1.6px]" />}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="mt-2 w-full py-2.5 bg-[#C46A40] hover:bg-[#B55434] active:bg-[#9B4527] text-white rounded-xl text-xs font-semibold transition-all shadow-2xs hover:shadow-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <span>{tab === 'login' ? '이메일로 로그인' : '가입 완료하기'}</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </form>
+                </>
+              )}
+
+              {/* 소셜 슬롯 (카카오 / 네이버 안내) */}
+              <div className="pt-2 border-t border-[#E7E5DF] flex items-center justify-center gap-3">
+                <span className="text-[11px] text-[#A39E94]">소셜 간편로그인:</span>
+                <button 
+                  type="button"
+                  onClick={() => alert('카카오 로그인은 사업자 검수 후 정식 오픈될 예정입니다. 구글 또는 이메일 로그인을 이용해주세요!')}
+                  className="px-2.5 py-1 bg-[#FEE500] hover:bg-[#FDD800] text-[#3C1E1E] rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
                 >
-                  <span>{tab === 'login' ? '이메일로 로그인' : '가입 완료하기'}</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  카카오톡
                 </button>
-              </form>
-            </>
+                <button 
+                  type="button"
+                  onClick={() => alert('네이버 로그인은 사업자 검수 후 정식 오픈될 예정입니다. 구글 또는 이메일 로그인을 이용해주세요!')}
+                  className="px-2.5 py-1 bg-[#03C75A] hover:bg-[#02B350] text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                >
+                  네이버
+                </button>
+              </div>
+            </div>
           )}
-
-          {/* 소셜 슬롯 (카카오 / 네이버 안내) */}
-          <div className="pt-2 border-t border-[#E7E5DF] flex items-center justify-center gap-3">
-            <span className="text-[11px] text-[#A39E94]">소셜 간편로그인:</span>
-            <button 
-              type="button"
-              onClick={() => alert('카카오 로그인은 사업자 검수 후 정식 오픈될 예정입니다. 구글 또는 이메일 로그인을 이용해주세요!')}
-              className="px-2.5 py-1 bg-[#FEE500] hover:bg-[#FDD800] text-[#3C1E1E] rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-            >
-              카카오톡
-            </button>
-            <button 
-              type="button"
-              onClick={() => alert('네이버 로그인은 사업자 검수 후 정식 오픈될 예정입니다. 구글 또는 이메일 로그인을 이용해주세요!')}
-              className="px-2.5 py-1 bg-[#03C75A] hover:bg-[#02B350] text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-            >
-              네이버
-            </button>
-          </div>
 
           {/* 법적 고지: 서비스 이용약관 및 개인정보 처리방침 동의 안내 (스토어 심사 및 법적 요건 완벽 충족) */}
           <div className="pt-2.5 border-t border-[#E7E5DF] text-center">

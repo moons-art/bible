@@ -3,6 +3,8 @@ import type { BibleVersion } from '../types/bible';
 
 export type CopyMode = 'default' | 'niv+krv' | 'all';
 
+export type CopyMultiOption = 'kr' | 'en' | 'kr+en' | 'all';
+
 export interface BibleContextType {
   versions: BibleVersion[];
   selectedVersionIds: string[];
@@ -10,6 +12,12 @@ export interface BibleContextType {
   setLineHeight: (val: number) => void;
   copyMode: CopyMode;
   showVersionInCopy: boolean;
+  copyMultiOption: CopyMultiOption;
+  setCopyMultiOption: (option: CopyMultiOption) => void;
+  mainKrVersionId: string;
+  setMainKrVersionId: (id: string) => void;
+  mainEnVersionId: string;
+  setMainEnVersionId: (id: string) => void;
   addVersion: (version: BibleVersion) => void;
   removeVersion: (id: string) => void;
   renameVersion: (id: string, newName: string) => void;

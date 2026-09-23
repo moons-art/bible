@@ -3,7 +3,16 @@ import { db, auth } from '../api/firebaseConfig';
 
 const lastLogTimes: Record<string, number> = {};
 
+// 찬송가 잔재 기능 및 단순 UI 조작 액션은 Firestore 쓰기 대상에서 제외 (쓰기 할당량 보호)
+const IGNORED_ACTIONS = ['콘티', '뷰어', '앨범', '악보', '찬송가', 'conti', 'viewer'];
+
 export const logActivity = async (action: string, details?: string, customUser?: { email?: string; name?: string }) => {
+  // 찬송가 잔재 및 단순 화면 전환 액션은 DB 쓰기 없이 안전하게 조기 반환
+  const lowerAction = (action || '').toLowerCase();
+  if (IGNORED_ACTIONS.some(keyword => lowerAction.includes(keyword))) {
+    return;
+  }
+
   const now = Date.now();
   // 중복 로깅 방지: 같은 액션은 3초 이내에 다시 기록하지 않음
   if (lastLogTimes[action] && now - lastLogTimes[action] < 3000) {

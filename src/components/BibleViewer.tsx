@@ -136,13 +136,92 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
   const scrollContainerRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [selectedVerses, setSelectedVerses] = useState<Set<number>>(new Set());
   
-  const { copyMode, versions, showVersionInCopy, verseData, setVerseData, showAnnotations, setShowAnnotations } = useBible();
+  const { 
+    copyMode, 
+    versions, 
+    showVersionInCopy, 
+    copyMultiOption, 
+    mainKrVersionId, 
+    mainEnVersionId, 
+    verseData, 
+    setVerseData, 
+    showAnnotations, 
+    setShowAnnotations 
+  } = useBible();
 
   const [popups, setPopups] = useState<PopupState[]>([]);
   const [topZIndex, setTopZIndex] = useState(() => {
     window.__topZIndex = window.__topZIndex || 10000;
     return window.__topZIndex;
   });
+
+  const handleCopy = async () => {
+    if (selectedVerses.size === 0) return;
+    const sortedVerses = Array.from(selectedVerses).sort((a: number, b: number) => a - b);
+    let fullText = "";
+
+    // 1. 복사할 대상 번역본 목록 결정 (사용자의 복사설정 적용)
+    let versionsToCopy: BibleVersion[] = [];
+
+    const krVersion = versions.find(v => v.id === mainKrVersionId) 
+      || versions.find(v => /[가-힣]/.test(v.name) || !/[a-zA-Z]/.test(v.name)) 
+      || selectedVersions[0];
+
+    const enVersion = versions.find(v => v.id === mainEnVersionId) 
+      || versions.find(v => /[a-zA-Z]/.test(v.name)) 
+      || versions.find(v => v.id.toLowerCase().includes('eng') || v.name.toLowerCase().includes('niv'));
+
+    if (copyMultiOption === 'kr') {
+      if (krVersion) versionsToCopy = [krVersion];
+    } else if (copyMultiOption === 'en') {
+      if (enVersion) versionsToCopy = [enVersion];
+    } else if (copyMultiOption === 'kr+en') {
+      if (krVersion) versionsToCopy.push(krVersion);
+      if (enVersion && enVersion.id !== krVersion?.id) versionsToCopy.push(enVersion);
+    } else if (copyMultiOption === 'all') {
+      versionsToCopy = selectedVersions.length > 0 ? selectedVersions : versions;
+    }
+
+    // fallback: 지정된 게 없으면 현재 선택된 번역본 사용
+    if (versionsToCopy.length === 0) {
+      versionsToCopy = selectedVersions.length > 0 ? [selectedVersions[0]] : (versions.length > 0 ? [versions[0]] : []);
+    }
+
+    // 2. 결정된 각 번역본에 대해 텍스트 조합
+    versionsToCopy.forEach((version) => {
+      const targetVerses = version.verses.filter((v: Verse) => 
+        selectedVerses.has(v.verse) && v.bookId === currentBookId && v.chapter === currentChapter
+      ).sort((a: Verse, b: Verse) => a.verse - b.verse);
+
+      if (targetVerses.length === 0) return;
+
+      const bookName = targetVerses[0].bookName;
+      const chapter = targetVerses[0].chapter;
+      const versionLabel = showVersionInCopy ? ` (${version.name})` : "";
+      
+      const minVerse = sortedVerses[0];
+      const maxVerse = sortedVerses[sortedVerses.length - 1];
+
+      if (selectedVerses.size === 1) {
+        const v = targetVerses[0];
+        fullText += `[${bookName} ${chapter}:${v.verse}] ${v.content}${versionLabel}\n`;
+      } else {
+        const range = minVerse === maxVerse ? `${minVerse}` : `${minVerse}-${maxVerse}`;
+        fullText += `[${bookName} ${chapter}:${range}]${versionLabel}\n`;
+        targetVerses.forEach((v: Verse) => {
+          fullText += `${v.verse}. ${v.content}\n`;
+        });
+        fullText += "\n";
+      }
+    });
+
+    try {
+      await navigator.clipboard.writeText(fullText.trim());
+      setSelectedVerses(new Set());
+    } catch (err) {
+      console.error("Failed to copy text: ", err);
+    }
+  };
 
   const [fontSizes, setFontSizes] = useState(() => {
     try {
@@ -202,6 +281,10 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
   }, []);
 
 
+  const isSyncingRef = useRef(false);
+  const lastScrolledIndexRef = useRef<number | null>(null);
+  const lastScrolledKeyRef = useRef<string | null>(null);
+
   const displayData = useMemo(() => {
     return selectedVersions.map(version => {
       const filtered = version.verses.filter(v => 
@@ -216,34 +299,51 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
   }, [selectedVersions, currentBookId, currentChapter]);
 
   useEffect(() => {
+    const currentNavKey = `${currentBookId}_${currentChapter}_${highlightVerse || ''}`;
+    
+    // 이미 해당 장/구절로 스크롤을 완료한 경우, 다른 구절 클릭이나 컴포넌트 재렌더링 시 재스크롤 방지
+    if (lastScrolledKeyRef.current === currentNavKey) {
+      return;
+    }
+
     if (highlightVerse) {
+      let isUnlockedTimeout: any = null;
+
       const doScroll = () => {
+        // 자동 스크롤 중에는 사용자의 scroll 이벤트 동기화 처리가 간섭하지 않도록 잠금
+        isSyncingRef.current = true;
+
         scrollContainerRefs.current.forEach((container: HTMLDivElement | null) => {
           if (!container) return;
           const verseElement = container.querySelector(`[data-verse="${highlightVerse}"]`) as HTMLElement;
           if (verseElement) {
-            // 컨테이너 내부 상대 위치를 계산하여 상단 50px 여백을 두고 정확히 스크롤
-            const containerRect = container.getBoundingClientRect();
-            const verseRect = verseElement.getBoundingClientRect();
-            const relativeOffset = verseRect.top - containerRect.top + container.scrollTop;
-            
-            // 화면 상단에서 50px 아래에 위치하도록 스크롤 (화면 아래에 있던 구절이 위로 부드럽게 올라옴)
-            const targetTop = Math.max(0, relativeOffset - 50);
+            // verseElement.offsetTop을 활용하여 컨테이너 상단으로부터의 정확한 절대 위치 계산
+            const targetTop = Math.max(0, verseElement.offsetTop - 50);
             container.scrollTo({ top: targetTop, behavior: 'smooth' });
-
-            // fallback scrollIntoView
-            try {
-              verseElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            } catch (e) {}
           }
         });
+
+        lastScrolledKeyRef.current = currentNavKey;
+
+        if (isUnlockedTimeout) clearTimeout(isUnlockedTimeout);
+        isUnlockedTimeout = setTimeout(() => {
+          isSyncingRef.current = false;
+        }, 500);
       };
       
-      const t1 = setTimeout(doScroll, 40);
-      const t2 = setTimeout(doScroll, 180);
-      const t3 = setTimeout(doScroll, 450); // 레이아웃 전환 및 렌더링 딜레이 보정
+      const t1 = setTimeout(doScroll, 50);
+      const t2 = setTimeout(doScroll, 200);
+      const t3 = setTimeout(doScroll, 450); // 레이아웃 전환 및 폰트 렌더링 딜레이 보정
       
-      return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+      return () => { 
+        clearTimeout(t1); 
+        clearTimeout(t2); 
+        clearTimeout(t3); 
+        if (isUnlockedTimeout) clearTimeout(isUnlockedTimeout);
+        isSyncingRef.current = false;
+      };
+    } else {
+      lastScrolledKeyRef.current = currentNavKey;
     }
   }, [highlightVerse, currentBookId, currentChapter, selectedVersions]);
 
@@ -267,96 +367,7 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
 
   
 
-  const handleAdvancedCopy = async () => {
-    if (selectedVerses.size === 0) return;
-    const sortedVerses = Array.from(selectedVerses).sort((a: number, b: number) => a - b);
-    let fullText = "";
 
-    let versionsToCopy: BibleVersion[] = [];
-    if (copyMode === 'niv+krv') {
-      const krv = versions.find(v => v.name.includes('개역개정'));
-      const niv = versions.find(v => v.name.toLowerCase().includes('niv'));
-      if (krv) versionsToCopy.push(krv);
-      if (niv) versionsToCopy.push(niv);
-      if (versionsToCopy.length === 0 && selectedVersions.length > 0) versionsToCopy = [selectedVersions[0]];
-    } else {
-      versionsToCopy = selectedVersions;
-    }
-
-    versionsToCopy.forEach((version) => {
-      const targetVerses = version.verses.filter((v: Verse) => 
-        selectedVerses.has(v.verse) && v.bookId === currentBookId && v.chapter === currentChapter
-      ).sort((a: Verse, b: Verse) => a.verse - b.verse);
-
-      if (targetVerses.length === 0) return;
-
-      const bookName = targetVerses[0].bookName;
-      const chapter = targetVerses[0].chapter;
-      const versionLabel = showVersionInCopy ? `(${version.name})` : "";
-      
-      const minVerse = sortedVerses[0];
-      const maxVerse = sortedVerses[sortedVerses.length - 1];
-
-      if (selectedVerses.size === 1) {
-        const v = targetVerses[0];
-        const labelStr = versionLabel ? ` ${versionLabel}` : "";
-        fullText += `[${bookName} ${chapter}:${v.verse}] ${v.content}${labelStr}\n`;
-      } else {
-        const range = minVerse === maxVerse ? `${minVerse}` : `${minVerse}-${maxVerse}`;
-        const labelStr = versionLabel ? ` ${versionLabel}` : "";
-        fullText += `[${bookName} ${chapter}:${range}]${labelStr}\n`;
-        targetVerses.forEach((v: Verse) => {
-          fullText += `${v.verse}. ${v.content}\n`;
-        });
-        fullText += "\n";
-      }
-    });
-
-    try {
-      await navigator.clipboard.writeText(fullText.trim());
-      setSelectedVerses(new Set());
-    } catch (err) {
-      console.error("Failed to copy text: ", err);
-    }
-  };
-
-  const handleCopy = async () => {
-    if (selectedVerses.size === 0) return;
-    let fullText = "";
-    const sortedVerses = Array.from(selectedVerses).sort((a,b)=>a-b);
-    const minVerse = sortedVerses[0];
-    const maxVerse = sortedVerses[sortedVerses.length - 1];
-
-    const version = selectedVersions[0];
-    if (!version) return;
-
-    const targetVerses = version.verses.filter((v: Verse) => 
-      selectedVerses.has(v.verse) && v.bookId === currentBookId && v.chapter === currentChapter
-    ).sort((a: Verse, b: Verse) => a.verse - b.verse);
-
-    if (targetVerses.length > 0) {
-      const bookName = targetVerses[0].bookName;
-      const chapter = targetVerses[0].chapter;
-      
-      if (selectedVerses.size === 1) {
-        fullText = `[${bookName} ${chapter}:${minVerse}] ${targetVerses[0].content}`;
-      } else {
-        const range = minVerse === maxVerse ? `${minVerse}` : `${minVerse}-${maxVerse}`;
-        fullText += `[${bookName} ${chapter}:${range}]\n`;
-        targetVerses.forEach((v: Verse) => {
-          fullText += `${v.verse}. ${v.content}\n`;
-        });
-      }
-    }
-
-    try {
-      await navigator.clipboard.writeText(fullText.trim());
-      setSelectedVerses(new Set());
-    } catch (err) {}
-  };
-
-  const isSyncingRef = useRef(false);
-  const lastScrolledIndexRef = useRef<number | null>(null);
 
   const handleScroll = (idx: number, e: React.UIEvent<HTMLDivElement>) => {
     if (isSyncingRef.current) return;
@@ -479,7 +490,7 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
               
               <div className="flex items-center gap-1">
                 <button 
-                  onClick={() => copyMode === 'default' ? handleCopy() : handleAdvancedCopy()}
+                  onClick={handleCopy}
                   className="flex items-center gap-1 px-3 py-1.5 hover:bg-[#3D3B38] rounded-xl transition-colors text-xs font-semibold whitespace-nowrap shrink-0 text-white"
                 >
                   <Copy className="w-3.5 h-3.5 stroke-[1.5px] text-[#A3A19B]" /> 복사

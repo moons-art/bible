@@ -127,7 +127,7 @@ export function useAiUsage() {
   }, [currentUid]);
 
   const remainingDaysText = useMemo(() => {
-    if (!isLoggedIn) return '로그인 필요';
+    if (!isLoggedIn) return '-';
     return getRemainingDaysText();
   }, [isLoggedIn, usageState]);
 
