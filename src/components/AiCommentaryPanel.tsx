@@ -22,11 +22,13 @@ import {
 } from '../services/geminiCommentaryService';
 import { 
   getCommentaryHistory, 
+  fetchCloudCommentaryHistory,
   deleteCommentaryHistoryItem, 
   clearAllCommentaryHistory, 
   getRemainingDays, 
   type CommentaryHistoryItem 
 } from '../services/aiHistoryService';
+import { isBibleReferenceMatch, getBibleReferenceMatchScore, parseBibleReference } from '../utils/referenceParser';
 import { useAiUsage } from '../hooks/useAiUsage';
 
 // 클로드 사이드바 스타일의 미니멀 4-Point 스파클 아이콘
@@ -93,17 +95,36 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   const [visibleHistoryCount, setVisibleHistoryCount] = useState<number>(20);
   const [expandedBooks, setExpandedBooks] = useState<Record<string, boolean>>({});
 
-  // 검색어 필터링된 기록 목록
+  // 검색어 필터링된 기록 목록 (스마트 구절 인식 지원: 마 1 6, 마태 1:6, 창 1 2 등 0초 최상위 정렬)
   const filteredHistory = React.useMemo(() => {
-    const q = historySearchQuery.trim().toLowerCase();
-    if (!q) return historyList;
-    return historyList.filter(item => {
-      const matchRef = item.reference.toLowerCase().includes(q);
-      const matchBook = (item.bookName || '').toLowerCase().includes(q);
-      const matchText = (item.scriptureText || '').toLowerCase().includes(q);
-      const matchSummary = (item.data?.summary || '').toLowerCase().includes(q);
-      return matchRef || matchBook || matchText || matchSummary;
-    });
+    const rawQ = historySearchQuery.trim();
+    if (!rawQ) return historyList;
+    const q = rawQ.toLowerCase();
+
+    return historyList
+      .map(item => {
+        let score = 0;
+        const vKey = item.bookId && item.chapter && item.verse ? `${item.bookId}_${item.chapter}_${item.verse}` : '';
+        
+        // 1) 스마트 구절 매칭 점수 (4: 권+장+절 일치, 3: 권+장 일치, 2: 권 일치)
+        if (vKey) {
+          const s = getBibleReferenceMatchScore(rawQ, vKey, item.scriptureText || '');
+          score = Math.max(score, s);
+        } else if (isBibleReferenceMatch(rawQ, item.reference)) {
+          score = Math.max(score, 4);
+        }
+
+        // 2) 텍스트 매칭
+        if (item.reference.toLowerCase().includes(q)) score = Math.max(score, 2);
+        if ((item.bookName || '').toLowerCase().includes(q)) score = Math.max(score, 2);
+        if ((item.scriptureText || '').toLowerCase().includes(q)) score = Math.max(score, 1);
+        if ((item.data?.summary || '').toLowerCase().includes(q)) score = Math.max(score, 1);
+
+        return { item, score };
+      })
+      .filter(entry => entry.score > 0)
+      .sort((a, b) => b.score - a.score || b.item.timestamp - a.item.timestamp)
+      .map(entry => entry.item);
   }, [historyList, historySearchQuery]);
 
   // 권별 그룹화
@@ -223,9 +244,29 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   const [isPassageTheologyOpen, setIsPassageTheologyOpen] = useState(false);
   const [copiedPassageTheology, setCopiedPassageTheology] = useState(false);
 
-  // 30일간 로컬 기기 보관 기록 로드
-  const loadHistory = () => {
-    setHistoryList(getCommentaryHistory());
+  // 30일간 로컬 기기 보관 기록 및 클라우드 주석 동기화 로드
+  const loadHistory = async () => {
+    const local = getCommentaryHistory();
+    setHistoryList(local);
+
+    // 로그인된 회원의 경우 Firestore 클라우드에 보관된 주석들도 실시간 병합 복원
+    if (auth.currentUser) {
+      try {
+        const cloudItems = await fetchCloudCommentaryHistory(auth.currentUser.uid);
+        if (cloudItems.length > 0) {
+          const mergedMap = new Map<string, CommentaryHistoryItem>();
+          // 로컬 먼저 추가
+          local.forEach(item => mergedMap.set(item.reference.trim(), item));
+          // 클라우드 아이템 병합
+          cloudItems.forEach(item => mergedMap.set(item.reference.trim(), item));
+
+          const merged = Array.from(mergedMap.values()).sort((a, b) => b.createdAt - a.createdAt);
+          setHistoryList(merged);
+        }
+      } catch (e) {
+        console.warn('[AiCommentaryPanel] Failed to sync cloud history:', e);
+      }
+    }
   };
 
   // 단어 심층 연구 실행 핸들러 (어원·용례·빈도수·신구약 대조 - 1회 차감)
@@ -1491,14 +1532,14 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   /* [권별보기]: 성경 권(책)별 아코디언 그룹화 */
                   <div className="space-y-2">
                     {Object.entries(groupedByBook).map(([bookName, bookItems]) => {
-                      const isExpanded = expandedBooks[bookName] !== false; // 기본 펼침 상태
+                      const isExpanded = !!expandedBooks[bookName]; // 기본 닫힌 상태
                       return (
                         <div key={bookName} className="border border-[#E5E0D8] rounded-xl bg-white overflow-hidden shadow-2xs">
                           {/* 권 헤더 */}
                           <button
                             type="button"
                             onClick={() => setExpandedBooks(prev => ({ ...prev, [bookName]: !isExpanded }))}
-                            className="w-full p-2.5 px-3 bg-[#FAF9F5] hover:bg-[#F3EFE9] transition-colors flex items-center justify-between text-left cursor-pointer border-b border-[#EFECE6]"
+                            className={`w-full p-2.5 px-3 bg-[#FAF9F5] hover:bg-[#F3EFE9] transition-colors flex items-center justify-between text-left cursor-pointer ${isExpanded ? 'border-b border-[#EFECE6]' : ''}`}
                           >
                             <div className="flex items-center gap-2">
                               <BookOpen className="w-3.5 h-3.5 text-[#C46A40] stroke-[1.8]" />

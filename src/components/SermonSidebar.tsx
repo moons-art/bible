@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileEdit, Plus, Calendar, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers } from 'lucide-react';
+import { X, FileEdit, Plus, Calendar, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers, BookOpen, Folder, FolderOpen } from 'lucide-react';
 import { db, auth } from '../api/firebaseConfig';
 import { doc, collection, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
+import { BIBLE_LIST } from '../constants/bibleMeta';
+import { extractBibleBookFromText, parseBibleReference, isBibleReferenceMatch } from '../utils/referenceParser';
 
 
 interface Sermon {
@@ -267,7 +269,73 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     };
   }, [isResizing, dockPosition, onSidebarWidthChange, onSidebarHeightChange]);
 
-  const filteredSermons = sermons.filter(s => s.title.toLowerCase().includes(searchQuery.toLowerCase()));
+  // 목록 보기 모드: 최신순 vs 권별 모아보기
+  const [listTab, setListTab] = useState<'recent' | 'byBook'>('recent');
+  const [expandedBooks, setExpandedBooks] = useState<Record<string, boolean>>({});
+
+  const toggleBookExpand = (bookId: string) => {
+    setExpandedBooks(prev => ({ ...prev, [bookId]: !prev[bookId] }));
+  };
+
+  // 설교 제목에서 성경 본문 스마트 추출 및 매핑
+  const sermonsWithBook = useMemo(() => {
+    return sermons.map(s => {
+      const extracted = extractBibleBookFromText(s.title);
+      return {
+        ...s,
+        extractedBook: extracted, // { bookId, bookName, parsedRef }
+      };
+    });
+  }, [sermons]);
+
+  // 스마트 성경 구절 인식 검색 및 최상위 정렬
+  const filteredSermons = useMemo(() => {
+    if (!searchQuery.trim()) return sermonsWithBook;
+    const q = searchQuery.trim().toLowerCase();
+    const parsedQuery = parseBibleReference(searchQuery.trim());
+
+    return sermonsWithBook
+      .map(s => {
+        let score = 0;
+        // 1) 제목이나 본문 텍스트에 포함
+        if (s.title.toLowerCase().includes(q)) score = Math.max(score, 1);
+        if (s.content && s.content.toLowerCase().includes(q)) score = Math.max(score, 1);
+
+        // 2) 성경 구절 스마트 매칭 (예: '마 1 6', '마태 1:6', '롬 8:28')
+        if (parsedQuery && s.extractedBook) {
+          if (s.extractedBook.bookId === parsedQuery.bookId) {
+            score = Math.max(score, 2);
+            // 만약 구절까지 정확히 일치하거나 매칭되면 점수 4 (0초 만에 최상위)
+            if (s.extractedBook.parsedRef && isBibleReferenceMatch(searchQuery.trim(), s.extractedBook.parsedRef)) {
+              score = Math.max(score, 4);
+            }
+          }
+        }
+        return { item: s, score };
+      })
+      .filter(entry => entry.score > 0)
+      .sort((a, b) => b.score - a.score || new Date(b.item.date).getTime() - new Date(a.item.date).getTime())
+      .map(entry => entry.item);
+  }, [sermonsWithBook, searchQuery]);
+
+  // 권별 보기용 그룹화 (BIBLE_LIST 기준 66권 + 기타)
+  const bookGroups = useMemo(() => {
+    const map: Record<string, typeof filteredSermons> = {};
+    const etcList: typeof filteredSermons = [];
+
+    filteredSermons.forEach(s => {
+      if (s.extractedBook?.bookId) {
+        if (!map[s.extractedBook.bookId]) {
+          map[s.extractedBook.bookId] = [];
+        }
+        map[s.extractedBook.bookId].push(s);
+      } else {
+        etcList.push(s);
+      }
+    });
+
+    return { map, etcList };
+  }, [filteredSermons]);
 
   const openEditor = (id: string) => {
     setActiveSermonId(id);
@@ -599,53 +667,235 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
           {view === 'list' ? (
             // --- LIST VIEW ---
             <div className="flex-1 flex flex-col min-h-0 bg-[#FAF9F5]">
-              <div className="p-3.5 border-b border-[#E7E5DF] bg-white shrink-0">
+              {/* Search Bar */}
+              <div className="p-3.5 border-b border-[#E7E5DF] bg-white shrink-0 space-y-2.5">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#A3A19B] stroke-[1.5px]" />
                   <input 
                     type="text" 
-                    placeholder="설교문 제목 검색..." 
+                    placeholder="설교 제목, 본문(예: 마 1 6, 롬 8:28)..." 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-[#FAF9F5] border border-[#E7E5DF] rounded-xl pl-9 pr-3 py-1.5 text-xs text-[#2C2B29] outline-none focus:bg-white focus:border-[#C96442] focus:ring-2 focus:ring-[#C96442]/10 transition-all placeholder:text-[#A3A19B]"
+                    className="w-full bg-[#FAF9F5] border border-[#E7E5DF] rounded-xl pl-9 pr-8 py-2 text-xs text-[#2C2B29] outline-none focus:bg-white focus:border-[#C96442] focus:ring-2 focus:ring-[#C96442]/10 transition-all placeholder:text-[#A3A19B]"
                   />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#A3A19B] hover:text-[#2C2B29] p-0.5"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Tab Switcher: 최신순 vs 성경 66권 권별 */}
+                <div className="flex bg-[#F5F3ED] p-1 rounded-xl gap-1">
+                  <button
+                    onClick={() => setListTab('recent')}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                      listTab === 'recent'
+                        ? 'bg-white text-[#C96442] shadow-xs'
+                        : 'text-[#6A6864] hover:text-[#2C2B29]'
+                    }`}
+                  >
+                    <span>최신순</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#FAF0EB] text-[#C96442]">
+                      {filteredSermons.length}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setListTab('byBook')}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                      listTab === 'byBook'
+                        ? 'bg-white text-[#C96442] shadow-xs'
+                        : 'text-[#6A6864] hover:text-[#2C2B29]'
+                    }`}
+                  >
+                    <BookOpen className="w-3.5 h-3.5 stroke-[1.5px]" />
+                    <span>권별 모아보기</span>
+                  </button>
                 </div>
               </div>
               
               <div className="flex-1 overflow-y-auto p-3.5 space-y-2 bg-[#FAF9F5] custom-scrollbar">
                 <button 
                   onClick={createNewEditor}
-                  className="w-full flex items-center justify-center gap-2 p-3 border-2 border-dashed border-[#F1D3C6] rounded-xl text-[#C96442] text-xs font-semibold bg-[#FAF0EB]/40 hover:bg-[#FAF0EB] transition-all active:scale-[0.99]"
+                  className="w-full flex items-center justify-center gap-2 p-2.5 border-2 border-dashed border-[#F1D3C6] rounded-xl text-[#C96442] text-xs font-semibold bg-[#FAF0EB]/40 hover:bg-[#FAF0EB] transition-all active:scale-[0.99]"
                 >
                   <Plus className="w-4 h-4 stroke-[1.5px]" /> 새 설교문 작성하기
                 </button>
-                
-                {filteredSermons.map(s => (
-                  <div 
-                    key={s.id} 
-                    onClick={() => openEditor(s.id)}
-                    className="flex items-center justify-between p-3 bg-white border border-[#E7E5DF] rounded-xl shadow-2xs hover:border-[#C96442] transition-all cursor-pointer group"
-                  >
-                    <div>
-                      <h3 className="font-semibold text-xs text-[#2C2B29] group-hover:text-[#C96442] transition-colors">{s.title}</h3>
-                      <p className="text-[10px] text-[#A3A19B] flex items-center gap-1 mt-1">
-                        <Calendar className="w-3 h-3 stroke-[1.5px]" /> {s.date}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="w-7 h-7 rounded-lg bg-[#FAF0EB] flex items-center justify-center text-[#C96442]">
-                        <FileEdit className="w-3.5 h-3.5 stroke-[1.5px]" />
-                      </div>
-                      <button 
-                        onClick={(e) => handleDeleteSermon(s.id, e)}
-                        className="w-7 h-7 rounded-lg bg-red-50 flex items-center justify-center text-red-600 hover:bg-red-100 transition-all z-10"
-                        title="설교문 삭제"
-                      >
-                        <Trash2 className="w-3.5 h-3.5 stroke-[1.5px]" />
-                      </button>
-                    </div>
+
+                {filteredSermons.length === 0 ? (
+                  <div className="text-center py-10 text-[#A3A19B] text-xs font-medium">
+                    {searchQuery ? '검색된 설교문이 없습니다.' : '작성된 설교문이 없습니다.'}
                   </div>
-                ))}
+                ) : listTab === 'recent' ? (
+                  // 1) 최신순 리스트
+                  filteredSermons.map(s => (
+                    <div 
+                      key={s.id} 
+                      onClick={() => openEditor(s.id)}
+                      className="p-3 bg-white border border-[#E7E5DF] rounded-xl shadow-2xs hover:border-[#C96442] transition-all cursor-pointer group flex flex-col gap-1.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {s.extractedBook?.parsedRef && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#FAF0EB] text-[#C96442] border border-[#F1D3C6] shrink-0">
+                                {s.extractedBook.parsedRef}
+                              </span>
+                            )}
+                            <h3 className="font-semibold text-xs text-[#2C2B29] group-hover:text-[#C96442] transition-colors truncate">
+                              {s.title}
+                            </h3>
+                          </div>
+                          {s.content && (
+                            <p className="text-[11px] text-[#6A6864] line-clamp-1 mt-1 font-serif">
+                              {s.content.replace(/[#*`\n]/g, ' ').trim()}
+                            </p>
+                          )}
+                          <p className="text-[10px] text-[#A3A19B] flex items-center gap-1 mt-1.5">
+                            <Calendar className="w-3 h-3 stroke-[1.5px]" /> {s.date}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="w-7 h-7 rounded-lg bg-[#FAF0EB] flex items-center justify-center text-[#C96442]">
+                            <FileEdit className="w-3.5 h-3.5 stroke-[1.5px]" />
+                          </div>
+                          <button 
+                            onClick={(e) => handleDeleteSermon(s.id, e)}
+                            className="w-7 h-7 rounded-lg bg-red-50 flex items-center justify-center text-red-600 hover:bg-red-100 transition-all z-10 cursor-pointer"
+                            title="설교문 삭제"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 stroke-[1.5px]" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  // 2) 성경 66권 권별 모아보기
+                  <div className="space-y-2">
+                    <div className="text-[11px] text-[#8C877D] px-1 py-0.5 flex items-center justify-between">
+                      <span>제목의 성경 구절(예: 마 1 6, 롬 8:28)로 자동 분류</span>
+                    </div>
+
+                    {/* 설교가 배정된 성경 권들 */}
+                    {BIBLE_LIST.filter(book => (bookGroups.map[book.id]?.length || 0) > 0).map(book => {
+                      const bookSermons = bookGroups.map[book.id] || [];
+                      const isExpanded = !!expandedBooks[book.id]; // 기본 닫힌 상태
+
+                      return (
+                        <div key={book.id} className="bg-white border border-[#E7E5DF] rounded-xl overflow-hidden shadow-2xs">
+                          <button
+                            onClick={() => toggleBookExpand(book.id)}
+                            className={`w-full flex items-center justify-between p-3 bg-[#FDFBF7] hover:bg-[#FAF0EB]/40 transition-colors text-left ${isExpanded ? 'border-b border-[#E7E5DF]' : ''}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <BookOpen className="w-4 h-4 text-[#C96442] stroke-[1.5px]" />
+                              <span className="font-serif font-bold text-xs text-[#2C2B29]">{book.name}</span>
+                              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-[#FAF0EB] text-[#C96442] border border-[#F1D3C6]">
+                                {bookSermons.length}편
+                              </span>
+                            </div>
+                            <div className="text-[#8C877D]">
+                              {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            </div>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="p-2 space-y-1.5 bg-[#FAF9F5]">
+                              {bookSermons.map(s => (
+                                <div
+                                  key={s.id}
+                                  onClick={() => openEditor(s.id)}
+                                  className="p-2.5 bg-white border border-[#EAE7E0] hover:border-[#C96442] rounded-lg transition-all cursor-pointer group flex items-start justify-between gap-2"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      {s.extractedBook?.parsedRef && (
+                                        <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-[#FAF0EB] text-[#C96442]">
+                                          {s.extractedBook.parsedRef}
+                                        </span>
+                                      )}
+                                      <h4 className="font-semibold text-xs text-[#2C2B29] group-hover:text-[#C96442] truncate">
+                                        {s.title}
+                                      </h4>
+                                    </div>
+                                    <p className="text-[10px] text-[#A3A19B] mt-1 flex items-center gap-1">
+                                      <Calendar className="w-2.5 h-2.5" /> {s.date}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button 
+                                      onClick={(e) => handleDeleteSermon(s.id, e)}
+                                      className="p-1 rounded text-red-600 hover:bg-red-50 cursor-pointer"
+                                      title="설교문 삭제"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5 stroke-[1.5px]" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* 주제별 / 일반 설교 (본문 미지정) */}
+                    {bookGroups.etcList.length > 0 && (
+                      <div className="bg-white border border-[#E7E5DF] rounded-xl overflow-hidden shadow-2xs">
+                        <button
+                          onClick={() => toggleBookExpand('ETC')}
+                          className={`w-full flex items-center justify-between p-3 bg-[#FDFBF7] hover:bg-[#F3EFE9] transition-colors text-left ${!!expandedBooks['ETC'] ? 'border-b border-[#E7E5DF]' : ''}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Folder className="w-4 h-4 text-[#8C877D] stroke-[1.5px]" />
+                            <span className="font-serif font-bold text-xs text-[#2C2B29]">주제별 / 일반 설교</span>
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-[#F3EFE9] text-[#6E6A63] border border-[#E5E0D8]">
+                              {bookGroups.etcList.length}편
+                            </span>
+                          </div>
+                          <div className="text-[#8C877D]">
+                            {!!expandedBooks['ETC'] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </div>
+                        </button>
+
+                        {!!expandedBooks['ETC'] && (
+                          <div className="p-2 space-y-1.5 bg-[#FAF9F5]">
+
+                            {bookGroups.etcList.map(s => (
+                              <div
+                                key={s.id}
+                                onClick={() => openEditor(s.id)}
+                                className="p-2.5 bg-white border border-[#EAE7E0] hover:border-[#C96442] rounded-lg transition-all cursor-pointer group flex items-start justify-between gap-2"
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-semibold text-xs text-[#2C2B29] group-hover:text-[#C96442] truncate">
+                                    {s.title}
+                                  </h4>
+                                  <p className="text-[10px] text-[#A3A19B] mt-1 flex items-center gap-1">
+                                    <Calendar className="w-2.5 h-2.5" /> {s.date}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button 
+                                    onClick={(e) => handleDeleteSermon(s.id, e)}
+                                    className="p-1 rounded text-red-600 hover:bg-red-50 cursor-pointer"
+                                    title="설교문 삭제"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5 stroke-[1.5px]" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ) : (

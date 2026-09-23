@@ -217,21 +217,33 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
 
   useEffect(() => {
     if (highlightVerse) {
-      // Fire scroll twice: immediately, and after dual-view transition (approx 300ms)
       const doScroll = () => {
         scrollContainerRefs.current.forEach((container: HTMLDivElement | null) => {
           if (!container) return;
-          const verseElement = container.querySelector(`[data-verse="${highlightVerse}"]`);
+          const verseElement = container.querySelector(`[data-verse="${highlightVerse}"]`) as HTMLElement;
           if (verseElement) {
-            verseElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // 컨테이너 내부 상대 위치를 계산하여 상단 50px 여백을 두고 정확히 스크롤
+            const containerRect = container.getBoundingClientRect();
+            const verseRect = verseElement.getBoundingClientRect();
+            const relativeOffset = verseRect.top - containerRect.top + container.scrollTop;
+            
+            // 화면 상단에서 50px 아래에 위치하도록 스크롤 (화면 아래에 있던 구절이 위로 부드럽게 올라옴)
+            const targetTop = Math.max(0, relativeOffset - 50);
+            container.scrollTo({ top: targetTop, behavior: 'smooth' });
+
+            // fallback scrollIntoView
+            try {
+              verseElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (e) {}
           }
         });
       };
       
-      const t1 = setTimeout(doScroll, 50);
-      const t2 = setTimeout(doScroll, 400); // 400ms handles the sliding animation delay
+      const t1 = setTimeout(doScroll, 40);
+      const t2 = setTimeout(doScroll, 180);
+      const t3 = setTimeout(doScroll, 450); // 레이아웃 전환 및 렌더링 딜레이 보정
       
-      return () => { clearTimeout(t1); clearTimeout(t2); };
+      return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
     }
   }, [highlightVerse, currentBookId, currentChapter, selectedVersions]);
 

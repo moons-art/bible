@@ -8,10 +8,10 @@ import { SermonSidebar, type SermonSidebarRef, type DockPosition } from './compo
 import { InstallPromptBanner } from './components/InstallPromptBanner';
 import { 
   Menu, Search, BookOpen, Settings, X, Plus, Check, 
-  ChevronLeft, ChevronRight, ChevronDown, Trash2, 
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Trash2, 
   FileEdit, Eye, EyeOff, WifiOff, Sparkles, PanelLeft, ChevronsLeftRight, Copy, Columns,
   MoreVertical, ArrowUp, ArrowDown, SlidersHorizontal, GripVertical, ArrowLeft,
-  CreditCard, History, AlertCircle, LogOut, ExternalLink, Clock, HardDrive, Database
+  CreditCard, History, AlertCircle, LogOut, ExternalLink, Clock, HardDrive, Database, Folder, FolderOpen
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { searchService, type SearchRange } from './services/searchService';
@@ -21,7 +21,8 @@ import { TooltipIcon } from './components/TooltipIcon';
 import { SettingsPage } from './components/SettingsPage';
 import { AiCommentaryPanel, ClaudeSparkleIcon, type AiTabType } from './components/AiCommentaryPanel';
 import { useAiUsage } from './hooks/useAiUsage';
-import { getCommentaryHistory } from './services/aiHistoryService';
+import { getCommentaryHistory, getCloudCommentaryCount } from './services/aiHistoryService';
+import { getBibleReferenceMatchScore, parseBibleReference, isBibleReferenceMatch } from './utils/referenceParser';
 import { AuthModal } from './components/AuthModal';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
 import { PolicyViewModal, type PolicyModalType } from './components/PolicyViewModal';
@@ -76,9 +77,14 @@ const BibleNavBar: React.FC<BibleNavBarProps> = ({
     setLocalQuery(val);
     
     const trimmed = val.trim();
-    const navPattern = /^([1-3]?[가-힣]{1,3})\s*(\d+)/; 
-    if (navPattern.test(trimmed)) {
+    const parsed = parseBibleReference(trimmed);
+    if (parsed && parsed.chapter !== undefined) {
       handleSearch(trimmed);
+    } else {
+      const navPattern = /^([1-3]?[가-힣]{1,3})\s*(\d+)/; 
+      if (navPattern.test(trimmed)) {
+        handleSearch(trimmed);
+      }
     }
   };
 
@@ -265,6 +271,11 @@ const MainApp: React.FC = () => {
         try {
           localStorage.setItem('cached_auth_user', JSON.stringify(profile));
         } catch (e) {}
+
+        // 클라우드 주석 개수 0초 동기화 (순수 성경 구절 주석 6개로 일치)
+        getCloudCommentaryCount(user.uid).then(count => {
+          setSavedHistoryCount(count);
+        }).catch(err => console.warn('[App] getCloudCommentaryCount error:', err));
 
         // syncUserProfile: 실패 시 최대 3회 재시도
         let retries = 3;
@@ -602,11 +613,70 @@ const MainApp: React.FC = () => {
     }
   };
   
-  // Search popovers
+  // Search popovers (주석 검색 및 구절노트 메모 검색)
   const [showNoteSearch, setShowNoteSearch] = useState(false);
-  const [showSermonSearch, setShowSermonSearch] = useState(false);
+  const [noteSearchTab, setNoteSearchTab] = useState<'recent' | 'byBook'>('recent');
   const [noteSearchQuery, setNoteSearchQuery] = useState('');
+  const [noteExpandedBooks, setNoteExpandedBooks] = useState<Record<string, boolean>>({});
+
+  const [showSermonSearch, setShowSermonSearch] = useState(false);
+  const [sermonSearchTab, setSermonSearchTab] = useState<'recent' | 'byBook'>('recent');
   const [sermonSearchQuery, setSermonSearchQuery] = useState('');
+  const [sermonExpandedBooks, setSermonExpandedBooks] = useState<Record<string, boolean>>({});
+
+  // 1) 주석 검색 필터링 (스마트 성경 구절 인식 '마 1 6', '마태 1:6' 등 최상위 0초 정렬)
+  const filteredNoteEntries = React.useMemo(() => {
+    const entries = Object.entries(verseData).filter(([_, data]) => data.note && data.note.trim());
+    if (!noteSearchQuery.trim()) {
+      return entries.map(([verseKey, data]) => ({ verseKey, data, score: 1 }));
+    }
+    const q = noteSearchQuery.trim();
+    return entries
+      .map(([verseKey, data]) => {
+        const score = getBibleReferenceMatchScore(q, verseKey, data.note);
+        return { verseKey, data, score };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+  }, [verseData, noteSearchQuery]);
+
+  // 주석 성경 66권 그룹화
+  const noteBookGroups = React.useMemo(() => {
+    const map: Record<string, typeof filteredNoteEntries> = {};
+    filteredNoteEntries.forEach(item => {
+      const bId = item.verseKey.split('_')[0];
+      if (!map[bId]) map[bId] = [];
+      map[bId].push(item);
+    });
+    return map;
+  }, [filteredNoteEntries]);
+
+  // 2) 구절노트(메모) 검색 필터링 (스마트 성경 구절 인식 '마 1 6', '롬 8:28' 등 최상위 0초 정렬)
+  const filteredSermonEntries = React.useMemo(() => {
+    const entries = Object.entries(verseData).filter(([_, data]) => data.sermon && data.sermon.trim());
+    if (!sermonSearchQuery.trim()) {
+      return entries.map(([verseKey, data]) => ({ verseKey, data, score: 1 }));
+    }
+    const q = sermonSearchQuery.trim();
+    return entries
+      .map(([verseKey, data]) => {
+        const score = getBibleReferenceMatchScore(q, verseKey, data.sermon);
+        return { verseKey, data, score };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+  }, [verseData, sermonSearchQuery]);
+
+  // 구절노트(메모) 성경 66권 그룹화
+  const sermonBookGroups = React.useMemo(() => {
+    const map: Record<string, typeof filteredSermonEntries> = {};
+    filteredSermonEntries.forEach(item => {
+      const bId = item.verseKey.split('_')[0];
+      if (!map[bId]) map[bId] = [];
+      map[bId].push(item);
+    });
+    return map;
+  }, [filteredSermonEntries]);
   
   const [isSermonSidebarOpen, setIsSermonSidebarOpen] = useState(false);
   const [clipboardSermonText, setClipboardSermonText] = useState<string | null>(null);
@@ -646,10 +716,18 @@ const MainApp: React.FC = () => {
   });
 
   useEffect(() => {
-    const updateCount = () => {
+    const updateCount = async () => {
       try {
+        const { auth } = await import('./api/firebaseConfig');
+        if (auth.currentUser) {
+          const count = await getCloudCommentaryCount(auth.currentUser.uid);
+          setSavedHistoryCount(count);
+        } else {
+          setSavedHistoryCount(getCommentaryHistory().length);
+        }
+      } catch {
         setSavedHistoryCount(getCommentaryHistory().length);
-      } catch {}
+      }
     };
     window.addEventListener('ai-history-updated', updateCount);
     window.addEventListener('storage', updateCount);
@@ -755,9 +833,23 @@ const MainApp: React.FC = () => {
     return () => window.removeEventListener('open_cross_reference', handleOpenCrossRef);
   }, []);
 
-  // 퀵 서치 처리 로직
+  // 퀵 서치 처리 로직 (스마트 구절 파서 연동 및 scrollTrigger로 자동 스크롤 보장)
   const handleQuickNav = (query: string, side: 'left' | 'right') => {
     const trimmed = query.trim();
+    if (!trimmed) return false;
+
+    // 1) 스마트 성경 구절 인식 파서 우선 시도 (마 1 20, 마 1:20, 마태 1:20, 롬 8:28 등 100% 인식)
+    const parsed = parseBibleReference(trimmed);
+    if (parsed && parsed.chapter !== undefined) {
+      const ch = parsed.chapter;
+      const vs = parsed.verse || 1;
+      const update = { bookId: parsed.bookId, chapter: ch, verse: vs, scrollTrigger: Date.now() };
+      if (side === 'left') setLeftNav(update);
+      else setRightNav(update);
+      return true;
+    }
+
+    // 2) 기존 정규식 fallback
     const navPattern = /^([1-3]?[가-힣]{1,3})\s*(\d+)(?:[ :.\s]+(\d+))?$/;
     const match = trimmed.match(navPattern);
 
@@ -776,7 +868,7 @@ const MainApp: React.FC = () => {
         const ch = chapterStr ? parseInt(chapterStr, 10) : 1;
         const vs = verseStr ? parseInt(verseStr, 10) : 1;
         
-        const update = { bookId: book.id, chapter: ch, verse: vs };
+        const update = { bookId: book.id, chapter: ch, verse: vs, scrollTrigger: Date.now() };
         if (side === 'left') setLeftNav(update);
         else setRightNav(update);
         return true;
@@ -1925,7 +2017,7 @@ const MainApp: React.FC = () => {
         onSidebarHeightChange={setSermonSidebarHeight}
       />
 
-      {/* Note Search Modal */}
+      {/* Note Search Modal (구절 주석 보관함 검색) */}
       <AnimatePresence>
         {showNoteSearch && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
@@ -1940,47 +2032,115 @@ const MainApp: React.FC = () => {
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative w-full max-w-lg bg-[#FAF9F5] rounded-2xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[75vh]"
+              className="relative w-full max-w-xl bg-[#FAF9F5] rounded-2xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[82vh]"
             >
-              <div className="p-5 border-b border-[#E7E5DF] bg-[#F7F5F0]">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="font-serif text-base font-bold text-[#2C2B29] flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-lg bg-[#FAF0EB] text-[#C46A40] flex items-center justify-center border border-[#F1D3C6] shrink-0">
-                      <Search className="w-3.5 h-3.5" />
+              {/* Header (AI 주석 기록창 헤더와 동일) */}
+              <div className="p-4 border-b border-[#E7E5DF] bg-[#FAF9F5] space-y-3 shrink-0">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-[#8C877D]" />
+                      <Database className="w-4 h-4 text-[#8C877D]" />
+                      <span className="font-serif font-bold text-sm text-[#2C2B29]">구절 주석 보관함</span>
+                      <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927]">
+                        {filteredNoteEntries.length}
+                      </span>
                     </div>
-                    <span>주석 검색</span>
-                  </h2>
+                    <p className="text-[11px] text-[#8C877D] mt-0.5">
+                      성경 구절에 작성된 주석을 안전하게 보관하여 어디서나 열람할 수 있습니다.
+                    </p>
+                  </div>
                   <button 
                     onClick={() => setShowNoteSearch(false)} 
-                    className="p-1.5 hover:bg-[#EAE4DA] rounded-lg transition-colors text-[#8C877D] hover:text-[#2C2B29] cursor-pointer"
+                    className="p-1 hover:bg-[#EAE4DA] rounded-lg transition-colors text-[#8C877D] hover:text-[#2C2B29] cursor-pointer"
                     title="닫기"
                   >
                     <X className="w-4 h-4 stroke-[1.8px]" />
                   </button>
                 </div>
-                <input 
-                  type="text" 
-                  autoFocus
-                  placeholder="작성한 주석 내용을 검색하세요..."
-                  value={noteSearchQuery}
-                  onChange={e => setNoteSearchQuery(e.target.value)}
-                  className="w-full bg-white border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2.5 text-xs font-normal text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94] shadow-2xs"
-                />
+
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#A3A19B] stroke-[1.5px]" />
+                  <input 
+                    type="text" 
+                    autoFocus
+                    placeholder="구절, 책 이름, 주석 본문 검색..."
+                    value={noteSearchQuery}
+                    onChange={e => setNoteSearchQuery(e.target.value)}
+                    className="w-full bg-white border border-[#E7E5DF] rounded-xl pl-9 pr-8 py-2.5 text-xs text-[#2C2B29] outline-none shadow-2xs focus:border-[#C46A40] transition-all placeholder:text-[#A39E94]"
+                  />
+                  {noteSearchQuery && (
+                    <button
+                      onClick={() => setNoteSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#A3A19B] hover:text-[#2C2B29] p-0.5"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Tab Switcher (AI 주석 기록 탭과 100% 동일) */}
+                <div className="flex items-center justify-between pt-0.5">
+                  <div className="flex bg-[#EAE6DF] p-0.5 rounded-lg gap-0.5">
+                    <button
+                      onClick={() => setNoteSearchTab('recent')}
+                      className={`px-3 py-1 text-xs rounded-md transition-all cursor-pointer ${
+                        noteSearchTab === 'recent'
+                          ? 'bg-white font-bold text-[#2C2B29] shadow-xs'
+                          : 'text-[#8C877D] hover:text-[#2C2B29]'
+                      }`}
+                    >
+                      최신순
+                    </button>
+                    <button
+                      onClick={() => setNoteSearchTab('byBook')}
+                      className={`px-3 py-1 text-xs rounded-md transition-all cursor-pointer ${
+                        noteSearchTab === 'byBook'
+                          ? 'bg-white font-bold text-[#2C2B29] shadow-xs'
+                          : 'text-[#8C877D] hover:text-[#2C2B29]'
+                      }`}
+                    >
+                      권별보기
+                    </button>
+                  </div>
+                  <span className="text-xs text-[#8C877D]">
+                    총 <strong className="text-[#2C2B29] font-bold">{filteredNoteEntries.length}</strong>개
+                  </span>
+                </div>
               </div>
-              <div className="flex-1 overflow-y-auto p-4 bg-[#FAF9F5] custom-scrollbar flex flex-col gap-2">
-                {Object.entries(verseData)
-                  .filter(([_, data]) => data.note && data.note.includes(noteSearchQuery))
-                  .map(([verseKey, data]) => {
+
+              {/* Body Content */}
+              <div className="flex-1 overflow-y-auto p-3.5 bg-[#FAF9F5] custom-scrollbar flex flex-col gap-2">
+                {filteredNoteEntries.length === 0 ? (
+                  <div className="text-center py-12 text-[#A39E94] text-xs font-medium">
+                    {noteSearchQuery ? '검색 결과가 없습니다.' : '작성된 주석이 없습니다.'}
+                  </div>
+                ) : noteSearchTab === 'recent' ? (
+                  // 1) 최신순 / 점수순 목록 (구절 완벽 일치 최상위, 본문 한 줄 요약)
+                  filteredNoteEntries.map(({ verseKey, data, score }) => {
                     const [bId, chStr, vsStr] = verseKey.split('_');
                     const vNum = parseInt(vsStr, 10);
+                    const bookName = BIBLE_LIST.find(b => b.id === bId)?.name || bId;
+                    const isExactMatch = score >= 4;
+
                     return (
                       <div 
                         key={verseKey} 
-                        className="p-3 bg-white border border-[#E7E5DF] rounded-xl hover:border-[#C46A40] hover:bg-[#FDFBF7] transition-all flex flex-col gap-1.5 shadow-2xs"
+                        className={`p-2.5 px-3 bg-white border rounded-xl hover:border-[#C46A40] hover:bg-[#FDFBF7] transition-all flex flex-col gap-1 shadow-2xs ${
+                          isExactMatch ? 'border-[#C46A40] ring-2 ring-[#C46A40]/10 bg-[#FAF0EB]/20' : 'border-[#E7E5DF]'
+                        }`}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs font-serif font-bold text-[#C46A40] shrink-0">
-                            {BIBLE_LIST.find(b => b.id === bId)?.name || bId} {chStr}:{vsStr}
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-serif font-bold text-xs text-[#2C2B29]">
+                              {bookName} {chStr}:{vsStr}
+                            </span>
+                            {isExactMatch && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-[#C46A40] text-white">
+                                구절 일치
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center gap-1.5">
                             <button 
@@ -1989,7 +2149,7 @@ const MainApp: React.FC = () => {
                                 setShowNoteSearch(false);
                                 setLeftNav({ bookId: bId, chapter: parseInt(chStr, 10), verse: vNum, scrollTrigger: Date.now() });
                               }}
-                              className="px-2.5 py-1 bg-[#F5F3ED] hover:bg-[#EBE5DC] active:bg-[#DDD6C8] text-[#4A4741] rounded-lg text-xs font-medium transition-colors cursor-pointer border border-[#E0DBD2]"
+                              className="px-2 py-0.5 bg-[#F5F3ED] hover:bg-[#EBE5DC] active:bg-[#DDD6C8] text-[#4A4741] rounded text-[11px] font-medium transition-colors cursor-pointer border border-[#E0DBD2]"
                             >
                               본문
                             </button>
@@ -2004,21 +2164,97 @@ const MainApp: React.FC = () => {
                                 setIsDualView(true);
                                 setRightNav({ bookId: bId, chapter: parseInt(chStr, 10), verse: vNum, scrollTrigger: Date.now() });
                               }}
-                              className="px-2.5 py-1 bg-[#FAF0EB] hover:bg-[#F5E2DA] active:bg-[#EDD1C4] text-[#C46A40] rounded-lg text-xs font-semibold transition-colors cursor-pointer border border-[#F1D3C6]"
+                              className="px-2 py-0.5 bg-[#FAF0EB] hover:bg-[#F5E2DA] active:bg-[#EDD1C4] text-[#C46A40] rounded text-[11px] font-semibold transition-colors cursor-pointer border border-[#F1D3C6]"
                             >
                               듀얼뷰
                             </button>
                           </div>
                         </div>
-                        <p className="font-serif text-xs text-[#4A4741] leading-relaxed truncate whitespace-nowrap overflow-hidden">
+                        {/* 본문 한 줄 요약 */}
+                        <p className="text-[11px] text-[#5C5852] line-clamp-1 truncate font-serif leading-relaxed">
                           {data.note}
                         </p>
                       </div>
                     );
-                  })}
-                {noteSearchQuery && Object.entries(verseData).filter(([_, data]) => data.note && data.note.includes(noteSearchQuery)).length === 0 && (
-                  <div className="text-center py-8 text-[#A39E94] text-xs font-medium">
-                    검색 결과가 없습니다.
+                  })
+                ) : (
+                  // 2) 성경 66권 권별 모아보기 (첫 상태: 닫힌 상태)
+                  <div className="space-y-2">
+                    {BIBLE_LIST.filter(book => (noteBookGroups[book.id]?.length || 0) > 0).map(book => {
+                      const bookEntries = noteBookGroups[book.id] || [];
+                      const isExpanded = !!noteExpandedBooks[book.id]; // 기본 닫힌 상태
+
+                      return (
+                        <div key={book.id} className="border border-[#E5E0D8] rounded-xl bg-white overflow-hidden shadow-2xs">
+                          {/* 권 헤더 (AI 기록창과 100% 동일) */}
+                          <button
+                            type="button"
+                            onClick={() => setNoteExpandedBooks(prev => ({ ...prev, [book.id]: !isExpanded }))}
+                            className={`w-full p-2.5 px-3 bg-[#FAF9F5] hover:bg-[#F3EFE9] transition-colors flex items-center justify-between text-left cursor-pointer ${isExpanded ? 'border-b border-[#EFECE6]' : ''}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <BookOpen className="w-3.5 h-3.5 text-[#C46A40] stroke-[1.8]" />
+                              <span className="font-serif font-bold text-xs text-[#2C2B29]">{book.name}</span>
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927]">
+                                {bookEntries.length}
+                              </span>
+                            </div>
+                            <ChevronDown className={`w-4 h-4 text-[#8C877D] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+
+                          {/* 권 내부 구절 목록 */}
+                          {isExpanded && (
+                            <div className="p-2 space-y-1.5 bg-white">
+                              {bookEntries.map(({ verseKey, data }) => {
+                                const [_, chStr, vsStr] = verseKey.split('_');
+                                const vNum = parseInt(vsStr, 10);
+                                return (
+                                  <div
+                                    key={verseKey}
+                                    className="p-2.5 rounded-lg border border-[#EAE6DF] bg-[#FAF9F5] hover:border-[#C46A40] transition-all flex flex-col gap-1 shadow-2xs"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-serif font-bold text-xs text-[#2C2B29]">
+                                        {chStr}장 {vsStr}절
+                                      </span>
+                                      <div className="flex items-center gap-1">
+                                        <button 
+                                          onClick={() => {
+                                            setShowNoteSearch(false);
+                                            setLeftNav({ bookId: book.id, chapter: parseInt(chStr, 10), verse: vNum, scrollTrigger: Date.now() });
+                                          }}
+                                          className="px-2 py-0.5 bg-white hover:bg-[#F5F3ED] text-[#4A4741] rounded text-[11px] font-medium transition-colors border border-[#E0DBD2] cursor-pointer"
+                                        >
+                                          본문
+                                        </button>
+                                        <button 
+                                          onClick={() => {
+                                            setShowNoteSearch(false);
+                                            if (!versions.some(v => v.id === rightSelectedVersionId)) {
+                                              const defaultId = versions.find(v => v.id === 'built-in-kor-revised')?.id || versions[0]?.id || 'built-in-kor-revised';
+                                              setRightSelectedVersionId(defaultId);
+                                            }
+                                            setIsDualView(true);
+                                            setRightNav({ bookId: book.id, chapter: parseInt(chStr, 10), verse: vNum, scrollTrigger: Date.now() });
+                                          }}
+                                          className="px-2 py-0.5 bg-[#FAF0EB] hover:bg-[#F5E2DA] text-[#C46A40] rounded text-[11px] font-semibold transition-colors border border-[#F1D3C6] cursor-pointer"
+                                        >
+                                          듀얼뷰
+                                        </button>
+                                      </div>
+                                    </div>
+                                    {/* 본문 한 줄 요약 */}
+                                    <p className="text-[11px] text-[#5C5852] line-clamp-1 truncate font-serif leading-relaxed">
+                                      {data.note}
+                                    </p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -2027,7 +2263,7 @@ const MainApp: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* Sermon Search Modal */}
+      {/* Sermon Search Modal (구절 메모 보관함 검색) */}
       <AnimatePresence>
         {showSermonSearch && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
@@ -2042,47 +2278,115 @@ const MainApp: React.FC = () => {
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative w-full max-w-lg bg-[#FAF9F5] rounded-2xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[75vh]"
+              className="relative w-full max-w-xl bg-[#FAF9F5] rounded-2xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[82vh]"
             >
-              <div className="p-5 border-b border-[#E7E5DF] bg-[#F7F5F0]">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="font-serif text-base font-bold text-[#2C2B29] flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-lg bg-[#F3EFE9] text-[#6E6A63] flex items-center justify-center border border-[#E5E0D8] shrink-0">
-                      <FileEdit className="w-3.5 h-3.5" />
+              {/* Header (AI 주석 기록창 헤더와 동일) */}
+              <div className="p-4 border-b border-[#E7E5DF] bg-[#FAF9F5] space-y-3 shrink-0">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-[#8C877D]" />
+                      <FileEdit className="w-4 h-4 text-[#8C877D]" />
+                      <span className="font-serif font-bold text-sm text-[#2C2B29]">구절 메모 보관함</span>
+                      <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927]">
+                        {filteredSermonEntries.length}
+                      </span>
                     </div>
-                    <span>노트 검색</span>
-                  </h2>
+                    <p className="text-[11px] text-[#8C877D] mt-0.5">
+                      성경 구절에 기록된 묵상 메모를 안전하게 보관하여 어디서나 열람할 수 있습니다.
+                    </p>
+                  </div>
                   <button 
                     onClick={() => setShowSermonSearch(false)} 
-                    className="p-1.5 hover:bg-[#EAE4DA] rounded-lg transition-colors text-[#8C877D] hover:text-[#2C2B29] cursor-pointer"
+                    className="p-1 hover:bg-[#EAE4DA] rounded-lg transition-colors text-[#8C877D] hover:text-[#2C2B29] cursor-pointer"
                     title="닫기"
                   >
                     <X className="w-4 h-4 stroke-[1.8px]" />
                   </button>
                 </div>
-                <input 
-                  type="text" 
-                  autoFocus
-                  placeholder="작성한 구절노트 내용을 검색하세요..."
-                  value={sermonSearchQuery}
-                  onChange={e => setSermonSearchQuery(e.target.value)}
-                  className="w-full bg-white border border-[#DDD8CE] focus:border-[#C46A40] focus:ring-2 focus:ring-[#C46A40]/10 rounded-xl px-3.5 py-2.5 text-xs font-normal text-[#2C2B29] outline-none transition-all placeholder:text-[#A39E94] shadow-2xs"
-                />
+
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#A3A19B] stroke-[1.5px]" />
+                  <input 
+                    type="text" 
+                    autoFocus
+                    placeholder="구절, 책 이름, 메모 본문 검색..."
+                    value={sermonSearchQuery}
+                    onChange={e => setSermonSearchQuery(e.target.value)}
+                    className="w-full bg-white border border-[#E7E5DF] rounded-xl pl-9 pr-8 py-2.5 text-xs text-[#2C2B29] outline-none shadow-2xs focus:border-[#C46A40] transition-all placeholder:text-[#A39E94]"
+                  />
+                  {sermonSearchQuery && (
+                    <button
+                      onClick={() => setSermonSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#A3A19B] hover:text-[#2C2B29] p-0.5"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Tab Switcher (AI 주석 기록 탭과 100% 동일) */}
+                <div className="flex items-center justify-between pt-0.5">
+                  <div className="flex bg-[#EAE6DF] p-0.5 rounded-lg gap-0.5">
+                    <button
+                      onClick={() => setSermonSearchTab('recent')}
+                      className={`px-3 py-1 text-xs rounded-md transition-all cursor-pointer ${
+                        sermonSearchTab === 'recent'
+                          ? 'bg-white font-bold text-[#2C2B29] shadow-xs'
+                          : 'text-[#8C877D] hover:text-[#2C2B29]'
+                      }`}
+                    >
+                      최신순
+                    </button>
+                    <button
+                      onClick={() => setSermonSearchTab('byBook')}
+                      className={`px-3 py-1 text-xs rounded-md transition-all cursor-pointer ${
+                        sermonSearchTab === 'byBook'
+                          ? 'bg-white font-bold text-[#2C2B29] shadow-xs'
+                          : 'text-[#8C877D] hover:text-[#2C2B29]'
+                      }`}
+                    >
+                      권별보기
+                    </button>
+                  </div>
+                  <span className="text-xs text-[#8C877D]">
+                    총 <strong className="text-[#2C2B29] font-bold">{filteredSermonEntries.length}</strong>개
+                  </span>
+                </div>
               </div>
-              <div className="flex-1 overflow-y-auto p-4 bg-[#FAF9F5] custom-scrollbar flex flex-col gap-2">
-                {Object.entries(verseData)
-                  .filter(([_, data]) => data.sermon && data.sermon.includes(sermonSearchQuery))
-                  .map(([verseKey, data]) => {
+
+              {/* Body Content */}
+              <div className="flex-1 overflow-y-auto p-3.5 bg-[#FAF9F5] custom-scrollbar flex flex-col gap-2">
+                {filteredSermonEntries.length === 0 ? (
+                  <div className="text-center py-12 text-[#A39E94] text-xs font-medium">
+                    {sermonSearchQuery ? '검색 결과가 없습니다.' : '작성된 구절 메모가 없습니다.'}
+                  </div>
+                ) : sermonSearchTab === 'recent' ? (
+                  // 1) 최신순 / 점수순 목록 (구절 완벽 일치 최상위, 본문 한 줄 요약)
+                  filteredSermonEntries.map(({ verseKey, data, score }) => {
                     const [bId, chStr, vsStr] = verseKey.split('_');
                     const vNum = parseInt(vsStr, 10);
+                    const bookName = BIBLE_LIST.find(b => b.id === bId)?.name || bId;
+                    const isExactMatch = score >= 4;
+
                     return (
                       <div 
                         key={verseKey} 
-                        className="p-3 bg-white border border-[#E7E5DF] rounded-xl hover:border-[#C46A40] hover:bg-[#FDFBF7] transition-all flex flex-col gap-1.5 shadow-2xs"
+                        className={`p-2.5 px-3 bg-white border rounded-xl hover:border-[#6E6A63] hover:bg-[#FDFBF7] transition-all flex flex-col gap-1 shadow-2xs ${
+                          isExactMatch ? 'border-[#6E6A63] ring-2 ring-[#6E6A63]/10 bg-[#F3EFE9]/30' : 'border-[#E7E5DF]'
+                        }`}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs font-serif font-bold text-[#6E6A63] shrink-0">
-                            {BIBLE_LIST.find(b => b.id === bId)?.name || bId} {chStr}:{vsStr}
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-serif font-bold text-xs text-[#2C2B29]">
+                              {bookName} {chStr}:{vsStr}
+                            </span>
+                            {isExactMatch && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-[#6E6A63] text-white">
+                                구절 일치
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center gap-1.5">
                             <button 
@@ -2091,7 +2395,7 @@ const MainApp: React.FC = () => {
                                 setShowSermonSearch(false);
                                 setLeftNav({ bookId: bId, chapter: parseInt(chStr, 10), verse: vNum, scrollTrigger: Date.now() });
                               }}
-                              className="px-2.5 py-1 bg-[#F5F3ED] hover:bg-[#EBE5DC] active:bg-[#DDD6C8] text-[#4A4741] rounded-lg text-xs font-medium transition-colors cursor-pointer border border-[#E0DBD2]"
+                              className="px-2 py-0.5 bg-[#F5F3ED] hover:bg-[#EBE5DC] active:bg-[#DDD6C8] text-[#4A4741] rounded text-[11px] font-medium transition-colors cursor-pointer border border-[#E0DBD2]"
                             >
                               본문
                             </button>
@@ -2106,21 +2410,97 @@ const MainApp: React.FC = () => {
                                 setIsDualView(true);
                                 setRightNav({ bookId: bId, chapter: parseInt(chStr, 10), verse: vNum, scrollTrigger: Date.now() });
                               }}
-                              className="px-2.5 py-1 bg-[#FAF0EB] hover:bg-[#F5E2DA] active:bg-[#EDD1C4] text-[#C46A40] rounded-lg text-xs font-semibold transition-colors cursor-pointer border border-[#F1D3C6]"
+                              className="px-2 py-0.5 bg-[#FAF0EB] hover:bg-[#F5E2DA] active:bg-[#EDD1C4] text-[#C46A40] rounded text-[11px] font-semibold transition-colors cursor-pointer border border-[#F1D3C6]"
                             >
                               듀얼뷰
                             </button>
                           </div>
                         </div>
-                        <p className="font-serif text-xs text-[#4A4741] leading-relaxed truncate whitespace-nowrap overflow-hidden">
+                        {/* 본문 한 줄 요약 */}
+                        <p className="text-[11px] text-[#5C5852] line-clamp-1 truncate font-serif leading-relaxed">
                           {data.sermon}
                         </p>
                       </div>
                     );
-                  })}
-                {sermonSearchQuery && Object.entries(verseData).filter(([_, data]) => data.sermon && data.sermon.includes(sermonSearchQuery)).length === 0 && (
-                  <div className="text-center py-8 text-[#A39E94] text-xs font-medium">
-                    검색 결과가 없습니다.
+                  })
+                ) : (
+                  // 2) 성경 66권 권별 모아보기 (첫 상태: 닫힌 상태)
+                  <div className="space-y-2">
+                    {BIBLE_LIST.filter(book => (sermonBookGroups[book.id]?.length || 0) > 0).map(book => {
+                      const bookEntries = sermonBookGroups[book.id] || [];
+                      const isExpanded = !!sermonExpandedBooks[book.id]; // 기본 닫힌 상태
+
+                      return (
+                        <div key={book.id} className="border border-[#E5E0D8] rounded-xl bg-white overflow-hidden shadow-2xs">
+                          {/* 권 헤더 (AI 기록창과 100% 동일) */}
+                          <button
+                            type="button"
+                            onClick={() => setSermonExpandedBooks(prev => ({ ...prev, [book.id]: !isExpanded }))}
+                            className={`w-full p-2.5 px-3 bg-[#FAF9F5] hover:bg-[#F3EFE9] transition-colors flex items-center justify-between text-left cursor-pointer ${isExpanded ? 'border-b border-[#EFECE6]' : ''}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <BookOpen className="w-3.5 h-3.5 text-[#6E6A63] stroke-[1.8]" />
+                              <span className="font-serif font-bold text-xs text-[#2C2B29]">{book.name}</span>
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927]">
+                                {bookEntries.length}
+                              </span>
+                            </div>
+                            <ChevronDown className={`w-4 h-4 text-[#8C877D] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+
+                          {/* 권 내부 구절 목록 */}
+                          {isExpanded && (
+                            <div className="p-2 space-y-1.5 bg-white">
+                              {bookEntries.map(({ verseKey, data }) => {
+                                const [_, chStr, vsStr] = verseKey.split('_');
+                                const vNum = parseInt(vsStr, 10);
+                                return (
+                                  <div
+                                    key={verseKey}
+                                    className="p-2.5 rounded-lg border border-[#EAE6DF] bg-[#FAF9F5] hover:border-[#6E6A63] transition-all flex flex-col gap-1 shadow-2xs"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-serif font-bold text-xs text-[#2C2B29]">
+                                        {chStr}장 {vsStr}절
+                                      </span>
+                                      <div className="flex items-center gap-1">
+                                        <button 
+                                          onClick={() => {
+                                            setShowSermonSearch(false);
+                                            setLeftNav({ bookId: book.id, chapter: parseInt(chStr, 10), verse: vNum, scrollTrigger: Date.now() });
+                                          }}
+                                          className="px-2 py-0.5 bg-white hover:bg-[#F5F3ED] text-[#4A4741] rounded text-[11px] font-medium transition-colors border border-[#E0DBD2] cursor-pointer"
+                                        >
+                                          본문
+                                        </button>
+                                        <button 
+                                          onClick={() => {
+                                            setShowSermonSearch(false);
+                                            if (!versions.some(v => v.id === rightSelectedVersionId)) {
+                                              const defaultId = versions.find(v => v.id === 'built-in-kor-revised')?.id || versions[0]?.id || 'built-in-kor-revised';
+                                              setRightSelectedVersionId(defaultId);
+                                            }
+                                            setIsDualView(true);
+                                            setRightNav({ bookId: book.id, chapter: parseInt(chStr, 10), verse: vNum, scrollTrigger: Date.now() });
+                                          }}
+                                          className="px-2 py-0.5 bg-[#FAF0EB] hover:bg-[#F5E2DA] text-[#C46A40] rounded text-[11px] font-semibold transition-colors border border-[#F1D3C6] cursor-pointer"
+                                        >
+                                          듀얼뷰
+                                        </button>
+                                      </div>
+                                    </div>
+                                    {/* 본문 한 줄 요약 */}
+                                    <p className="text-[11px] text-[#5C5852] line-clamp-1 truncate font-serif leading-relaxed">
+                                      {data.sermon}
+                                    </p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -2128,6 +2508,7 @@ const MainApp: React.FC = () => {
           </div>
         )}
       </AnimatePresence>
+
 
 
       <AnimatePresence>

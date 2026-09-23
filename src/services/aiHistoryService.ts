@@ -27,9 +27,15 @@ export function getCommentaryHistory(): CommentaryHistoryItem[] {
     const now = Date.now();
 
     // 30일 이내의 유효한 기록만 필터링 (30일 경과 항목 자동 폐기)
-    const validItems = items.filter(item => item.expiresAt > now);
+    // 단어 심층 연구, 구절 신학 연구 등 부속 연구는 제외하고 순수 성경 구절 주석만 유지
+    const validItems = items.filter(item => {
+      if (item.expiresAt <= now) return false;
+      if (item.id && (item.id.includes('_etymology') || item.id.includes('_passage'))) return false;
+      if ((item as any).type && (item as any).type !== 'commentary') return false;
+      return true;
+    });
 
-    // 만료된 항목이 제거된 경우 스토리지 즉시 동기화
+    // 만료된 항목이나 부속 연구가 제거된 경우 스토리지 즉시 동기화
     if (validItems.length !== items.length) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(validItems));
     }
@@ -102,6 +108,25 @@ export function deleteCommentaryHistoryItem(reference: string): void {
     const history = getCommentaryHistory();
     const filtered = history.filter(item => item.reference.trim() !== reference.trim());
     localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+
+    // 로그인된 회원의 경우 클라우드에서도 비동기 삭제 및 카운트 동기화
+    import('../api/firebaseConfig').then(({ auth, db }) => {
+      if (auth.currentUser) {
+        const uid = auth.currentUser.uid;
+        import('firebase/firestore').then(async ({ doc, deleteDoc }) => {
+          try {
+            const docId = reference.trim().replace(/\s+/g, '_');
+            const docRef = doc(db, 'users', uid, 'cloudCommentaries', docId);
+            await deleteDoc(docRef);
+            await getCloudCommentaryCount(uid);
+            window.dispatchEvent(new CustomEvent('ai-history-updated'));
+          } catch (e) {
+            console.warn('[aiHistoryService] Cloud delete error:', e);
+          }
+        });
+      }
+    });
+
     window.dispatchEvent(new CustomEvent('ai-history-updated'));
   } catch (err) {
     console.error('Failed to delete history item:', err);
@@ -174,3 +199,88 @@ export async function syncLocalHistoryToCloud(uid: string): Promise<number> {
     return 0;
   }
 }
+
+/**
+ * Firestore cloudCommentaries 서브컬렉션에서 저장된 모든 주석 목록을 조회하여 로컬 형식으로 변환
+ * (단어 심층 연구, 구절 신학 연구 등 부속 연구 문서는 제외하고 순수 성경 구절 주석만 로드)
+ */
+export async function fetchCloudCommentaryHistory(uid: string): Promise<CommentaryHistoryItem[]> {
+  try {
+    const { collection, getDocs } = await import('firebase/firestore');
+    const { db } = await import('../api/firebaseConfig');
+    const colRef = collection(db, 'users', uid, 'cloudCommentaries');
+    const snap = await getDocs(colRef);
+    const list: CommentaryHistoryItem[] = [];
+
+    snap.forEach(d => {
+      const data = d.data();
+      // 단어 심층 연구(word), 구절 신학 연구(passage) 등 부속 연구 문서는 제외하고 순수 성경 구절 주석만 로드
+      if (data.type && data.type !== 'commentary') return;
+      if (d.id.includes('_etymology') || d.id.includes('_passage')) return;
+
+      const ref = data.reference || d.id.replace(/_/g, ' ');
+      const bookName = ref.split(' ')[0] || '';
+      const chVs = ref.split(' ')[1] || '';
+      const chapter = parseInt(chVs.split(':')[0] || '1', 10);
+      const verse = parseInt(chVs.split(':')[1] || '1', 10);
+
+      list.push({
+        id: d.id,
+        reference: ref,
+        bookName,
+        chapter,
+        verse,
+        scriptureText: data.scriptureText || '',
+        createdAt: data.savedAt || Date.now(),
+        expiresAt: Date.now() + 100 * 365 * 24 * 60 * 60 * 1000, // 클라우드 영구 보관 (100년)
+        data: data as any,
+      });
+    });
+
+    list.sort((a, b) => b.createdAt - a.createdAt);
+    return list;
+  } catch (err) {
+    console.error('[aiHistoryService] Failed to fetch cloud commentary history:', err);
+    return [];
+  }
+}
+
+/**
+ * Firestore cloudCommentaries 서브컬렉션의 순수 성경 구절 주석(type: 'commentary') 문서 수를 0초 만에 집계
+ * (단어 심층 연구, 구절 신학 연구 등은 제외하고 순수 성경 구절 주석 개수만 정확히 집계)
+ * 동시에 상위 유저 문서(users/{uid})의 usedCloudCommentaryCount 필드를 자동 동기화
+ */
+export async function getCloudCommentaryCount(uid: string): Promise<number> {
+  try {
+    const { collection, getCountFromServer, query, where, doc, updateDoc, getDocs } = await import('firebase/firestore');
+    const { db } = await import('../api/firebaseConfig');
+    const colRef = collection(db, 'users', uid, 'cloudCommentaries');
+    
+    // 1. type == 'commentary' 쿼리로 0초 만에 고속 집계
+    const q = query(colRef, where('type', '==', 'commentary'));
+    const snap = await getCountFromServer(q);
+    let count = snap.data().count;
+
+    // 2. 만약 과거 문서 중 type 필드가 누락된 경우를 대비한 안전 체크
+    if (count === 0) {
+      const allSnap = await getCountFromServer(colRef);
+      if (allSnap.data().count > 0) {
+        const docsSnap = await getDocs(colRef);
+        count = docsSnap.docs.filter(d => {
+          const dt = d.data();
+          return dt.type === 'commentary' || (!dt.type && !d.id.includes('_'));
+        }).length;
+      }
+    }
+
+    // 상위 유저 문서의 usedCloudCommentaryCount 필드도 순수 성경구절 주석 수로 백그라운드 자동 보정
+    const userRef = doc(db, 'users', uid);
+    updateDoc(userRef, { usedCloudCommentaryCount: count }).catch(() => {});
+
+    return count;
+  } catch (err) {
+    console.warn('[aiHistoryService] getCloudCommentaryCount non-fatal:', err);
+    return 0;
+  }
+}
+
