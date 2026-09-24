@@ -930,11 +930,11 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   </button>
 
                   <div className="border-t border-[#F1D3C6] pt-4">
-                    <span className="text-[11px] font-bold text-[#C46A40] block mb-2.5">스탠다드의 모든 혜택, 추가로:</span>
+                    <span className="text-[11px] font-bold text-[#C46A40] block mb-2.5">Free의 모든 혜택 +</span>
                     <ul className="text-xs text-[#524F4A] space-y-2.5">
                       <li className="flex items-start gap-2">
                         <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
-                        <span><strong>AI 주석 1,000 크레딧 대용량 제공</strong></span>
+                        <span><strong>AI 주석 1,000 크레딧</strong> (유효기간 무제한)</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
@@ -942,17 +942,12 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                       </li>
                       <li className="flex items-start gap-2">
                         <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
-                        <span>모든 기기 실시간 연동 (AI 주석 제외)</span>
+                        <span>모든 기기 실시간 연동</span>
                       </li>
-                      {/* 요청하신 추가 문구 */}
                       <li className="flex items-start gap-2 pl-6 -mt-1">
                         <span className="text-[11px] text-[#7A756D] leading-relaxed">
                           (AI 주석은 기기에 30일 저장, 저장된 기기에서 열람가능)
                         </span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
-                        <span>우선순위 AI 처리 속도 지원</span>
                       </li>
                     </ul>
                   </div>
@@ -1206,6 +1201,9 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
               </li>
               <li>
                 향후 서비스 종료 등 불가피한 사유 발생 시 최소 60일 전 사전 공지되며, 회원님이 정성껏 축적하신 주석 데이터를 파일(PDF/텍스트)로 영구 소장하실 수 있도록 일괄 백업 기능을 제공합니다.
+              </li>
+              <li>
+                결제하신 크레딧 및 이용권은 디지털 콘텐츠 특성상 1회라도 이용하거나 회원님의 개인적인 사정으로 인한 중도 환불은 불가합니다. 단, 서비스 종료 등 불가피한 사유 발생 시에는 공지일 기준 6개월 이내의 결제 사항에 대해서만 남은 크레딧에 대해 환불해 드립니다.
               </li>
             </ul>
           </div>
