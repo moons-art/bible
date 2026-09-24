@@ -23,6 +23,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { AiCommentaryPanel, ClaudeSparkleIcon, type AiTabType } from './components/AiCommentaryPanel';
 import { useAiUsage } from './hooks/useAiUsage';
 import { getCommentaryHistory, getCloudCommentaryCount, getTotalMergedCommentaryCount } from './services/aiHistoryService';
+import { useIsMobile } from './hooks/useIsMobile';
 import { getBibleReferenceMatchScore, parseBibleReference, isBibleReferenceMatch } from './utils/referenceParser';
 import { AuthModal } from './components/AuthModal';
 import { ClaudeAuthPage } from './components/ClaudeAuthPage';
@@ -227,6 +228,7 @@ const MainApp: React.FC = () => {
     }
   });
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const isMobile = useIsMobile(768);
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authPageSection, setAuthPageSection] = useState<'login' | 'pricing'>('login');
@@ -954,32 +956,48 @@ const MainApp: React.FC = () => {
       {/* Sidebar - Claude Aesthetic */}
       <AnimatePresence>
         {isSidebarOpen && (
-          <motion.aside
-            ref={leftSidebarRef}
-            initial={{ x: -leftSidebarWidth, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: -leftSidebarWidth, opacity: 0 }}
-            transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-            style={{ width: `${leftSidebarWidth}px` }}
-            onMouseEnter={openSidebarWithHover}
-            onMouseLeave={closeSidebarWithHover}
-            className="fixed left-0 top-0 bottom-0 z-50 border-r border-[#EBE6DF] bg-[#FBF9F7] shadow-2xl shadow-black/10 select-none flex flex-col group/sidebar"
-          >
-            {/* Claude Style Resize Border Handle (화살표 카드 제거, 얇은 샌드 드래그 라인만 유지) */}
-            <div
-              onMouseDown={(e) => {
-                e.preventDefault();
-                setIsResizingLeftSidebar(true);
-              }}
-              className={`
-                absolute -right-2 top-0 bottom-0 w-4 z-50 cursor-col-resize flex items-center justify-center group/resizer transition-all
-                ${isResizingLeftSidebar ? 'opacity-100' : 'opacity-0 hover:opacity-100'}
-              `}
-              title="드래그하여 너비 조절 (왼쪽으로 밀면 닫힘)"
+          <>
+            {/* 모바일일 때 배경 딤 오버레이 (성경 본문이 살짝 비치는 영역을 탭하면 닫힘) */}
+            {isMobile && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => {
+                  setIsSidebarOpen(false);
+                  setIsSidebarPinned(false);
+                }}
+                className="fixed inset-0 z-40 bg-black/45 backdrop-blur-2xs cursor-pointer"
+              />
+            )}
+            <motion.aside
+              ref={leftSidebarRef}
+              initial={{ x: isMobile ? '-100%' : -leftSidebarWidth, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: isMobile ? '-100%' : -leftSidebarWidth, opacity: 0 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              style={{ width: isMobile ? 'min(86vw, 340px)' : `${leftSidebarWidth}px` }}
+              onMouseEnter={!isMobile ? openSidebarWithHover : undefined}
+              onMouseLeave={!isMobile ? closeSidebarWithHover : undefined}
+              className="fixed left-0 top-0 bottom-0 z-50 border-r border-[#EBE6DF] bg-[#FBF9F7] shadow-2xl shadow-black/10 select-none flex flex-col group/sidebar"
             >
-              {/* Hover/Drag Highlight Line */}
-              <div className={`w-0.5 h-full transition-colors ${isResizingLeftSidebar ? 'bg-[#D97757]' : 'bg-[#D97757]/70 group-hover/resizer:bg-[#D97757]'}`} />
-            </div>
+              {/* Claude Style Resize Border Handle (PC 전용) */}
+              {!isMobile && (
+                <div
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setIsResizingLeftSidebar(true);
+                  }}
+                  className={`
+                    absolute -right-2 top-0 bottom-0 w-4 z-50 cursor-col-resize flex items-center justify-center group/resizer transition-all
+                    ${isResizingLeftSidebar ? 'opacity-100' : 'opacity-0 hover:opacity-100'}
+                  `}
+                  title="드래그하여 너비 조절 (왼쪽으로 밀면 닫힘)"
+                >
+                  {/* Hover/Drag Highlight Line */}
+                  <div className={`w-0.5 h-full transition-colors ${isResizingLeftSidebar ? 'bg-[#D97757]' : 'bg-[#D97757]/70 group-hover/resizer:bg-[#D97757]'}`} />
+                </div>
+              )}
 
             <div className="p-3.5 h-full flex flex-col w-full overflow-x-hidden text-[#4A4741]">
               {/* Header: NATIONS BIBLE AI 영문 2줄 표시 + 사이드바 닫기 버튼 */}
@@ -1471,8 +1489,9 @@ const MainApp: React.FC = () => {
               </div>
             </div>
           </motion.aside>
-        )}
-      </AnimatePresence>
+        </>
+      )}
+    </AnimatePresence>
 
       <div className="flex-1 flex overflow-hidden">
         <div className={`flex flex-col flex-1 overflow-hidden bg-white ${isSearchOpen ? 'w-2/3' : 'w-full'}`}>
@@ -1484,10 +1503,10 @@ const MainApp: React.FC = () => {
             }}
           >
             {/* Header - 슬림하고 클로드 스타일에 맞춘 상단바 */}
-            <header className="min-h-14 border-b border-[#E5E0D8] flex items-center justify-between px-4 md:px-6 py-2 bg-[#FBF9F7]/95 backdrop-blur-md sticky top-0 z-30 shadow-2xs">
+            <header className="min-h-12 sm:min-h-14 border-b border-[#E5E0D8] flex items-center justify-between px-2 sm:px-6 py-1.5 sm:py-2 bg-[#FBF9F7]/95 backdrop-blur-md sticky top-0 z-30 shadow-2xs">
               
               {/* Left: 사이드바 토글 버튼 & AI 주석 버튼 (좌측 사이드바 옆) */}
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
                 <button 
                   ref={sidebarToggleBtnRef}
                   type="button"
@@ -1504,10 +1523,10 @@ const MainApp: React.FC = () => {
                       setIsSidebarPinned(true);
                     }
                   }}
-                  onMouseEnter={openSidebarWithHover}
-                  onMouseLeave={closeSidebarWithHover}
+                  onMouseEnter={!isMobile ? openSidebarWithHover : undefined}
+                  onMouseLeave={!isMobile ? closeSidebarWithHover : undefined}
                   className="p-1.5 hover:bg-[#F3EFE9] rounded-lg transition-colors text-[#524E48] hover:text-[#2B2927] shrink-0 border border-transparent hover:border-[#E5E0D8] cursor-pointer"
-                  title="사이드바 (클릭하면 고정되어 열리며, 마우스를 올리면 자동으로 열립니다)"
+                  title="사이드바 열기/닫기"
                 >
                   <PanelLeft className="w-5 h-5 stroke-[1.6px]" />
                 </button>
@@ -1525,7 +1544,7 @@ const MainApp: React.FC = () => {
                       setAiSelectedVerse({ verse: vNum, text: verseText });
                     }
                   }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all text-xs shrink-0 cursor-pointer ${
+                  className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl transition-all text-xs shrink-0 cursor-pointer ${
                     isAiCommentaryOpen 
                       ? 'bg-[#FAF0EB] text-[#C46A40] font-medium border border-[#F1D3C6] shadow-2xs' 
                       : 'text-[#4A4741] hover:bg-[#F3EFE9] border border-transparent hover:border-[#E5E0D8]'
@@ -1537,14 +1556,14 @@ const MainApp: React.FC = () => {
                 </button>
 
                 {isSettingsPageOpen && (
-                  <div className="flex items-center gap-2 pl-1">
+                  <div className="flex items-center gap-1 sm:gap-2 pl-1">
                     <div className="w-px h-3.5 bg-[#E5E0D8]"></div>
                     <button
                       onClick={() => setIsSettingsPageOpen(false)}
-                      className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-[#6E6A63] hover:text-[#2B2927] hover:bg-[#F3EFE9] rounded-lg transition-colors cursor-pointer"
+                      className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 text-xs font-medium text-[#6E6A63] hover:text-[#2B2927] hover:bg-[#F3EFE9] rounded-lg transition-colors cursor-pointer"
                     >
                       <ArrowLeft className="w-3.5 h-3.5 stroke-[1.8px]" />
-                      <span>성경 본문</span>
+                      <span className="hidden sm:inline">성경 본문</span>
                     </button>
                     <span className="text-xs text-[#8C877D]">/</span>
                     <span className="text-xs font-semibold text-[#2B2927]">환경설정</span>
@@ -1553,7 +1572,7 @@ const MainApp: React.FC = () => {
               </div>
 
               {/* Right: 핵심 3개 메뉴 (미니멀 클로드 스타일) */}
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
                 {/* 1) 본문 듀얼뷰 */}
                 <button 
                   onClick={() => {
@@ -1566,40 +1585,46 @@ const MainApp: React.FC = () => {
                     }
                     setIsDualView(!isDualView);
                   }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all text-xs font-normal shrink-0 cursor-pointer ${
+                  className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl transition-all text-xs font-normal shrink-0 cursor-pointer ${
                     isDualView 
                       ? 'bg-[#EBE5DC] text-[#2B2927] font-medium' 
                       : 'text-[#4A4741] hover:bg-[#F3EFE9]'
                   }`}
+                  title="본문 듀얼뷰"
                 >
                   <Columns className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" />
-                  <span>본문 듀얼뷰</span>
+                  <span className="hidden sm:inline">본문 듀얼뷰</span>
+                  <span className="sm:hidden text-[11px]">듀얼뷰</span>
                 </button>
 
                 {/* 2) 설교노트 */}
                 <button 
                   onClick={(e) => { e.stopPropagation(); toggleSermonSidebar(); }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all text-xs font-normal shrink-0 cursor-pointer ${
+                  className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl transition-all text-xs font-normal shrink-0 cursor-pointer ${
                     isSermonSidebarOpen 
                       ? 'bg-[#EBE5DC] text-[#2B2927] font-medium' 
                       : 'text-[#4A4741] hover:bg-[#F3EFE9]'
                   }`}
+                  title="설교노트"
                 >
                   <FileEdit className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" /> 
-                  <span>설교노트</span>
+                  <span className="hidden sm:inline">설교노트</span>
+                  <span className="sm:hidden text-[11px]">노트</span>
                 </button>
 
                 {/* 3) 성경검색 */}
                 <button 
                   onClick={() => setIsSearchOpen(!isSearchOpen)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all text-xs font-normal shrink-0 cursor-pointer ${
+                  className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl transition-all text-xs font-normal shrink-0 cursor-pointer ${
                     isSearchOpen 
                       ? 'bg-[#EBE5DC] text-[#2B2927] font-medium' 
                       : 'text-[#4A4741] hover:bg-[#F3EFE9]'
                   }`}
+                  title="성경검색"
                 >
                   <Search className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" />
-                  <span>성경검색</span>
+                  <span className="hidden sm:inline">성경검색</span>
+                  <span className="sm:hidden text-[11px]">검색</span>
                 </button>
               </div>
             </header>
@@ -1645,7 +1670,7 @@ const MainApp: React.FC = () => {
                   {/* 메인 성경 본문 영역 (단독 또는 듀얼뷰) */}
                   <div 
                     className="flex h-full overflow-hidden bg-[#FAF9F5] relative"
-                    style={{ width: isAiCommentaryOpen ? `${100 - aiSplitPosition}%` : '100%' }}
+                    style={{ width: (!isMobile && isAiCommentaryOpen) ? `${100 - aiSplitPosition}%` : '100%' }}
                   >
                     {/* Left Pane (Main) */}
                     <div 
@@ -1787,8 +1812,8 @@ const MainApp: React.FC = () => {
                     )}
                   </div>
 
-                  {/* AI 주석창 리사이저 바 */}
-                  {isAiCommentaryOpen && (
+                  {/* AI 주석창 리사이저 바 (PC 전용) */}
+                  {!isMobile && isAiCommentaryOpen && (
                     <div 
                       onMouseDown={(e) => {
                         e.preventDefault();
@@ -1804,14 +1829,15 @@ const MainApp: React.FC = () => {
                     </div>
                   )}
 
-                  {/* AI 주석 듀얼뷰 패널 */}
+                  {/* AI 주석 듀얼뷰 패널 / 모바일 전체화면 패널 */}
                   {isAiCommentaryOpen && (
                     <div 
-                      className="h-full z-20 flex-shrink-0"
-                      style={{ width: `${aiSplitPosition}%` }}
+                      className={isMobile ? "fixed inset-0 z-50 w-full h-full bg-[#FAF9F5] flex flex-col" : "h-full z-20 flex-shrink-0"}
+                      style={isMobile ? undefined : { width: `${aiSplitPosition}%` }}
                     >
                       <AiCommentaryPanel 
                         isOpen={isAiCommentaryOpen}
+                        isMobile={isMobile}
                         onClose={() => {
                           setIsAiCommentaryOpen(false);
                           setAiRechargeTrigger(0);
@@ -1856,16 +1882,26 @@ const MainApp: React.FC = () => {
 
         {/* Search Side Panel - Claude Style */}
         {isSearchOpen && (
-          <aside className="search-side-panel w-[350px] shrink-0 border-l border-[#E5E0D8] bg-[#FBF9F7] text-[#2B2927]">
-            <div className="search-panel-header bg-[#FBF9F7] border-b border-[#F0EBE1] p-4">
+          <aside className={`search-side-panel ${isMobile ? 'fixed inset-0 z-50 w-full h-full' : 'w-[350px] shrink-0 border-l'} border-[#E5E0D8] bg-[#FBF9F7] text-[#2B2927] flex flex-col`}>
+            <div className="search-panel-header bg-[#FBF9F7] border-b border-[#F0EBE1] p-3 sm:p-4">
               <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  {isMobile && (
+                    <button
+                      onClick={() => setIsSearchOpen(false)}
+                      className="flex items-center gap-1 px-2 py-1 bg-white hover:bg-[#EAE4DA] rounded-lg transition-colors text-xs font-semibold text-[#6A6864] hover:text-[#2C2B29] mr-1 shadow-2xs cursor-pointer"
+                      title="성경 본문으로 돌아가기"
+                    >
+                      <ArrowLeft className="w-4 h-4 stroke-[2px]" />
+                      <span>본문으로</span>
+                    </button>
+                  )}
                   <Search className="w-4 h-4 text-[#6E6A63] stroke-[1.8px]" />
                   <h2 className="text-sm font-semibold text-[#2B2927]">성경 검색</h2>
                 </div>
                 <button 
                   onClick={() => setIsSearchOpen(false)}
-                  className="p-1 hover:bg-[#F3EFE9] rounded-lg text-[#8C877D] hover:text-[#2B2927] transition-colors cursor-pointer"
+                  className="p-1.5 hover:bg-[#F3EFE9] rounded-lg text-[#8C877D] hover:text-[#2B2927] transition-colors cursor-pointer"
                   title="검색 닫기"
                 >
                   <X className="w-4 h-4 stroke-[1.8px]" />
@@ -1945,8 +1981,12 @@ const MainApp: React.FC = () => {
                       setNav({
                         bookId: res.bookId,
                         chapter: res.chapter,
-                        verse: res.verse
+                        verse: res.verse,
+                        scrollTrigger: Date.now()
                       });
+                      if (isMobile) {
+                        setIsSearchOpen(false);
+                      }
                     }}
                     className="group bg-white border border-[#E5E0D8] rounded-xl p-3 mb-2 shadow-2xs hover:border-[#DED8CE] hover:bg-[#F3EFE9]/50 transition-all cursor-pointer"
                   >
@@ -2072,7 +2112,7 @@ const MainApp: React.FC = () => {
       {/* Note Search Modal (구절 주석 보관함 검색) */}
       <AnimatePresence>
         {showNoteSearch && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center px-2 sm:px-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -2084,10 +2124,10 @@ const MainApp: React.FC = () => {
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative w-full max-w-xl bg-[#FAF9F5] rounded-2xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[82vh]"
+              className="relative w-full max-w-[95vw] sm:max-w-xl bg-[#FAF9F5] rounded-2xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[82vh]"
             >
               {/* Header (구절주석 검색) */}
-              <div className="p-4 border-b border-[#E7E5DF] bg-[#FAF9F5] space-y-3 shrink-0">
+              <div className="p-3 sm:p-4 border-b border-[#E7E5DF] bg-[#FAF9F5] space-y-2.5 sm:space-y-3 shrink-0">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <MessageSquare className="w-4 h-4 text-[#2C2B29] stroke-[1.8px] shrink-0" />
@@ -2309,7 +2349,7 @@ const MainApp: React.FC = () => {
       {/* Sermon Search Modal (구절 메모 보관함 검색) */}
       <AnimatePresence>
         {showSermonSearch && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center px-2 sm:px-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -2321,10 +2361,10 @@ const MainApp: React.FC = () => {
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative w-full max-w-xl bg-[#FAF9F5] rounded-2xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[82vh]"
+              className="relative w-full max-w-[95vw] sm:max-w-xl bg-[#FAF9F5] rounded-2xl border border-[#E7E5DF] shadow-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[82vh]"
             >
               {/* Header (구절노트 검색) */}
-              <div className="p-4 border-b border-[#E7E5DF] bg-[#FAF9F5] space-y-3 shrink-0">
+              <div className="p-3 sm:p-4 border-b border-[#E7E5DF] bg-[#FAF9F5] space-y-2.5 sm:space-y-3 shrink-0">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <FileEdit className="w-4 h-4 text-[#2C2B29] stroke-[1.8px] shrink-0" />

@@ -68,7 +68,7 @@ const VerseItem = React.memo<{
     >
       {/* 제목이 있을 경우: 구절 번호보다 위에 단독 헤더로 표시 */}
       {verse.title && (
-        <div className={`pt-2.5 pb-1.5 font-bold text-[0.92em] tracking-tight flex items-center gap-1.5 pl-8 ${isSelected || isHighlighted ? 'text-[#C96442]' : 'text-[#C96442]/90'}`}>
+        <div className={`pt-2 pb-1 font-bold text-[0.92em] tracking-tight flex items-center gap-1.5 pl-6 sm:pl-8 ${isSelected || isHighlighted ? 'text-[#C96442]' : 'text-[#C96442]/90'}`}>
           <span className="w-1.5 h-3.5 bg-[#C96442] rounded-full inline-block shrink-0"></span>
           <span>{verse.title}</span>
         </div>
@@ -429,7 +429,7 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
           <div 
             ref={el => { scrollContainerRefs.current[idx] = el; }}
             onScroll={(e) => handleScroll(idx, e)}
-            className="flex-1 overflow-y-auto custom-scrollbar px-4 sm:px-6 py-4 space-y-0.5 pb-32"
+            className="flex-1 overflow-y-auto custom-scrollbar px-2.5 sm:px-6 py-2.5 sm:py-4 space-y-0.5 pb-32"
           >
             {data.verses.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-[#A3A19B] text-xs italic">
@@ -439,11 +439,11 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
               <>
                 {/* Claude Chapter Hero Banner */}
                 {idx === 0 && (
-                  <div className="py-5 px-4 mb-4 rounded-2xl bg-gradient-to-b from-[#F5F3ED]/80 to-transparent border border-[#E7E5DF]/70 text-center flex flex-col items-center shadow-xs">
-                    <span className="text-[10px] font-bold text-[#C96442] tracking-widest uppercase bg-[#FAF0EB] px-2.5 py-0.5 rounded-full mb-1.5">
+                  <div className="py-3 sm:py-5 px-3 sm:px-4 mb-3 sm:mb-4 rounded-2xl bg-gradient-to-b from-[#F5F3ED]/80 to-transparent border border-[#E7E5DF]/70 text-center flex flex-col items-center shadow-xs">
+                    <span className="text-[10px] font-bold text-[#C96442] tracking-widest uppercase bg-[#FAF0EB] px-2.5 py-0.5 rounded-full mb-1">
                       {currentBookName}
                     </span>
-                    <h2 className="font-serif text-2xl sm:text-3xl font-bold text-[#2C2B29] tracking-tight">
+                    <h2 className="font-serif text-xl sm:text-3xl font-bold text-[#2C2B29] tracking-tight">
                       {currentBookName} {currentChapter}장
                     </h2>
                   </div>
@@ -480,7 +480,7 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
               initial={{ y: 50, opacity: 0, x: "-50%" }}
               animate={{ y: 0, opacity: 1, x: "-50%" }}
               exit={{ y: 50, opacity: 0, x: "-50%" }}
-              className="fixed bottom-6 left-1/2 bg-[#2C2B29]/95 text-white shadow-2xl rounded-2xl px-3 py-1.5 flex items-center gap-1.5 z-[999999] border border-[#E7E5DF]/20 backdrop-blur-md overflow-x-auto max-w-[95vw] custom-scrollbar"
+              className="fixed bottom-3 sm:bottom-6 left-1/2 bg-[#2C2B29]/95 text-white shadow-2xl rounded-2xl px-2 sm:px-3 py-1 sm:py-1.5 flex items-center gap-1 sm:gap-1.5 z-[999999] border border-[#E7E5DF]/20 backdrop-blur-md overflow-x-auto max-w-[96vw] custom-scrollbar"
             >
               <div className="flex items-center gap-1.5 px-2.5 shrink-0">
                 <span className="text-[#FAF0EB] font-bold text-xs tracking-tight">{selectedVerses.size}개 구절</span>

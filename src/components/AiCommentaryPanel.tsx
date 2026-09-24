@@ -4,7 +4,7 @@ import {
   X, Sparkles, RefreshCw, Copy, Check, ChevronRight, ChevronDown,
   BookOpen, Landmark, Lightbulb, AlertCircle, CreditCard,
   History, Trash2, Calendar, Clock, Compass, ArrowRightLeft, LogIn,
-  Gift, Send, Database, HardDrive, Search
+  Gift, Send, Database, HardDrive, Search, ArrowLeft
 } from 'lucide-react';
 import { auth } from '../api/firebaseConfig';
 import { getReferralSettings, submitReferralRequest, getPromotionSettings } from '../services/promotionService';
@@ -61,6 +61,7 @@ interface AiCommentaryPanelProps {
   onResetRechargeTrigger?: () => void;
   onOpenAuthModal?: () => void;
   onOpenPricingPage?: () => void;
+  isMobile?: boolean;
 }
 
 type TabType = AiTabType;
@@ -79,7 +80,8 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   openRechargeTrigger,
   onResetRechargeTrigger,
   onOpenAuthModal,
-  onOpenPricingPage
+  onOpenPricingPage,
+  isMobile = false
 }) => {
   const { totalRemaining, totalCapacity, freeRemaining, paidRemaining, isAvailable, recharge, remainingDaysText, isLoggedIn, cloudCommentaryLimit, usedCloudCommentaryCount } = useAiUsage();
   const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'all');
@@ -1148,8 +1150,18 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
     <div className="flex flex-col h-full bg-[#FAF9F5] text-[#2C2B29] border-l border-[#E7E5DF] relative select-text overflow-hidden font-sans">
 
       {/* 1. 헤더 (클로드 웜 샌드 스타일 - 좌측 바와 완벽한 h-14 수직 정렬) */}
-      <header className="h-14 min-h-14 px-4 md:px-5 border-b border-[#E7E5DF] bg-[#F7F5F0]/90 backdrop-blur-xs flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2.5 min-w-0">
+      <header className="h-14 min-h-14 px-3 sm:px-5 border-b border-[#E7E5DF] bg-[#F7F5F0]/90 backdrop-blur-xs flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          {isMobile && (
+            <button
+              onClick={onClose}
+              className="flex items-center gap-1 px-2 py-1 bg-white hover:bg-[#EAE4DA] rounded-lg transition-colors text-xs font-semibold text-[#6A6864] hover:text-[#2C2B29] mr-0.5 shadow-2xs cursor-pointer shrink-0"
+              title="성경 본문으로 돌아가기"
+            >
+              <ArrowLeft className="w-4 h-4 stroke-[2px]" />
+              <span>본문으로</span>
+            </button>
+          )}
           <div className="w-7 h-7 rounded-lg bg-[#EFECE6] text-[#4A4741] border border-[#DDD8CE] flex items-center justify-center shrink-0 shadow-2xs">
             <ClaudeSparkleIcon className="w-4 h-4 text-[#4A4741]" />
           </div>
@@ -1159,18 +1171,19 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
         </div>
 
         {/* 우측: 잔여 크레딧 안내 및 닫기 버튼 */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           {isLoggedIn && (
             <button
               onClick={() => onOpenPricingPage ? onOpenPricingPage() : setShowRechargeModal(true)}
-              className="flex items-center gap-1.5 px-1 py-1 rounded-md text-xs text-[#5A564F] hover:text-[#2C2B29] transition-colors cursor-pointer whitespace-nowrap"
+              className="flex items-center gap-1 px-1 py-1 rounded-md text-xs text-[#5A564F] hover:text-[#2C2B29] transition-colors cursor-pointer whitespace-nowrap"
               title="크레딧 확인 및 충전"
             >
               <CreditCard className="w-3.5 h-3.5 text-[#6E6A63] stroke-[1.5px] shrink-0" />
-              <span className="text-[#5A564F] font-medium">보유 크레딧:</span>
+              <span className="text-[#5A564F] font-medium hidden sm:inline">보유 크레딧:</span>
+              <span className="text-[#5A564F] font-medium sm:hidden">크레딧:</span>
               <strong className="font-bold text-[#2C2B29]">{totalRemaining}</strong>
-              <span className="w-px h-3 bg-[#DDD7CD] mx-0.5"></span>
-              <span className="text-[#5A564F] text-[11px] font-medium">{remainingDaysText}</span>
+              <span className="w-px h-3 bg-[#DDD7CD] mx-0.5 hidden sm:inline"></span>
+              <span className="text-[#5A564F] text-[11px] font-medium hidden sm:inline">{remainingDaysText}</span>
               <span className="w-px h-3 bg-[#DDD7CD] mx-0.5"></span>
               <span className="text-[#C46A40] font-bold text-[11px] hover:underline">충전</span>
             </button>

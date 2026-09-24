@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileEdit, Plus, Calendar, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers, BookOpen, Folder, FolderOpen } from 'lucide-react';
+import { X, FileEdit, Plus, Calendar, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers, BookOpen, Folder, FolderOpen, ArrowLeft } from 'lucide-react';
 import { db, auth } from '../api/firebaseConfig';
 import { doc, collection, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
 import { BIBLE_LIST } from '../constants/bibleMeta';
 import { extractBibleBookFromText, parseBibleReference, isBibleReferenceMatch } from '../utils/referenceParser';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 
 interface Sermon {
@@ -55,6 +56,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   sidebarHeight,
   onSidebarHeightChange,
 }, ref) => {
+  const isMobile = useIsMobile(768);
   const [sermons, setSermons] = useState<Sermon[]>([]);
   const [googleUserId, setGoogleUserId] = useState<string | null>(null);
   const unsubscribeSermonsRef = useRef<(() => void) | null>(null);
@@ -377,6 +379,9 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   };
 
   const getContainerClasses = () => {
+    if (isMobile) {
+      return 'fixed inset-0 z-50 bg-[#FAF9F5] flex flex-col border-none shadow-none';
+    }
     switch (dockPosition) {
       case 'right': return `fixed top-0 right-0 border-l border-[#EBE6DF] ${isOverlay ? 'shadow-[-16px_0_45px_rgba(0,0,0,0.18)]' : 'shadow-[-10px_0_40px_rgba(0,0,0,0.1)]'}`;
       case 'bottom': return `fixed bottom-0 left-0 border-t border-[#EBE6DF] ${isOverlay ? 'shadow-[0_-16px_45px_rgba(0,0,0,0.18)]' : 'shadow-[0_-10px_40px_rgba(0,0,0,0.1)]'}`;
@@ -385,6 +390,9 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   };
 
   const getContainerStyle = (): React.CSSProperties => {
+    if (isMobile) {
+      return { width: '100vw', height: '100%', maxWidth: '100vw', maxHeight: '100%', left: 0, top: 0, right: 0, bottom: 0 };
+    }
     if (dockPosition === 'right') {
       return { width: `${sidebarWidth}px`, height: '100%', maxWidth: '90vw' };
     }
@@ -404,7 +412,8 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
 
   const getVariants = () => {
     const isOffScreen = !isOpen;
-    if (isOffScreen || isCollapsed) {
+    if (isOffScreen || (isCollapsed && !isMobile)) {
+      if (isMobile) return { x: '100%', y: 0 };
       switch (dockPosition) {
         case 'right': return { x: '100%', y: 0 };
         case 'bottom': return { x: 0, y: '100%' };
@@ -412,13 +421,14 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
       }
     }
     
-    if (dockPosition === 'free') {
+    if (dockPosition === 'free' && !isMobile) {
       return { scale: 1, opacity: 1 };
     }
     return { x: 0, y: 0 };
   };
 
   const getTabContainerClasses = () => {
+    if (isMobile) return 'hidden';
     switch (dockPosition) {
       case 'right': return 'absolute left-0 top-1/2 -translate-x-full -translate-y-1/2 flex flex-col gap-1.5 z-50';
       case 'bottom': return 'absolute top-0 left-1/2 -translate-y-full -translate-x-1/2 flex flex-row gap-1.5 z-50';
@@ -606,16 +616,39 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
             }}
           >
             <div className="flex items-center gap-1.5 relative z-[110]">
-              <button 
-                onClick={view === 'editor' ? () => setView('list') : handleClose}
-                className="p-1 hover:bg-white rounded-lg transition-colors text-[#6A6864] hover:text-[#2C2B29]"
-                title="뒤로가기"
-              >
-                <ChevronLeft className="w-4 h-4 stroke-[1.5px]" />
-              </button>
-              <h2 className="text-base font-serif font-bold text-[#2C2B29] flex items-center gap-1.5">
-                <FileEdit className="w-4 h-4 text-[#2C2B29] stroke-[1.5px]" />
-                <span>{view === 'editor' ? '설교노트' : '설교노트 목록'}</span>
+              {isMobile ? (
+                <>
+                  <button 
+                    onClick={handleClose}
+                    className="flex items-center gap-1 px-2 py-1 bg-white hover:bg-[#EAE4DA] rounded-lg transition-colors text-xs font-semibold text-[#6A6864] hover:text-[#2C2B29] mr-0.5 shadow-2xs cursor-pointer"
+                    title="성경 본문으로 돌아가기"
+                  >
+                    <ArrowLeft className="w-4 h-4 stroke-[2px]" />
+                    <span>본문으로</span>
+                  </button>
+                  {view === 'editor' && (
+                    <button 
+                      onClick={() => setView('list')}
+                      className="flex items-center gap-0.5 px-1.5 py-1 hover:bg-white rounded-lg transition-colors text-xs font-medium text-[#6A6864] hover:text-[#2C2B29] cursor-pointer"
+                      title="설교노트 목록으로"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5 stroke-[1.5px]" />
+                      <span>목록</span>
+                    </button>
+                  )}
+                </>
+              ) : (
+                <button 
+                  onClick={view === 'editor' ? () => setView('list') : handleClose}
+                  className="p-1 hover:bg-white rounded-lg transition-colors text-[#6A6864] hover:text-[#2C2B29] cursor-pointer"
+                  title="뒤로가기"
+                >
+                  <ChevronLeft className="w-4 h-4 stroke-[1.5px]" />
+                </button>
+              )}
+              <h2 className="text-base font-serif font-bold text-[#2C2B29] flex items-center gap-1.5 truncate">
+                <FileEdit className="w-4 h-4 text-[#2C2B29] stroke-[1.5px] shrink-0" />
+                <span className="truncate">{view === 'editor' ? '설교노트' : '설교노트 목록'}</span>
               </h2>
             </div>
             <div className="flex items-center gap-2 relative z-[110]">
