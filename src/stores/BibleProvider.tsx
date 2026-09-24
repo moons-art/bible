@@ -20,8 +20,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const DEFAULT_ENG: BibleVersion = {
-    id: 'built-in-eng-nrsv',
-    name: 'NRSV',
+    id: 'built-in-eng-kjv',
+    name: 'KJV',
     verses: [],
     isBuiltIn: true,
     isSystem: true,
@@ -29,7 +29,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const [versions, setVersions] = useState<BibleVersion[]>([DEFAULT_KOR, DEFAULT_ENG]);
-  const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>(['built-in-kor-revised', 'built-in-eng-nrsv']);
+  const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>(['built-in-kor-revised', 'built-in-eng-kjv']);
   const [lineHeight, setLineHeight] = useState<number>(1.6);
   const [copyMode, setCopyMode] = useState<CopyMode>('default');
   const [showVersionInCopy, setShowVersionInCopy] = useState<boolean>(() => {
@@ -51,7 +51,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
   const [mainEnVersionId, setMainEnVersionId] = useState<string>(() => {
     try {
-      return localStorage.getItem('bible-copy-main-en') || '';
+      const saved = localStorage.getItem('bible-copy-main-en') || '';
+      return saved === 'built-in-eng-nrsv' ? 'built-in-eng-kjv' : saved;
     } catch { return ''; }
   });
 
@@ -384,21 +385,28 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         loaded = [korEntry, ...loaded.filter(v => v.id !== korEntry!.id)];
       }
 
-      // 2) NRSV (무료 표준 영어 성경) 빌트인 보장
-      let engEntry = loaded.find(v => v.name === 'NRSV' || v.name === 'NRSV (영어)' || v.id === 'built-in-eng-nrsv');
+      // 2) KJV (무료 표준 영어 성경 - 1611 저작권 만료) 빌트인 보장 및 구버전(NRSV) 자동 전환
+      let engEntry = loaded.find(v => v.name === 'KJV' || v.id === 'built-in-eng-kjv');
+      const oldNrsvEntry = loaded.find(v => v.name === 'NRSV' || v.name === 'NRSV (영어)' || v.id === 'built-in-eng-nrsv');
+
+      if (oldNrsvEntry) {
+        // 기존 IndexedDB 구버전 NRSV 삭제 처리
+        bibleDB.deleteVersion(oldNrsvEntry.id).catch(() => {});
+        loaded = loaded.filter(v => v.id !== oldNrsvEntry.id);
+      }
+
       if (!engEntry) {
         engEntry = { ...DEFAULT_ENG };
         loaded.splice(1, 0, engEntry);
       } else {
-        engEntry.name = 'NRSV'; // 기존 캐시의 (영어) 접미사 자동 제거
+        engEntry.name = 'KJV';
         engEntry.isSystem = true;
         engEntry.isBuiltIn = true;
-        engEntry.id = 'built-in-eng-nrsv';
-        // 구버전 캐시 감지 (모든 절이 GEN으로 잘못 들어간 경우 자동 재파싱 유도)
+        engEntry.id = 'built-in-eng-kjv';
         if (engEntry.verses && engEntry.verses.length > 0) {
           const hasExo = engEntry.verses.some(v => v.bookId === 'EXO');
           if (!hasExo) {
-            console.log('[BibleProvider] 구버전 NRSV 캐시 감지 (66권 분리 누락). 66권 전체로 재파싱합니다.');
+            console.log('[BibleProvider] 구버전 KJV 캐시 감지. 재파싱합니다.');
             engEntry.verses = [];
           }
         }
@@ -410,8 +418,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             let fileName: string | null = null;
             if (v.name === '개역한글') {
               fileName = 'korean_revised.txt';
-            } else if (v.name === 'NRSV' || v.name === 'NRSV (영어)' || v.id === 'built-in-eng-nrsv') {
-              fileName = 'nrsv.txt';
+            } else if (v.name === 'KJV' || v.id === 'built-in-eng-kjv') {
+              fileName = 'kjv.txt';
             }
 
             if (fileName) {
@@ -465,8 +473,10 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const savedSelectedStr = localStorage.getItem('bible-selected-versions');
       if (savedSelectedStr) {
         try {
-          const parsed = JSON.parse(savedSelectedStr);
+          let parsed = JSON.parse(savedSelectedStr);
           if (Array.isArray(parsed) && parsed.length > 0) {
+            // nrsv 구버전 ID를 kjv로 자동 치환
+            parsed = parsed.map(id => id === 'built-in-eng-nrsv' ? 'built-in-eng-kjv' : id);
             const valid = parsed.filter(id => hydratedVersions.some(v => v.id === id));
             setSelectedVersionIds(valid.length > 0 ? valid : ['built-in-kor-revised']);
           } else {

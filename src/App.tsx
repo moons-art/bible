@@ -25,6 +25,7 @@ import { useAiUsage } from './hooks/useAiUsage';
 import { getCommentaryHistory, getCloudCommentaryCount, getTotalMergedCommentaryCount } from './services/aiHistoryService';
 import { getBibleReferenceMatchScore, parseBibleReference, isBibleReferenceMatch } from './utils/referenceParser';
 import { AuthModal } from './components/AuthModal';
+import { ClaudeAuthPage } from './components/ClaudeAuthPage';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
 import { PolicyViewModal, type PolicyModalType } from './components/PolicyViewModal';
 import { getSitePolicy, subscribeSitePolicy, type SitePolicy, DEFAULT_SITE_POLICY } from './services/policyService';
@@ -228,6 +229,7 @@ const MainApp: React.FC = () => {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authPageSection, setAuthPageSection] = useState<'login' | 'pricing'>('login');
   const [showAdminDashboardModal, setShowAdminDashboardModal] = useState(false);
   const [promoSettings, setPromoSettings] = useState<{ enabled: boolean; bonusCredits: number; name: string; description?: string } | null>(null);
   const [welcomeModalInfo, setWelcomeModalInfo] = useState<{
@@ -1127,7 +1129,7 @@ const MainApp: React.FC = () => {
                             {v.name}
                           </span>
                           
-                          {/* 우측 관리 메뉴: 시스템 번역본(개역한글, NRSV)은 삭제 불가 보호 배지, 사용자 번역본만 삭제 메뉴 제공 */}
+                          {/* 우측 관리 메뉴: 시스템 번역본(개역한글, KJV)은 삭제 불가 보호 배지, 사용자 번역본만 삭제 메뉴 제공 */}
                           {v.isSystem ? (
                             <div 
                               className="px-1.5 py-0.5 text-[9px] text-[#A3A19B] bg-[#F5F3ED] border border-[#EAE4DA] rounded font-medium select-none shrink-0" 
@@ -1206,11 +1208,12 @@ const MainApp: React.FC = () => {
                   <button
                     onClick={() => {
                       if (!isAuthenticated) {
+                        setAuthPageSection('login');
                         setShowAuthModal(true);
                         return;
                       }
-                      setIsAiCommentaryOpen(true);
-                      setAiRechargeTrigger(prev => prev + 1);
+                      setAuthPageSection('pricing');
+                      setShowAuthModal(true);
                       setIsSidebarOpen(false);
                     }}
                     className="w-full flex flex-col gap-1 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap"
@@ -1238,7 +1241,10 @@ const MainApp: React.FC = () => {
                   {/* 비로그인 시 충전 남은횟수 및 유효기간 아래: 가입 혜택 안내 (위아래 충전/저장과 여백/아이콘 완전 정렬) */}
                   {!isAuthenticated && promoSettings?.enabled && (
                     <div
-                      onClick={() => setShowAuthModal(true)}
+                      onClick={() => {
+                        setAuthPageSection('login');
+                        setShowAuthModal(true);
+                      }}
                       className="w-full flex flex-col gap-1 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap group"
                     >
                       <div className="w-full flex items-center justify-between gap-1.5">
@@ -1264,6 +1270,7 @@ const MainApp: React.FC = () => {
                   <button
                     onClick={() => {
                       if (!isAuthenticated) {
+                        setAuthPageSection('login');
                         setShowAuthModal(true);
                         return;
                       }
@@ -1309,7 +1316,10 @@ const MainApp: React.FC = () => {
               <div className="mt-auto pt-2 border-t border-[#F0EBE1] space-y-1 shrink-0">
                 {!isAuthenticated ? (
                   <button
-                    onClick={() => setShowAuthModal(true)}
+                    onClick={() => {
+                      setAuthPageSection('login');
+                      setShowAuthModal(true);
+                    }}
                     className="w-full flex items-center gap-2 py-2 px-2.5 bg-[#F3EFE9]/70 border border-[#E5E0D8] text-[#4A4741] rounded-xl hover:bg-[#EBE5DC] transition-all group cursor-pointer shadow-2xs"
                   >
                     <svg className="w-4 h-4 shrink-0 grayscale opacity-70 group-hover:opacity-100 transition-opacity" viewBox="0 0 24 24">
@@ -1806,7 +1816,14 @@ const MainApp: React.FC = () => {
                           setIsAiCommentaryOpen(false);
                           setAiRechargeTrigger(0);
                         }}
-                        onOpenAuthModal={() => setShowAuthModal(true)}
+                        onOpenAuthModal={() => {
+                          setAuthPageSection('login');
+                          setShowAuthModal(true);
+                        }}
+                        onOpenPricingPage={() => {
+                          setAuthPageSection('pricing');
+                          setShowAuthModal(true);
+                        }}
                         initialTab={aiPanelTab}
                         openRechargeTrigger={aiRechargeTrigger}
                         onResetRechargeTrigger={() => setAiRechargeTrigger(0)}
@@ -2536,15 +2553,17 @@ const MainApp: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* 이메일/구글 통합 간편 로그인 모달 */}
-      <AnimatePresence>
-        {showAuthModal && (
-          <AuthModal 
-            isOpen={showAuthModal} 
-            onClose={() => setShowAuthModal(false)} 
-          />
-        )}
-      </AnimatePresence>
+      {/* 클로드 스타일 전체화면 로그인 & 요금제 페이지 */}
+      <ClaudeAuthPage 
+        isOpen={showAuthModal} 
+        initialSection={authPageSection}
+        onClose={() => setShowAuthModal(false)}
+        currentUser={auth.currentUser}
+        totalRemaining={totalRemaining}
+        remainingDaysText={remainingDaysText}
+        cloudCommentaryLimit={cloudCommentaryLimit}
+        promoSettings={promoSettings}
+      />
 
       {/* 서비스 이용약관, 개인정보 처리방침, 사업자 정보 모달 */}
       <PolicyViewModal

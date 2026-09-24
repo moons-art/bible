@@ -60,6 +60,7 @@ interface AiCommentaryPanelProps {
   openRechargeTrigger?: number;
   onResetRechargeTrigger?: () => void;
   onOpenAuthModal?: () => void;
+  onOpenPricingPage?: () => void;
 }
 
 type TabType = AiTabType;
@@ -77,7 +78,8 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   initialTab,
   openRechargeTrigger,
   onResetRechargeTrigger,
-  onOpenAuthModal
+  onOpenAuthModal,
+  onOpenPricingPage
 }) => {
   const { totalRemaining, totalCapacity, freeRemaining, paidRemaining, isAvailable, recharge, remainingDaysText, isLoggedIn, cloudCommentaryLimit, usedCloudCommentaryCount } = useAiUsage();
   const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'all');
@@ -1160,7 +1162,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
         <div className="flex items-center gap-2 shrink-0">
           {isLoggedIn && (
             <button
-              onClick={() => setShowRechargeModal(true)}
+              onClick={() => onOpenPricingPage ? onOpenPricingPage() : setShowRechargeModal(true)}
               className="flex items-center gap-1.5 px-1 py-1 rounded-md text-xs text-[#5A564F] hover:text-[#2C2B29] transition-colors cursor-pointer whitespace-nowrap"
               title="크레딧 확인 및 충전"
             >
@@ -1792,7 +1794,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                 <div className="flex items-center gap-2">
                   {errorType === 'QUOTA_EXCEEDED' ? (
                     <button
-                      onClick={() => setShowRechargeModal(true)}
+                      onClick={() => onOpenPricingPage ? onOpenPricingPage() : setShowRechargeModal(true)}
                       className="px-3 py-1.5 rounded-lg bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-medium transition-colors cursor-pointer"
                     >
                       충전 플랜 확인하기
