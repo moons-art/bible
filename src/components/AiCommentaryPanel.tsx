@@ -1155,7 +1155,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
           {isMobile && (
             <button
               onClick={onClose}
-              className="flex items-center gap-1 px-2 py-1 bg-white hover:bg-[#EAE4DA] rounded-lg transition-colors text-xs font-semibold text-[#6A6864] hover:text-[#2C2B29] mr-0.5 shadow-2xs cursor-pointer shrink-0"
+              className="flex items-center gap-1 px-2 py-1 bg-white hover:bg-[#EAE4DA] rounded-lg transition-colors text-xs font-semibold text-[#6A6864] hover:text-[#2C2B29] mr-0.5 shadow-2xs cursor-pointer shrink-0 whitespace-nowrap"
               title="성경 본문으로 돌아가기"
             >
               <ArrowLeft className="w-4 h-4 stroke-[2px]" />
@@ -1200,11 +1200,11 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
       </header>
 
       {/* 2. 서브 툴바 (탭 필터 & 10일 기록 탭) */}
-      <div className="px-4 py-2 bg-[#FAF9F5] border-b border-[#EFECE6] flex items-center justify-between gap-2 shrink-0 text-xs overflow-x-auto custom-scrollbar">
-        <div className="flex items-center gap-1">
+      <div className="px-3 sm:px-4 py-2 bg-[#FAF9F5] border-b border-[#EFECE6] flex items-center justify-between gap-2 shrink-0 text-xs overflow-x-auto no-scrollbar flex-nowrap">
+        <div className="flex items-center gap-1 shrink-0 flex-nowrap">
           <button
             onClick={() => setActiveTab('all')}
-            className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+            className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'all' 
                 ? 'bg-[#EAE4DA] text-[#2C2B29] font-semibold' 
                 : 'text-[#6E6A63] hover:bg-[#F3EFE9]'
@@ -1214,68 +1214,68 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('original')}
-            className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer ${
+            className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'original' 
                 ? 'bg-[#EAE4DA] text-[#2C2B29] font-semibold' 
                 : 'text-[#6E6A63] hover:bg-[#F3EFE9]'
             }`}
           >
-            <BookOpen className="w-3 h-3 text-[#C46A40]" />
-            원어 주석
+            <BookOpen className="w-3 h-3 text-[#C46A40] shrink-0" />
+            <span>원어 주석</span>
           </button>
           <button
             onClick={() => setActiveTab('background')}
-            className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer ${
+            className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'background' 
                 ? 'bg-[#EAE4DA] text-[#2C2B29] font-semibold' 
                 : 'text-[#6E6A63] hover:bg-[#F3EFE9]'
             }`}
           >
-            <Landmark className="w-3 h-3 text-[#8B6B4C]" />
-            배경 설명
+            <Landmark className="w-3 h-3 text-[#8B6B4C] shrink-0" />
+            <span>배경 설명</span>
           </button>
           <button
             onClick={() => setActiveTab('sermon')}
-            className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer ${
+            className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'sermon' 
                 ? 'bg-[#EAE4DA] text-[#2C2B29] font-semibold' 
                 : 'text-[#6E6A63] hover:bg-[#F3EFE9]'
             }`}
           >
-            <Lightbulb className="w-3 h-3 text-[#B87A28]" />
-            설교 인사이트
+            <Lightbulb className="w-3 h-3 text-[#B87A28] shrink-0" />
+            <span>설교 인사이트</span>
           </button>
 
-          {/* 10일간 보관된 주석 기록 탭 */}
+          {/* 보관된 주석 기록 탭 */}
           <button
             onClick={() => setActiveTab('history')}
-            className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer ${
+            className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'history' 
                 ? 'bg-[#C46A40] text-white font-semibold shadow-2xs' 
                 : 'text-[#6E6A63] hover:bg-[#F3EFE9]'
             }`}
-            title="최근 10일간 기기에 저장된 주석 목록"
+            title="기기에 저장된 주석 목록"
           >
-            <History className="w-3 h-3" />
+            <History className="w-3 h-3 shrink-0" />
             <span>기록 ({historyList.length})</span>
           </button>
         </div>
 
         {commentaryData && activeTab !== 'history' && (
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0 flex-nowrap">
             <button
               onClick={handleCopyAll}
-              className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#FAF0EB] hover:bg-[#F5E5DC] text-[#C46A40] transition-colors cursor-pointer font-medium"
+              className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#FAF0EB] hover:bg-[#F5E5DC] text-[#C46A40] transition-colors cursor-pointer font-medium whitespace-nowrap shrink-0"
               title="주석 전체 설교노트 복사"
             >
               {copied ? (
                 <>
-                  <Check className="w-3 h-3 text-emerald-600" />
+                  <Check className="w-3 h-3 text-emerald-600 shrink-0" />
                   <span className="text-emerald-700">복사됨</span>
                 </>
               ) : (
                 <>
-                  <Copy className="w-3 h-3" />
+                  <Copy className="w-3 h-3 shrink-0" />
                   <span>설교노트 복사</span>
                 </>
               )}
@@ -1454,7 +1454,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                       <button
                         type="button"
                         onClick={() => setHistoryViewMode('latest')}
-                        className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer ${
+                        className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                           historyViewMode === 'latest'
                             ? 'bg-white text-[#2C2B29] font-bold shadow-2xs'
                             : 'text-[#7A756D] hover:text-[#2C2B29]'
@@ -1465,7 +1465,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                       <button
                         type="button"
                         onClick={() => setHistoryViewMode('byBook')}
-                        className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer ${
+                        className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                           historyViewMode === 'byBook'
                             ? 'bg-white text-[#2C2B29] font-bold shadow-2xs'
                             : 'text-[#7A756D] hover:text-[#2C2B29]'
@@ -1511,18 +1511,15 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
                               <span className="font-serif font-bold text-xs text-[#2C2B29]">{item.reference}</span>
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#FAF0EB] text-[#C46A40] font-medium shrink-0">
-                                {item.data?.testament || '성경'} ({item.data?.originalLanguageCommentary?.language || '원어'})
-                              </span>
                               {item.storageType === 'cloud' ? (
                                 <span className="text-[10px] text-[#C46A40] bg-[#FAF0EB] px-1.5 py-0.5 rounded border border-[#F1D3C6]/60 flex items-center gap-0.5 shrink-0 font-medium">
                                   <Database className="w-2.5 h-2.5" />
-                                  클라우드 영구보관
+                                  클라우드
                                 </span>
                               ) : (
                                 <span className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/70 flex items-center gap-0.5 shrink-0 font-medium">
                                   <Clock className="w-2.5 h-2.5 text-amber-600" />
-                                  이 기기만 (D-{daysLeft})
+                                  기기보관
                                 </span>
                               )}
                             </div>
@@ -1606,9 +1603,6 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                                         <span className="font-serif font-bold text-xs text-[#2C2B29]">
                                           {item.chapter}장 {item.verse}절
                                         </span>
-                                        <span className="text-[10px] px-1 py-0.2 rounded bg-[#FAF0EB] text-[#C46A40] font-medium">
-                                          {item.data?.originalLanguageCommentary?.language || '원어'}
-                                        </span>
                                         {item.storageType === 'cloud' ? (
                                           <span className="text-[9px] text-[#C46A40] flex items-center gap-0.5">
                                             <Database className="w-2.5 h-2.5" />
@@ -1617,7 +1611,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                                         ) : (
                                           <span className="text-[9px] text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200/60 flex items-center gap-0.5">
                                             <Clock className="w-2 h-2 text-amber-600" />
-                                            기기 (D-{daysLeft})
+                                            기기보관
                                           </span>
                                         )}
                                       </div>

@@ -22,6 +22,8 @@ interface BibleViewerProps {
   onNavigateToDualView?: (bookId: string, chapter: number, verse: number) => void;
   onVerseSelect?: (verse: number, text: string) => void;
   onOpenAiCommentary?: (verse: number, text: string) => void;
+  topNavNode?: React.ReactNode;
+  isMobileScroll?: boolean;
 }
 
 const VerseItem = React.memo<{
@@ -131,7 +133,7 @@ const VerseItem = React.memo<{
 });
 
 export const BibleViewer = React.memo<BibleViewerProps>(({ 
-  selectedVersions, currentBookId, currentChapter = 1, highlightVerse, fontSize = 16, lineHeight, verseSpacing = 3, isMainPane = true, headerRightNode, onCopyToSermon, onNavigateToDualView, onVerseSelect, onOpenAiCommentary
+  selectedVersions, currentBookId, currentChapter = 1, highlightVerse, fontSize = 16, lineHeight, verseSpacing = 3, isMainPane = true, headerRightNode, onCopyToSermon, onNavigateToDualView, onVerseSelect, onOpenAiCommentary, topNavNode, isMobileScroll
 }) => {
   const scrollContainerRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [selectedVerses, setSelectedVerses] = useState<Set<number>>(new Set());
@@ -317,9 +319,12 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
           if (!container) return;
           const verseElement = container.querySelector(`[data-verse="${highlightVerse}"]`) as HTMLElement;
           if (verseElement) {
-            // verseElement.offsetTop을 활용하여 컨테이너 상단으로부터의 정확한 절대 위치 계산
-            const targetTop = Math.max(0, verseElement.offsetTop - 50);
-            container.scrollTo({ top: targetTop, behavior: 'smooth' });
+            if (isMobileScroll) {
+              verseElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else {
+              const targetTop = Math.max(0, verseElement.offsetTop - 50);
+              container.scrollTo({ top: targetTop, behavior: 'smooth' });
+            }
           }
         });
 
@@ -410,15 +415,15 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
   const currentBookName = BIBLE_LIST.find(b => b.id === currentBookId)?.name || currentBookId;
 
   return (
-    <div className="h-full flex overflow-hidden bg-[#FAF9F5] relative">
+    <div className={`w-full bg-[#FAF9F5] relative ${isMobileScroll ? 'flex' : 'h-full flex overflow-hidden'}`}>
       {displayData.map((data, idx: number) => (
         <div 
           key={data.id} 
-          className="flex-1 flex flex-col border-r border-[#E7E5DF] last:border-r-0 relative bg-[#FAF9F5]"
+          className="flex-1 min-w-0 flex flex-col border-r border-[#E7E5DF] last:border-r-0 relative bg-[#FAF9F5]"
         >
-          {/* Version Header */}
-          <div className="h-9 flex items-center px-4 bg-[#F5F3ED] border-b border-[#E7E5DF] sticky top-0 z-10">
-            <span className="text-[10px] font-bold text-[#C96442] tracking-wider uppercase mr-2 bg-[#FAF0EB] px-1.5 py-0.5 rounded-md">VER</span>
+          {/* Version Header (모든 번역본에 헤더가 정상 표시됨) */}
+          <div className={`h-9 flex items-center px-3 sm:px-4 bg-[#F5F3ED] border-b border-[#E7E5DF] shrink-0 ${isMobileScroll ? 'relative' : 'sticky top-0 z-10'}`}>
+            <span className="text-[10px] font-bold text-[#C96442] tracking-wider uppercase mr-2 bg-[#FAF0EB] px-1.5 py-0.5 rounded-md shrink-0">VER</span>
             {headerRightNode ? (
               headerRightNode
             ) : (
@@ -428,8 +433,8 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
   
           <div 
             ref={el => { scrollContainerRefs.current[idx] = el; }}
-            onScroll={(e) => handleScroll(idx, e)}
-            className="flex-1 overflow-y-auto custom-scrollbar px-2.5 sm:px-6 py-2.5 sm:py-4 space-y-0.5 pb-32"
+            onScroll={isMobileScroll ? undefined : (e) => handleScroll(idx, e)}
+            className={`px-2.5 sm:px-6 py-2.5 sm:py-4 space-y-0.5 pb-32 ${isMobileScroll ? '' : 'flex-1 overflow-y-auto custom-scrollbar'}`}
           >
             {data.verses.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-[#A3A19B] text-xs italic">

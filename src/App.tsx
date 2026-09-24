@@ -14,7 +14,7 @@ import {
   CreditCard, History, AlertCircle, LogOut, ExternalLink, Clock, HardDrive, Database, Folder, FolderOpen,
   Gift, MessageSquare
 } from 'lucide-react';
-import { motion, AnimatePresence, Reorder } from 'framer-motion';
+import { motion, AnimatePresence, Reorder, useDragControls } from 'framer-motion';
 import { searchService, type SearchRange } from './services/searchService';
 import { BIBLE_BOOKS, BIBLE_LIST } from './constants/bibleMeta';
 import { initGoogleApi, IS_LOCAL_DEV } from './api/gdriveWebService';
@@ -55,12 +55,14 @@ interface BibleNavBarProps {
   availableVersions?: any[];
   currentVersionId?: string;
   onVersionChange?: (id: string) => void;
+  isSticky?: boolean;
 }
 
 const BibleNavBar: React.FC<BibleNavBarProps> = ({
   side, nav, setNav, onPrev, onNext, onQuickNav,
   showCopySettings, copyMode, setCopyMode, showVersionInCopy, setShowVersionInCopy,
-  showVersionSelector, availableVersions, currentVersionId, onVersionChange
+  showVersionSelector, availableVersions, currentVersionId, onVersionChange,
+  isSticky = true
 }) => {
   const [localQuery, setLocalQuery] = useState('');
 
@@ -92,8 +94,8 @@ const BibleNavBar: React.FC<BibleNavBarProps> = ({
   };
 
   return (
-    <div className={`flex flex-nowrap items-center gap-x-2 px-3 py-2 bg-[#FAF9F5] border-b border-[#E7E5DF] sticky top-0 z-20 overflow-x-auto custom-scrollbar ${side === 'right' ? 'bg-[#F5F3ED]/40' : ''}`}>
-      {/* 1. Quick Find Input with Search Button */}
+    <div className={`flex flex-nowrap items-center gap-2 px-3 py-2 bg-[#FAF9F5] border-b border-[#E7E5DF] ${isSticky ? 'sticky top-0 z-20' : 'relative'} w-full h-11 min-h-[44px] shrink-0 overflow-x-auto no-scrollbar ${side === 'right' ? 'bg-[#F5F3ED]/40' : ''}`}>
+      {/* 1. Quick Find Input with Search Button: 넓은 화면과 동일한 모양 유지 */}
       <div className="relative group w-32 sm:w-36 shrink-0">
         <input 
           type="text"
@@ -112,6 +114,7 @@ const BibleNavBar: React.FC<BibleNavBarProps> = ({
         </button>
       </div>
 
+      {/* 2. 성경찾기 토글: 검색창 바로 옆에 나란히 붙이고 넓은 화면과 동일한 크기/모양 유지 */}
       <div className="flex items-center gap-0.5 bg-[#F5F3ED] rounded-xl p-0.5 border border-[#E7E5DF] shrink-0 shadow-2xs">
         {/* Book Selector */}
         <div className="relative group">
@@ -162,8 +165,12 @@ const BibleNavBar: React.FC<BibleNavBarProps> = ({
 
         {/* Navigation Buttons */}
         <div className="flex items-center px-0.5">
-          <button onClick={onPrev} className="p-1 hover:bg-white rounded-lg text-[#6A6864] hover:text-[#C96442] transition-colors" title="이전 장"><ChevronLeft className="w-3.5 h-3.5 stroke-[1.5px]" /></button>
-          <button onClick={onNext} className="p-1 hover:bg-white rounded-lg text-[#6A6864] hover:text-[#C96442] transition-colors" title="다음 장"><ChevronRight className="w-3.5 h-3.5 stroke-[1.5px]" /></button>
+          <button onClick={onPrev} className="p-1 hover:bg-white rounded-lg text-[#6A6864] hover:text-[#C96442] transition-colors" title="이전 장">
+            <ChevronLeft className="w-3.5 h-3.5 stroke-[1.5px]" />
+          </button>
+          <button onClick={onNext} className="p-1 hover:bg-white rounded-lg text-[#6A6864] hover:text-[#C96442] transition-colors" title="다음 장">
+            <ChevronRight className="w-3.5 h-3.5 stroke-[1.5px]" />
+          </button>
         </div>
       </div>
     </div>
@@ -207,6 +214,175 @@ const SearchInput = React.memo<{
     />
   );
 });
+
+interface SidebarVersionItemProps {
+  version: any;
+  isSelected: boolean;
+  isMobile: boolean;
+  onToggle: (id: string) => void;
+  onRemove: (id: string, name: string) => void;
+  activeDropdownId: string | null;
+  setActiveDropdownId: (id: string | null) => void;
+}
+
+const SidebarVersionItem: React.FC<SidebarVersionItemProps> = ({
+  version: v,
+  isSelected,
+  isMobile,
+  onToggle,
+  onRemove,
+  activeDropdownId,
+  setActiveDropdownId,
+}) => {
+  const dragControls = useDragControls();
+  const [isPressing, setIsPressing] = useState(false);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const longPressTimerRef = useRef<any>(null);
+  const isScrolledRef = useRef(false);
+
+  const clearTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (!isMobile) return;
+    const touch = e.touches[0];
+    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+    isScrolledRef.current = false;
+    clearTimer();
+
+    longPressTimerRef.current = setTimeout(() => {
+      setIsPressing(true);
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate(30); } catch (_) {}
+      }
+      try {
+        dragControls.start(e);
+      } catch (_) {}
+    }, 400);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isMobile || !touchStartPosRef.current) return;
+    const touch = e.touches[0];
+    const diffX = Math.abs(touch.clientX - touchStartPosRef.current.x);
+    const diffY = Math.abs(touch.clientY - touchStartPosRef.current.y);
+
+    // 12px 이상 이동 시 화면 스크롤 제스처로 판정
+    if (diffX > 12 || diffY > 12) {
+      isScrolledRef.current = true;
+      clearTimer();
+      setIsPressing(false);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    clearTimer();
+    setIsPressing(false);
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    // 스크롤 제스처 중이었던 경우 클릭 무시
+    if (isScrolledRef.current) {
+      isScrolledRef.current = false;
+      return;
+    }
+    // 일반 클릭/탭 시 즉각 토글!
+    onToggle(v.id);
+  };
+
+  return (
+    <Reorder.Item
+      value={v}
+      dragListener={!isMobile}
+      dragControls={dragControls}
+      className={`
+        group relative flex items-center gap-1.5 px-2 py-2 rounded-xl select-none transition-all duration-150 cursor-pointer
+        ${!isMobile ? 'cursor-grab active:cursor-grabbing hover:bg-[#F3EFE9]' : ''}
+        ${isPressing ? 'scale-[1.02] bg-[#EBE5DC] shadow-md z-30' : ''}
+        ${isSelected 
+          ? 'text-[#2B2927] font-medium' 
+          : 'text-[#4A4741]'}
+      `}
+      onClick={handleClick}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+    >
+      {/* 드래그 힌트 그립 아이콘 */}
+      <div 
+        className="text-[#A3A19B] opacity-30 group-hover:opacity-100 transition-opacity shrink-0 cursor-grab active:cursor-grabbing touch-none p-0.5"
+        title="잡고 드래그하여 순서 변경"
+        onTouchStart={(e) => {
+          if (isMobile) {
+            e.stopPropagation();
+            dragControls.start(e);
+          }
+        }}
+      >
+        <GripVertical className="w-3.5 h-3.5 stroke-[1.8px]" />
+      </div>
+
+      {/* 원형 체크 동그라미 */}
+      <div className={`
+        w-4 h-4 shrink-0 rounded-full border flex items-center justify-center transition-colors
+        ${isSelected ? 'bg-[#2B2927] border-[#2B2927]' : 'border-[#C2BBB0] bg-white'}
+      `}>
+        {isSelected && <Check className="w-2.5 h-2.5 text-white stroke-[2.2px]" />}
+      </div>
+      
+      <span className="flex-1 text-xs tracking-tight truncate leading-tight pointer-events-none select-none whitespace-nowrap">
+        {v.name}
+      </span>
+      
+      {/* 우측 관리 메뉴: 시스템 번역본(개역한글, KJV)은 삭제 불가 보호 배지, 사용자 번역본만 삭제 메뉴 제공 */}
+      {v.isSystem ? (
+        <div 
+          className="px-1.5 py-0.5 text-[9px] text-[#A3A19B] bg-[#F5F3ED] border border-[#EAE4DA] rounded font-medium select-none shrink-0" 
+          title="기본 제공 번역본 (삭제 불가, 선택 해제 가능)"
+        >
+          기본
+        </div>
+      ) : (
+        <div 
+          className="relative shrink-0" 
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => setActiveDropdownId(activeDropdownId === v.id ? null : v.id)}
+            className="p-1 text-[#8C877D] hover:text-[#2B2927] hover:bg-[#DED8CE]/60 rounded-md transition-all opacity-40 group-hover:opacity-100 cursor-pointer"
+            title="더보기 (삭제)"
+          >
+            <MoreVertical className="w-3.5 h-3.5 stroke-[1.8px]" />
+          </button>
+
+          {activeDropdownId === v.id && (
+            <div className="absolute right-0 top-6 w-24 bg-white border border-[#E5E0D8] rounded-xl shadow-lg py-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setActiveDropdownId(null);
+                  onRemove(v.id, v.name);
+                }}
+                className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-[#D97757] hover:bg-[#F7EEE9] cursor-pointer font-medium"
+              >
+                <Trash2 className="w-3.5 h-3.5 stroke-[1.8px]" /> 삭제
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </Reorder.Item>
+  );
+};
 
 const MainApp: React.FC = () => {
   // 구글 API 초기화
@@ -1116,88 +1292,27 @@ const MainApp: React.FC = () => {
                       className="space-y-0.5 relative no-scrollbar"
                     >
                       {versions.map((v) => (
-                        <Reorder.Item
+                        <SidebarVersionItem
                           key={v.id}
-                          value={v}
-                          className={`
-                            group relative flex items-center gap-1.5 px-2 py-2 rounded-xl cursor-grab active:cursor-grabbing select-none transition-colors duration-150 hover:bg-[#F3EFE9]
-                            ${selectedVersionIds.includes(v.id) 
-                              ? 'text-[#2B2927] font-medium' 
-                              : 'text-[#4A4741]'}
-                          `}
-                          onClick={() => toggleVersion(v.id)}
-                        >
-                          {/* 드래그 힌트 그립 아이콘 */}
-                          <div 
-                            className="text-[#A3A19B] opacity-30 group-hover:opacity-100 transition-opacity shrink-0 cursor-grab active:cursor-grabbing"
-                            title="잡고 드래그하여 순서 변경"
-                          >
-                            <GripVertical className="w-3.5 h-3.5 stroke-[1.8px]" />
-                          </div>
-
-                          {/* 원형 체크 동그라미 (글자색 #2B2927과 동일하게 변경) */}
-                          <div className={`
-                            w-4 h-4 shrink-0 rounded-full border flex items-center justify-center transition-colors
-                            ${selectedVersionIds.includes(v.id) ? 'bg-[#2B2927] border-[#2B2927]' : 'border-[#C2BBB0] bg-white'}
-                          `}>
-                            {selectedVersionIds.includes(v.id) && <Check className="w-2.5 h-2.5 text-white stroke-[2.2px]" />}
-                          </div>
-                          
-                          <span className="flex-1 text-xs tracking-tight truncate leading-tight pointer-events-none select-none whitespace-nowrap">
-                            {v.name}
-                          </span>
-                          
-                          {/* 우측 관리 메뉴: 시스템 번역본(개역한글, KJV)은 삭제 불가 보호 배지, 사용자 번역본만 삭제 메뉴 제공 */}
-                          {v.isSystem ? (
-                            <div 
-                              className="px-1.5 py-0.5 text-[9px] text-[#A3A19B] bg-[#F5F3ED] border border-[#EAE4DA] rounded font-medium select-none shrink-0" 
-                              title="기본 제공 번역본 (삭제 불가, 선택 해제 가능)"
-                            >
-                              기본
-                            </div>
-                          ) : (
-                            <div 
-                              className="relative shrink-0" 
-                              onClick={(e) => e.stopPropagation()}
-                              onPointerDown={(e) => e.stopPropagation()}
-                            >
-                              <button
-                                onClick={() => setActiveDropdownVersionId(activeDropdownVersionId === v.id ? null : v.id)}
-                                className="p-1 text-[#8C877D] hover:text-[#2B2927] hover:bg-[#DED8CE]/60 rounded-md transition-all opacity-40 group-hover:opacity-100 cursor-pointer"
-                                title="더보기 (삭제)"
-                              >
-                                <MoreVertical className="w-3.5 h-3.5 stroke-[1.8px]" />
-                              </button>
-
-                              {/* 삼점 클릭 시 나오는 삭제 팝오버 메뉴 */}
-                              {activeDropdownVersionId === v.id && (
-                                <div className="absolute right-0 top-6 w-24 bg-white border border-[#E5E0D8] rounded-xl shadow-lg py-1 z-50 text-xs animate-in fade-in zoom-in-95 duration-100">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      e.preventDefault();
-                                      setActiveDropdownVersionId(null);
-                                      setAppConfirmDialog({
-                                        isOpen: true,
-                                        title: '번역본 목록에서 삭제',
-                                        message: `'${v.name}' 번역본을 목록에서 삭제하시겠습니까?\n(언제든지 상단 + 버튼에서 다시 추가할 수 있습니다.)`,
-                                        confirmText: '삭제',
-                                        theme: 'danger',
-                                        onConfirm: () => {
-                                          removeVersion(v.id);
-                                        }
-                                      });
-                                    }}
-                                    className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left text-[#D97757] hover:bg-[#F7EEE9] cursor-pointer font-medium"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5 stroke-[1.8px]" /> 삭제
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </Reorder.Item>
+                          version={v}
+                          isSelected={selectedVersionIds.includes(v.id)}
+                          isMobile={isMobile}
+                          onToggle={toggleVersion}
+                          onRemove={(id, name) => {
+                            setAppConfirmDialog({
+                              isOpen: true,
+                              title: '번역본 목록에서 삭제',
+                              message: `'${name}' 번역본을 목록에서 삭제하시겠습니까?\n(언제든지 상단 + 버튼에서 다시 추가할 수 있습니다.)`,
+                              confirmText: '삭제',
+                              theme: 'danger',
+                              onConfirm: () => {
+                                removeVersion(id);
+                              }
+                            });
+                          }}
+                          activeDropdownId={activeDropdownVersionId}
+                          setActiveDropdownId={setActiveDropdownVersionId}
+                        />
                       ))}
                     </Reorder.Group>
                   )}
@@ -1674,9 +1789,10 @@ const MainApp: React.FC = () => {
                   >
                     {/* Left Pane (Main) */}
                     <div 
-                      className={`flex flex-col bg-[#FAF9F5] relative z-10 ${isDualView ? 'border-r border-[#E7E5DF]' : 'w-full'}`}
+                      className={`flex flex-col bg-[#FAF9F5] relative z-10 ${isDualView ? 'border-r border-[#E7E5DF]' : 'w-full'} ${isMobile && !isDualView ? 'flex-1 overflow-y-auto custom-scrollbar' : ''}`}
                       style={{ width: isDualView ? `${splitPosition}%` : '100%' }}
                     >
+                      {/* 성경 네비게이션 바: 화면 전체 가로 폭(100%)으로 상단에 위치 */}
                       <BibleNavBar 
                         side="left"
                         nav={leftNav}
@@ -1689,8 +1805,9 @@ const MainApp: React.FC = () => {
                         setCopyMode={setCopyMode}
                         showVersionInCopy={showVersionInCopy}
                         setShowVersionInCopy={setShowVersionInCopy}
+                        isSticky={!isMobile || isDualView}
                       />
-                      <div className="flex-1 overflow-hidden">
+                      <div className={isMobile && !isDualView ? 'w-full' : 'flex-1 overflow-hidden'}>
                          <BibleViewer 
                           key={`left-${leftNav.bookId}-${leftNav.chapter}-${leftNav.verse}-${leftNav.scrollTrigger}-${selectedVersionIds.join(',')}`}
                           selectedVersions={versions.filter(v => selectedVersionIds.includes(v.id))}
@@ -1701,6 +1818,7 @@ const MainApp: React.FC = () => {
                           lineHeight={lineHeight}
                           verseSpacing={verseSpacing}
                           isMainPane={true}
+                          isMobileScroll={isMobile && !isDualView}
                           onCopyToSermon={(text) => {
                             setClipboardSermonText(text);
                             setIsSermonSidebarOpen(true);
