@@ -48,6 +48,7 @@ export interface ClaudeAuthPageProps {
   totalRemaining?: number;
   remainingDaysText?: string;
   cloudCommentaryLimit?: number;
+  requiredLogin?: boolean;
   promoSettings?: {
     enabled?: boolean;
     name?: string;
@@ -64,6 +65,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
   totalRemaining = 10,
   remainingDaysText = '-',
   cloudCommentaryLimit = 0,
+  requiredLogin = false,
   promoSettings
 }) => {
   // 로그인/회원가입 상태
@@ -107,7 +109,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
   useEffect(() => {
     if (isOpen) {
       const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') onClose();
+        if (e.key === 'Escape' && !requiredLogin) onClose();
       };
       window.addEventListener('keydown', handleKeyDown);
 
@@ -374,16 +376,18 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
               </div>
             )}
 
-            {/* 성경으로 돌아가기 (닫기) 버튼 */}
-            <button
-              onClick={onClose}
-              className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 bg-white hover:bg-[#F3EFE9] border border-[#DDD8CE] text-[#2C2B29] rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer"
-              title="성경 본문으로 돌아가기"
-            >
-              <ArrowLeft className="w-3.5 h-3.5 text-[#6E6A63]" />
-              <span>성경 읽기</span>
-              <X className="w-3.5 h-3.5 text-[#8C877D] ml-1" />
-            </button>
+            {/* 성경으로 돌아가기 (닫기) 버튼 - 필수 로그인 모드 시 숨김 */}
+            {!requiredLogin && (
+              <button
+                onClick={onClose}
+                className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 bg-white hover:bg-[#F3EFE9] border border-[#DDD8CE] text-[#2C2B29] rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                title="성경 본문으로 돌아가기"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 text-[#6E6A63]" />
+                <span>성경 읽기</span>
+                <X className="w-3.5 h-3.5 text-[#8C877D] ml-1" />
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -1432,12 +1436,14 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
               >
                 개인정보처리방침
               </button>
-              <button
-                onClick={onClose}
-                className="text-[#2C2B29] font-bold hover:underline cursor-pointer"
-              >
-                성경 읽기 복귀 →
-              </button>
+              {!requiredLogin && (
+                <button
+                  onClick={onClose}
+                  className="text-[#2C2B29] font-bold hover:underline cursor-pointer"
+                >
+                  성경 읽기 복귀 →
+                </button>
+              )}
             </div>
           </div>
         </div>

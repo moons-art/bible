@@ -12,7 +12,7 @@ import {
   FileEdit, Eye, EyeOff, WifiOff, Sparkles, PanelLeft, ChevronsLeftRight, Copy, Columns,
   MoreVertical, ArrowUp, ArrowDown, SlidersHorizontal, GripVertical, ArrowLeft,
   CreditCard, History, AlertCircle, LogOut, ExternalLink, Clock, HardDrive, Database, Folder, FolderOpen,
-  Gift, MessageSquare
+  Gift, MessageSquare, Lock
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder, useDragControls } from 'framer-motion';
 import { searchService, type SearchRange } from './services/searchService';
@@ -387,6 +387,10 @@ const SidebarVersionItem: React.FC<SidebarVersionItemProps> = ({
 const MainApp: React.FC = () => {
   // 구글 API 초기화
   const [, setIsApiLoaded] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(() => {
+    if (IS_LOCAL_DEV) return false;
+    return true;
+  });
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     if (IS_LOCAL_DEV) return true;
     try {
@@ -498,12 +502,14 @@ const MainApp: React.FC = () => {
             }
           }
         }
+        setIsAuthChecking(false);
       } else {
         setIsAuthenticated(IS_LOCAL_DEV);
         setUserProfile(null);
         try {
           localStorage.removeItem('cached_auth_user');
         } catch (e) {}
+        setIsAuthChecking(false);
       }
     });
 
@@ -644,6 +650,11 @@ const MainApp: React.FC = () => {
     confirmText?: string;
     cancelText?: string;
     theme?: 'danger' | 'warning' | 'primary' | 'claude';
+    secondaryButton?: {
+      text: string;
+      onClick: () => void;
+      variant?: 'kakao' | 'default';
+    };
     onConfirm: () => void;
   }
   const [appConfirmDialog, setAppConfirmDialog] = useState<AppConfirmDialogState | null>(null);
@@ -1124,6 +1135,38 @@ const MainApp: React.FC = () => {
     }
   };
 
+  // 로그인 확인 중 로딩 화면
+  if (isAuthChecking) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-[#FAF9F5] text-[#2C2B29]">
+        <div className="w-12 h-12 rounded-2xl bg-[#FAF0EB] flex items-center justify-center border border-[#F1D3C6] shadow-sm animate-pulse mb-3">
+          <ClaudeSparkleIcon className="w-6 h-6 text-[#C46A40]" />
+        </div>
+        <p className="font-serif font-bold text-sm text-[#2C2B29] tracking-tight">NATIONS BIBLE</p>
+      </div>
+    );
+  }
+
+  // 비로그인 상태일 때는 최초 화면으로 로그인 페이지 표시 (로그인 완료 전에는 메인 뷰어 진입 불가)
+  if (!isAuthenticated) {
+    return (
+      <ClaudeAuthPage 
+        isOpen={true}
+        requiredLogin={true}
+        initialSection="login"
+        onClose={() => {}}
+        onSuccess={() => {
+          setIsAuthenticated(true);
+        }}
+        currentUser={auth.currentUser}
+        totalRemaining={totalRemaining}
+        remainingDaysText={remainingDaysText}
+        cloudCommentaryLimit={cloudCommentaryLimit}
+        promoSettings={promoSettings}
+      />
+    );
+  }
+
   return (
     <div className="flex h-screen bg-[#FAF9F5] text-[#2C2B29] overflow-y-auto overflow-x-hidden font-sans custom-scrollbar">
       {/* PWA Smart Install Prompt Banner */}
@@ -1270,13 +1313,13 @@ const MainApp: React.FC = () => {
                       target="_blank"
                       rel="noopener noreferrer"
                       className="relative p-1 text-[#8C877D] hover:text-[#2B2927] hover:bg-[#DED8CE]/60 rounded-md transition-all opacity-40 group-hover:opacity-100 cursor-pointer group/menu shrink-0"
-                      title="방법: 카톡무료문의"
+                      title="다른 번역본 추가 방법 카톡 문의"
                     >
                       <MoreVertical className="w-3.5 h-3.5 stroke-[1.8px]" />
                       
                       {/* 마우스 호버 시 뜨는 플로팅 툴팁 */}
                       <span className="absolute right-0 top-full mt-1 hidden group-hover/menu:flex items-center gap-1 px-2 py-1 bg-[#2C2B29] text-[#FAF9F5] text-[10px] rounded-lg shadow-md whitespace-nowrap z-50 pointer-events-none">
-                        방법: 카톡무료문의
+                        다른 번역본 추가 방법 카톡 문의
                       </span>
                     </a>
                   </div>
@@ -1316,6 +1359,53 @@ const MainApp: React.FC = () => {
                       ))}
                     </Reorder.Group>
                   )}
+
+                  {/* 비활성화 번역본 표시 (개역개정, NIV - 클릭 시 카톡무료문의 및 설정창 안내) */}
+                  {[
+                    { id: 'built-in-krv', name: '개역개정' },
+                    { id: 'built-in-niv', name: 'NIV' }
+                  ]
+                    .filter(locked => !versions.some(v => v.id === locked.id || v.name === locked.name))
+                    .map(locked => (
+                      <div
+                        key={locked.id}
+                        onClick={() => {
+                          setAppConfirmDialog({
+                            isOpen: true,
+                            title: `${locked.name} 번역본 추가 안내`,
+                            message: `[${locked.name}] 번역본은 저작권 정책상 별도 설정이 필요합니다.\n\n개인 소장용 텍스트(.txt) 파일을 업로드하시거나, 카카오톡 1:1 무료문의를 통해 손쉽게 추가 안내를 받으실 수 있습니다.\n자세한 텍스트 파일 형식은 [설정창]에서 확인하실 수 있습니다.`,
+                            cancelText: '닫기',
+                            confirmText: '설정창 보기',
+                            onConfirm: () => {
+                              setIsSettingsPageOpen(true);
+                              setIsSidebarOpen(false);
+                            },
+                            secondaryButton: {
+                              text: '카톡무료문의',
+                              variant: 'kakao',
+                              onClick: () => {
+                                window.open(policyData.kakaoChatUrl || 'http://pf.kakao.com/_cxjBxaX/chat', '_blank', 'noopener,noreferrer');
+                              }
+                            }
+                          });
+                        }}
+                        className="group flex items-center justify-between px-2 py-1.5 mt-0.5 rounded-xl text-xs text-[#9E9B95] hover:bg-[#F3EFE9] hover:text-[#4A4741] transition-all cursor-pointer opacity-75 hover:opacity-100"
+                        title={`${locked.name} 번역본 추가 안내 (클릭)`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {/* 미체크 비활성화 체크박스 */}
+                          <div className="w-4 h-4 rounded-full border border-[#D5D0C6] bg-[#F7F5F0] flex items-center justify-center shrink-0">
+                            <Lock className="w-2.5 h-2.5 text-[#A39E94] stroke-[2.2px]" />
+                          </div>
+                          <span className="truncate select-none font-normal text-xs">
+                            {locked.name}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-[#A39E94] bg-[#ECE6DC] group-hover:bg-[#E2DDD3] group-hover:text-[#6E6A63] px-1.5 py-0.5 rounded-md shrink-0 transition-colors">
+                          추가안내
+                        </span>
+                      </div>
+                    ))}
                 </div>
 
                 {/* 번역본 목록 아래 구분선 */}
@@ -2966,14 +3056,38 @@ const MainApp: React.FC = () => {
             </div>
 
             {/* Actions */}
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setAppConfirmDialog(null)}
-                className="px-4 py-2.5 bg-white border border-[#DDD8CE] hover:bg-[#F5F3ED] text-[#6E6A63] text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-2xs"
-              >
-                {appConfirmDialog.cancelText || '취소'}
-              </button>
+            <div className="flex items-center justify-end gap-2 pt-1 flex-wrap">
+              {appConfirmDialog.cancelText !== false && (
+                <button
+                  type="button"
+                  onClick={() => setAppConfirmDialog(null)}
+                  className="px-4 py-2.5 bg-white border border-[#DDD8CE] hover:bg-[#F5F3ED] text-[#6E6A63] text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-2xs"
+                >
+                  {appConfirmDialog.cancelText || '닫기'}
+                </button>
+              )}
+              {appConfirmDialog.secondaryButton && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fn = appConfirmDialog.secondaryButton?.onClick;
+                    setAppConfirmDialog(null);
+                    if (fn) fn();
+                  }}
+                  className={`px-4 py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs flex items-center gap-1.5 ${
+                    appConfirmDialog.secondaryButton.variant === 'kakao'
+                      ? 'bg-[#FEE500] hover:bg-[#FDD800] text-[#3C1E1E]'
+                      : 'bg-white border border-[#DDD8CE] hover:bg-[#F5F3ED] text-[#2B2927]'
+                  }`}
+                >
+                  {appConfirmDialog.secondaryButton.variant === 'kakao' && (
+                    <svg className="w-3.5 h-3.5 stroke-[#3C1E1E] stroke-[2.8] fill-none shrink-0" viewBox="0 0 24 24">
+                      <path d="M12 3c-5.52 0-10 3.58-10 8 0 2.87 1.89 5.4 4.77 6.77l-1.2 4.43c-.11.41.34.75.7.53l5.24-3.48c.16.01.32.02.49.02 5.52 0 10-3.58 10-8s-4.48-8-10-8z" />
+                    </svg>
+                  )}
+                  <span>{appConfirmDialog.secondaryButton.text}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -2981,7 +3095,7 @@ const MainApp: React.FC = () => {
                   setAppConfirmDialog(null);
                   fn();
                 }}
-                className="px-5 py-2.5 bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
+                className="px-4 py-2.5 bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
               >
                 {appConfirmDialog.confirmText || '확인'}
               </button>
