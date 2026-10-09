@@ -6,8 +6,20 @@ import {
   BookOpen, Clock, Laptop, Check, AlertCircle, Award, 
   Activity, Trash2, FileText, Database, Gift, Tag, UserPlus, CheckCircle2,
   KeyRound, Building2, MessageCircle, Calendar,
-  CreditCard, Coins, Copy, ExternalLink, Smartphone
+  CreditCard, Coins, Copy, ExternalLink, Smartphone, Save, HardDrive,
+  Server, Zap, Cpu, BarChart3, TrendingUp, ArrowUpRight, DollarSign
 } from 'lucide-react';
+import {
+  fetchSystemMetricsOverview,
+  fetchTodaySystemMetrics,
+  calculateEstimatedCost,
+  calculateMonthlyEstimatedCost,
+  calculateUserResourceUsage,
+  FIREBASE_CONSOLE_USAGE_URL,
+  FIRESTORE_LIMITS,
+  type DailySystemMetrics,
+  type MonthlySystemMetrics
+} from '../services/systemMetricsService';
 import {
   getSitePolicy,
   saveSitePolicy,
@@ -23,9 +35,11 @@ import {
   fetchActivityLogs,
   clearAllActivityLogs,
   syncUserProfile,
+  getLocalUserResourceCounts,
   addCreditsToUser, 
   addCloudCapacityToUser,
   toggleUserAllowedVersion, 
+  setUserCloudNotesAllowed,
   type UserProfile,
   type ActivityLogEntry
 } from '../services/userService';
@@ -44,6 +58,13 @@ import {
   DEFAULT_PROMOTION_SETTINGS,
   DEFAULT_REFERRAL_SETTINGS
 } from '../services/promotionService';
+import {
+  getPlanSettings,
+  savePlanSettings,
+  canUserSyncCloudNotes,
+  type SubscriptionPlansSettings,
+  DEFAULT_PLANS_SETTINGS
+} from '../services/planConfigService';
 import { auth, db } from '../api/firebaseConfig';
 
 interface AdminDashboardModalProps {
@@ -69,11 +90,27 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'recent' | 'loginCount' | 'payment' | 'materials' | 'aiUsed' | 'created'>('recent');
+  const [sortBy, setSortBy] = useState<'recent' | 'loginCount' | 'payment' | 'materials' | 'aiUsed' | 'created' | 'serverScore'>('recent');
   const [actionLoadingUid, setActionLoadingUid] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const USERS_PER_PAGE = 20;
   const [selectedUserForDetail, setSelectedUserForDetail] = useState<UserProfile | null>(null);
+
+  // 실시간 서버 자원 & 예상 원가 모니터링 상태 (과금 0원 오늘 1장 + 이번달 1장 읽기)
+  const [dailyMetrics, setDailyMetrics] = useState<DailySystemMetrics>({
+    date: '',
+    aiCalls: 0,
+    firestoreReads: 0,
+    firestoreWrites: 0
+  });
+  const [monthlyMetrics, setMonthlyMetrics] = useState<MonthlySystemMetrics>({
+    month: '',
+    aiCalls: 0,
+    firestoreReads: 0,
+    firestoreWrites: 0
+  });
+  const [metricsPeriodTab, setMetricsPeriodTab] = useState<'today' | 'monthly' | 'both'>('today');
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
 
   // 활동 로그 상태
   const [logs, setLogs] = useState<ActivityLogEntry[]>([]);
@@ -89,6 +126,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [isSavingPromo, setIsSavingPromo] = useState(false);
   const [isSavingReferral, setIsSavingReferral] = useState(false);
   const [customReferralInput, setCustomReferralInput] = useState<string>('');
+
+  // 구독 & 이용권 플랜 설정 상태
+  const [planSettings, setPlanSettings] = useState<SubscriptionPlansSettings>(DEFAULT_PLANS_SETTINGS);
+  const [isSavingPlans, setIsSavingPlans] = useState(false);
 
   // 인앱 커스텀 확인 모달 상태 (브라우저 confirm/prompt 깜빡임 및 자동 닫힘 원천 해결)
   interface ConfirmModalConfig {
@@ -133,11 +174,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     }
   };
 
-  // 2. 활동 로그 로드
+  // 2. 활동 로그 로드 (기본 50건으로 경량화)
   const loadLogs = async () => {
     setIsLoadingLogs(true);
     try {
-      const logData = await fetchActivityLogs(300);
+      const logData = await fetchActivityLogs(50);
       setLogs(logData);
     } catch (err: any) {
       console.error('[AdminDashboard] Failed to fetch activity logs:', err);
@@ -146,15 +187,30 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     }
   };
 
-  // 전체 데이터 갱신
+  // 3. 서버 사용량 & 예상 비용 메트릭 로드 (0원 과금: 오늘 1장 + 이번달 1장 총 2회 읽기)
+  const loadMetrics = async (force: boolean = false) => {
+    setIsLoadingMetrics(true);
+    try {
+      const overview = await fetchSystemMetricsOverview(force);
+      setDailyMetrics(overview.today);
+      setMonthlyMetrics(overview.monthly);
+    } catch (err: any) {
+      console.warn('[AdminDashboard] Failed to fetch system metrics:', err);
+    } finally {
+      setIsLoadingMetrics(false);
+    }
+  };
+
+  // 전체 데이터 갱신 (로그는 '활동 로그' 탭 클릭 시에만 지연 로딩하여 불필요한 Firestore 읽기 방지)
   const refreshAll = () => {
     loadUsers();
-    loadLogs();
+    loadMetrics(true);
     getPromotionSettings().then(setPromoSettings).catch(() => {});
     getReferralSettings().then(st => {
       setReferralSettings(st);
     }).catch(() => {});
     getSitePolicy().then(setPolicySettings).catch(() => {});
+    getPlanSettings().then(setPlanSettings).catch(() => {});
   };
 
   // 서비스 정책 및 사업자 정보 저장
@@ -171,13 +227,34 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     }
   };
 
+  // 플랜 설정 (크레딧 수, 주석 서버 보관 개수 등) 저장
+  const handleSavePlans = async () => {
+    setIsSavingPlans(true);
+    try {
+      await savePlanSettings(planSettings);
+      showToast('구독 이용권 플랜 설정이 파이어베이스에 즉시 저장되었습니다!');
+    } catch (err) {
+      console.error('Failed to save plan settings:', err);
+      showToast('플랜 설정 저장 중 오류가 발생했습니다.');
+    } finally {
+      setIsSavingPlans(false);
+    }
+  };
+
+  // '활동 로그' 탭을 눌렀을 때만 지연 로딩(Lazy Loading)으로 Firestore 50회만 단 1회 로드
+  useEffect(() => {
+    if (isOpen && activeTab === 'logs' && logs.length === 0 && !isLoadingLogs) {
+      loadLogs();
+    }
+  }, [isOpen, activeTab, logs.length, isLoadingLogs]);
+
   // 모달 진입 시 동기화 및 데이터 로드 + 실시간 추천 신청 목록 구독
   useEffect(() => {
     if (isOpen) {
       const currentUser = auth.currentUser;
       if (currentUser) {
-        syncUserProfile(currentUser)
-          .catch(e => console.warn('[AdminDashboard] 관리자 프로필 동기화 경고:', e?.code || e))
+        syncUserProfile(currentUser, getLocalUserResourceCounts())
+          .catch(() => {})
           .finally(() => {
             refreshAll();
           });
@@ -185,9 +262,24 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         refreshAll();
       }
 
+      const handleMetricsUpdate = (e: any) => {
+        if (e.detail) {
+          if (e.detail.today) setDailyMetrics(e.detail.today);
+          else if (e.detail.date) setDailyMetrics(e.detail);
+
+          if (e.detail.monthly) setMonthlyMetrics(e.detail.monthly);
+        }
+      };
+      if (typeof window !== 'undefined') {
+        window.addEventListener('system-metrics-updated', handleMetricsUpdate);
+      }
+
       const unsubRef = subscribeReferralRequests(setReferralRequests);
       return () => {
         unsubRef();
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('system-metrics-updated', handleMetricsUpdate);
+        }
       };
     }
   }, [isOpen]);
@@ -596,6 +688,35 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     });
   };
 
+  // 10. 특정 회원의 노트/설교 클라우드 서버 동기화 권한 개별 수동 변경
+  const handleSetUserCloudNotes = async (user: UserProfile, allowed: boolean | null) => {
+    setActionLoadingUid(`${user.uid}_cloudNotes`);
+    try {
+      await setUserCloudNotesAllowed(user.uid, allowed, user.email);
+      const msg = allowed === null 
+        ? '기본 플랜 정책으로 복원되었습니다.' 
+        : (allowed ? '노트 클라우드 저장이 [강제 허용]되었습니다.' : '노트 클라우드 저장이 [강제 차단]되었습니다.');
+      showToast(msg);
+
+      setUsers(prev => prev.map(u => {
+        if (u.uid === user.uid) {
+          return { ...u, cloudNotesAllowed: allowed === null ? undefined : allowed };
+        }
+        return u;
+      }));
+
+      setSelectedUserForDetail(prev => {
+        if (!prev || prev.uid !== user.uid) return prev;
+        return { ...prev, cloudNotesAllowed: allowed === null ? undefined : allowed };
+      });
+    } catch (err) {
+      console.error('Failed to set user cloud notes allowed:', err);
+      showToast('노트 클라우드 권한 변경 중 오류가 발생했습니다.');
+    } finally {
+      setActionLoadingUid(null);
+    }
+  };
+
   // 로그 전체 삭제
   const handleClearAllLogs = async () => {
     if (logs.length === 0) return;
@@ -626,10 +747,21 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);
   const todayActiveCount = users.filter(u => (u.lastLoginAt || 0) >= todayMidnight.getTime()).length;
+
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const monthActiveCount = users.filter(u => (u.lastLoginAt || 0) >= monthStart.getTime()).length;
+
   const totalAiUsedCount = users.reduce((acc, u) => acc + (u.aiCredits?.totalUsed || 0), 0);
   const totalPaidRemaining = users.reduce((acc, u) => acc + (u.aiCredits?.paidRemaining || 0), 0);
-  const totalMaterialsCount = users.reduce((acc, u) => acc + (u.noteCount || 0) + (u.sermonCount || 0), 0);
+  const totalMaterialsCount = users.reduce((acc, u) => 
+    acc + (u.noteCount || 0) + (u.sermonCount || 0) + (u.crossRefCount || 0) + (u.commentaryCount || 0) + (u.usedCloudCommentaryCount || 0), 0);
   const totalLogsCount = logs.length;
+
+  // 당일 및 이번달 서버 자원 & 예상 원가 계산 (0원 과금 초경량)
+  const costInfo = calculateEstimatedCost(dailyMetrics);
+  const monthlyCostInfo = calculateMonthlyEstimatedCost(monthlyMetrics);
 
   // 회원 검색 및 정렬 필터링
   const filteredUsers = users
@@ -658,9 +790,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       if (sortBy === 'created') return (b.createdAt || 0) - (a.createdAt || 0);
       if (sortBy === 'aiUsed') return (b.aiCredits?.totalUsed || 0) - (a.aiCredits?.totalUsed || 0);
       if (sortBy === 'materials') {
-        const matA = (a.noteCount || 0) + (a.sermonCount || 0);
-        const matB = (b.noteCount || 0) + (b.sermonCount || 0);
+        const matA = (a.noteCount || 0) + (a.sermonCount || 0) + (a.crossRefCount || 0) + (a.commentaryCount || 0) + (a.usedCloudCommentaryCount || 0);
+        const matB = (b.noteCount || 0) + (b.sermonCount || 0) + (b.crossRefCount || 0) + (b.commentaryCount || 0) + (b.usedCloudCommentaryCount || 0);
         return matB - matA;
+      }
+      if (sortBy === 'serverScore') {
+        const scoreA = ((a.sermonCount || 0) * 3) + ((a.noteCount || 0) * 1) + ((a.crossRefCount || 0) * 1) + ((a.commentaryCount || 0) * 1) + ((a.usedCloudCommentaryCount || 0) * 1) + ((a.aiCredits?.totalUsed || 0) * 0.5);
+        const scoreB = ((b.sermonCount || 0) * 3) + ((b.noteCount || 0) * 1) + ((b.crossRefCount || 0) * 1) + ((b.commentaryCount || 0) * 1) + ((b.usedCloudCommentaryCount || 0) * 1) + ((b.aiCredits?.totalUsed || 0) * 0.5);
+        return scoreB - scoreA;
       }
       return 0;
     });
@@ -776,7 +913,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
               }`}
             >
               <Gift className="w-4 h-4" />
-              <span>프로모션 & 추천인 관리</span>
+              <span>프로모션 & 이용권 플랜 설정</span>
               {referralRequests.filter(r => r.status === 'pending').length > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold">
                   {referralRequests.filter(r => r.status === 'pending').length}
@@ -824,8 +961,406 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             </div>
           ) : (
             <>
+              {/* ── [신규] 실시간 서버 자원 & 예상 원가 모니터링 카드 (과금 0원 초경량 아키텍처) ── */}
+              <div className="p-4 sm:p-5 bg-gradient-to-br from-[#201F1E] via-[#2A2826] to-[#1E1C1A] text-white rounded-3xl border border-[#3E3B37] shadow-xl relative overflow-hidden shrink-0 w-full min-h-fit">
+                {/* 배경 은은한 조명 효과 */}
+                <div className="absolute top-0 right-0 w-96 h-96 bg-[#C46A40]/10 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute bottom-0 left-1/3 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+
+                {/* 상단 헤더 바 */}
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4 pb-3.5 border-b border-white/10 relative z-10">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-white/10 backdrop-blur-md border border-white/15 flex items-center justify-center text-[#E5885C] shadow-inner">
+                      <Server className="w-5 h-5 stroke-[2.2px]" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm sm:text-base font-bold text-white tracking-tight flex items-center gap-1.5">
+                          <span>실시간 서버 자원 &amp; 원가 모니터링</span>
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/30">
+                            과금 0원 보장 (2 Reads)
+                          </span>
+                        </h3>
+                      </div>
+                      <p className="text-[11px] text-[#A6A097] mt-0.5">
+                        오늘 날짜({dailyMetrics.date || '오늘'}) 1장 + 이번달({monthlyMetrics.month || '당월'}) 1장 단 2회만 조회 · 일일 무료 한도(50,000회) 내 2차 과금 원천 0원 차단
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 탭 버튼 및 액션 버튼군 */}
+                  <div className="flex items-center gap-2 flex-wrap self-start lg:self-auto">
+                    {/* 기간 선택 탭 버튼 (오늘 / 이번달 누적 / 한눈에 비교) */}
+                    <div className="inline-flex items-center bg-black/40 p-1 rounded-xl border border-white/10 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setMetricsPeriodTab('today')}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                          metricsPeriodTab === 'today'
+                            ? 'bg-[#C46A40] text-white shadow font-semibold'
+                            : 'text-[#BDB7AE] hover:text-white'
+                        }`}
+                      >
+                        <Clock className="w-3 h-3" />
+                        <span>오늘 사용량</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMetricsPeriodTab('monthly')}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                          metricsPeriodTab === 'monthly'
+                            ? 'bg-[#C46A40] text-white shadow font-semibold'
+                            : 'text-[#BDB7AE] hover:text-white'
+                        }`}
+                      >
+                        <Calendar className="w-3 h-3" />
+                        <span>이번달 누적</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMetricsPeriodTab('both')}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                          metricsPeriodTab === 'both'
+                            ? 'bg-[#C46A40] text-white shadow font-semibold'
+                            : 'text-[#BDB7AE] hover:text-white'
+                        }`}
+                      >
+                        <BarChart3 className="w-3 h-3" />
+                        <span>오늘 vs 당월 비교</span>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => loadMetrics(true)}
+                      disabled={isLoadingMetrics}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white/90 text-xs font-semibold border border-white/10 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                      title="실시간 서버 수치 새로고침"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isLoadingMetrics ? 'animate-spin text-[#E5885C]' : ''}`} />
+                      <span>{isLoadingMetrics ? '동기화 중...' : '새로고침'}</span>
+                    </button>
+
+                    <a
+                      href={FIREBASE_CONSOLE_USAGE_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white/90 text-xs font-semibold border border-white/10 transition-all shadow-sm active:scale-95 cursor-pointer"
+                    >
+                      <span>Firebase Usage</span>
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                </div>
+
+                {/* 6열 핵심 지표 그리드 (접속, 작성자료, AI호출, 쓰기, 읽기, 예상원가) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 relative z-10">
+                  {/* 카드 1: 접속 회원 (오늘 / 이번달 누적) */}
+                  <div className="p-3.5 bg-white/5 hover:bg-white/8 backdrop-blur-sm rounded-2xl border border-white/10 transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-[#BDB7AE] text-[11px] font-semibold mb-2">
+                        <span className="flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5 text-sky-400" />
+                          {metricsPeriodTab === 'today' ? '오늘 활동 회원' : metricsPeriodTab === 'monthly' ? '이번달 활동 회원' : '접속 현황'}
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded bg-sky-400/20 text-sky-300 text-[10px]">
+                          {metricsPeriodTab === 'today' ? '오늘' : metricsPeriodTab === 'monthly' ? '당월' : '비교'}
+                        </span>
+                      </div>
+
+                      {metricsPeriodTab === 'both' ? (
+                        <div className="space-y-1.5 my-1">
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-[11px] text-[#A6A097]">오늘 접속:</span>
+                            <span className="text-lg font-black font-serif text-sky-300">{todayActiveCount.toLocaleString()}명</span>
+                          </div>
+                          <div className="flex items-baseline justify-between border-t border-white/10 pt-1">
+                            <span className="text-[11px] text-[#A6A097]">이번달 누적:</span>
+                            <span className="text-lg font-black font-serif text-white">{monthActiveCount.toLocaleString()}명</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-2xl font-black font-serif text-white tracking-tight">
+                            {(metricsPeriodTab === 'today' ? todayActiveCount : monthActiveCount).toLocaleString()}
+                          </span>
+                          <span className="text-xs text-[#A6A097]">명 활동</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-[11px]">
+                      <span className="text-[#A6A097]">전체 가입자:</span>
+                      <span className="font-bold text-sky-300">
+                        {totalUsers.toLocaleString()}명 중
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 카드 2: 총 보관/작성 자료 (클라우드 설교문 + 구절 메모) */}
+                  <div className="p-3.5 bg-white/5 hover:bg-white/8 backdrop-blur-sm rounded-2xl border border-white/10 transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-[#BDB7AE] text-[11px] font-semibold mb-2">
+                        <span className="flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5 text-teal-400" />
+                          총 보관 자료 (전체)
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded bg-teal-400/20 text-teal-300 text-[10px]">클라우드</span>
+                      </div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-black font-serif text-white tracking-tight">
+                          {totalMaterialsCount.toLocaleString()}
+                        </span>
+                        <span className="text-xs text-[#A6A097]">건 보관</span>
+                      </div>
+                      <p className="text-[10px] text-[#A6A097] mt-1 line-clamp-1">
+                        설교문 &amp; 성경 구절 메모 합산
+                      </p>
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-[11px]">
+                      <span className="text-[#A6A097]">조회 추가과금:</span>
+                      <span className="font-bold text-emerald-300">
+                        0원 (메모리 집계)
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 카드 3: AI 주석 호출 (오늘 / 이번달 누적) */}
+                  <div className="p-3.5 bg-white/5 hover:bg-white/8 backdrop-blur-sm rounded-2xl border border-white/10 transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-[#BDB7AE] text-[11px] font-semibold mb-2">
+                        <span className="flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                          {metricsPeriodTab === 'today' ? '오늘의 AI 주석' : metricsPeriodTab === 'monthly' ? '이번달 AI 주석 누적' : 'AI 주석 호출'}
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 text-[10px]">Gemini Flash</span>
+                      </div>
+
+                      {metricsPeriodTab === 'both' ? (
+                        <div className="space-y-1.5 my-1">
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-[11px] text-[#A6A097]">오늘 호출:</span>
+                            <span className="text-lg font-black font-serif text-amber-300">{(dailyMetrics.aiCalls || 0).toLocaleString()}회</span>
+                          </div>
+                          <div className="flex items-baseline justify-between border-t border-white/10 pt-1">
+                            <span className="text-[11px] text-[#A6A097]">이번달 누적:</span>
+                            <span className="text-lg font-black font-serif text-white">{(monthlyMetrics.aiCalls || 0).toLocaleString()}회</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-2xl font-black font-serif text-white tracking-tight">
+                            {(metricsPeriodTab === 'today' ? dailyMetrics.aiCalls || 0 : monthlyMetrics.aiCalls || 0).toLocaleString()}
+                          </span>
+                          <span className="text-xs text-[#A6A097]">회 호출됨</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-[11px]">
+                      <span className="text-[#A6A097]">
+                        {metricsPeriodTab === 'today' ? '당일 AI 원가:' : metricsPeriodTab === 'monthly' ? '당월 AI 누적원가:' : '당월 누적원가:'}
+                      </span>
+                      <span className="font-bold text-amber-300">
+                        약 {(metricsPeriodTab === 'today' ? costInfo.aiCost : monthlyCostInfo.aiCost).toLocaleString()}원
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 카드 4: Firestore 쓰기 (오늘 / 이번달 누적) */}
+                  <div className="p-3.5 bg-white/5 hover:bg-white/8 backdrop-blur-sm rounded-2xl border border-white/10 transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-[#BDB7AE] text-[11px] font-semibold mb-2">
+                        <span className="flex items-center gap-1.5">
+                          <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+                          {metricsPeriodTab === 'today' ? '오늘 Firestore 쓰기' : metricsPeriodTab === 'monthly' ? '이번달 쓰기 누적' : 'Firestore 쓰기'}
+                        </span>
+                        <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                          (metricsPeriodTab === 'today' ? (costInfo.writesUsagePercent ?? 0) : (monthlyCostInfo.writesUsagePercent ?? 0)) >= 90
+                            ? 'bg-rose-500/20 text-rose-300'
+                            : (metricsPeriodTab === 'today' ? (costInfo.writesUsagePercent ?? 0) : (monthlyCostInfo.writesUsagePercent ?? 0)) >= 70
+                            ? 'bg-amber-500/20 text-amber-300'
+                            : 'bg-emerald-500/20 text-emerald-300'
+                        }`}>
+                          {metricsPeriodTab === 'today' ? `${costInfo.writesUsagePercent ?? 0}%` : `${monthlyCostInfo.writesUsagePercent ?? 0}%`}
+                        </span>
+                      </div>
+
+                      {metricsPeriodTab === 'both' ? (
+                        <div className="space-y-1.5 my-1">
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-[11px] text-[#A6A097]">오늘 쓰기:</span>
+                            <span className="text-lg font-black font-serif text-emerald-300">{(dailyMetrics.firestoreWrites || 0).toLocaleString()}회</span>
+                          </div>
+                          <div className="flex items-baseline justify-between border-t border-white/10 pt-1">
+                            <span className="text-[11px] text-[#A6A097]">이번달 누적:</span>
+                            <span className="text-lg font-black font-serif text-white">{(monthlyMetrics.firestoreWrites || 0).toLocaleString()}회</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-2xl font-black font-serif text-white tracking-tight">
+                              {(metricsPeriodTab === 'today' ? dailyMetrics.firestoreWrites || 0 : monthlyMetrics.firestoreWrites || 0).toLocaleString()}
+                            </span>
+                            <span className="text-xs text-[#A6A097]">
+                              {metricsPeriodTab === 'today' ? '/ 20,000회' : '회 누적'}
+                            </span>
+                          </div>
+                          {/* 게이지 바 */}
+                          <div className="w-full h-1.5 bg-white/10 rounded-full mt-2.5 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                (metricsPeriodTab === 'today' ? (costInfo.writesUsagePercent ?? 0) : (monthlyCostInfo.writesUsagePercent ?? 0)) >= 90
+                                  ? 'bg-rose-500'
+                                  : (metricsPeriodTab === 'today' ? (costInfo.writesUsagePercent ?? 0) : (monthlyCostInfo.writesUsagePercent ?? 0)) >= 70
+                                  ? 'bg-amber-400'
+                                  : 'bg-emerald-400'
+                              }`}
+                              style={{
+                                width: `${Math.max(
+                                  2,
+                                  Math.min(
+                                    100,
+                                    metricsPeriodTab === 'today' ? (costInfo.writesUsagePercent ?? 0) : (monthlyCostInfo.writesUsagePercent ?? 0)
+                                  )
+                                )}%`
+                              }}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-[11px]">
+                      <span className="text-[#A6A097]">무료 잔여 쿼터:</span>
+                      <span className="font-bold text-emerald-300">
+                        {(metricsPeriodTab === 'today' ? (costInfo.remainingWrites ?? 0) : (monthlyCostInfo.remainingWrites ?? 0)).toLocaleString()}회
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 카드 5: Firestore 읽기 (오늘 / 이번달 누적) */}
+                  <div className="p-3.5 bg-white/5 hover:bg-white/8 backdrop-blur-sm rounded-2xl border border-white/10 transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-[#BDB7AE] text-[11px] font-semibold mb-2">
+                        <span className="flex items-center gap-1.5">
+                          <Database className="w-3.5 h-3.5 text-indigo-400" />
+                          {metricsPeriodTab === 'today' ? '오늘 Firestore 읽기' : metricsPeriodTab === 'monthly' ? '이번달 읽기 누적' : 'Firestore 읽기'}
+                        </span>
+                        <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                          (metricsPeriodTab === 'today' ? (costInfo.readsUsagePercent ?? 0) : (monthlyCostInfo.readsUsagePercent ?? 0)) >= 90
+                            ? 'bg-rose-500/20 text-rose-300'
+                            : (metricsPeriodTab === 'today' ? (costInfo.readsUsagePercent ?? 0) : (monthlyCostInfo.readsUsagePercent ?? 0)) >= 70
+                            ? 'bg-amber-500/20 text-amber-300'
+                            : 'bg-indigo-400/20 text-indigo-300'
+                        }`}>
+                          {metricsPeriodTab === 'today' ? `${costInfo.readsUsagePercent ?? 0}%` : `${monthlyCostInfo.readsUsagePercent ?? 0}%`}
+                        </span>
+                      </div>
+
+                      {metricsPeriodTab === 'both' ? (
+                        <div className="space-y-1.5 my-1">
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-[11px] text-[#A6A097]">오늘 읽기:</span>
+                            <span className="text-lg font-black font-serif text-indigo-300">{(dailyMetrics.firestoreReads || 0).toLocaleString()}회</span>
+                          </div>
+                          <div className="flex items-baseline justify-between border-t border-white/10 pt-1">
+                            <span className="text-[11px] text-[#A6A097]">이번달 누적:</span>
+                            <span className="text-lg font-black font-serif text-white">{(monthlyMetrics.firestoreReads || 0).toLocaleString()}회</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-2xl font-black font-serif text-white tracking-tight">
+                              {(metricsPeriodTab === 'today' ? dailyMetrics.firestoreReads || 0 : monthlyMetrics.firestoreReads || 0).toLocaleString()}
+                            </span>
+                            <span className="text-xs text-[#A6A097]">
+                              {metricsPeriodTab === 'today' ? '/ 50,000회' : '회 누적'}
+                            </span>
+                          </div>
+                          {/* 게이지 바 */}
+                          <div className="w-full h-1.5 bg-white/10 rounded-full mt-2.5 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                (metricsPeriodTab === 'today' ? (costInfo.readsUsagePercent ?? 0) : (monthlyCostInfo.readsUsagePercent ?? 0)) >= 90
+                                  ? 'bg-rose-500'
+                                  : (metricsPeriodTab === 'today' ? (costInfo.readsUsagePercent ?? 0) : (monthlyCostInfo.readsUsagePercent ?? 0)) >= 70
+                                  ? 'bg-amber-400'
+                                  : 'bg-indigo-400'
+                              }`}
+                              style={{
+                                width: `${Math.max(
+                                  2,
+                                  Math.min(
+                                    100,
+                                    metricsPeriodTab === 'today' ? (costInfo.readsUsagePercent ?? 0) : (monthlyCostInfo.readsUsagePercent ?? 0)
+                                  )
+                                )}%`
+                              }}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-[11px]">
+                      <span className="text-[#A6A097]">무료 잔여 쿼터:</span>
+                      <span className="font-bold text-indigo-300">
+                        {(metricsPeriodTab === 'today' ? (costInfo.remainingReads ?? 0) : (monthlyCostInfo.remainingReads ?? 0)).toLocaleString()}회
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 카드 6: 총 예상 원가 (오늘 / 이번달 누적) */}
+                  <div className="p-3.5 bg-gradient-to-br from-[#C46A40]/20 to-transparent hover:from-[#C46A40]/30 backdrop-blur-sm rounded-2xl border border-[#C46A40]/40 transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-[#E5885C] text-[11px] font-semibold mb-2">
+                        <span className="flex items-center gap-1.5">
+                          <DollarSign className="w-3.5 h-3.5" />
+                          {metricsPeriodTab === 'today' ? '당일 총 예상 원가' : metricsPeriodTab === 'monthly' ? '당월 총 누적 원가' : '총 예상 원가'}
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded bg-[#C46A40]/30 text-[#F1D3C6] text-[10px] font-bold">
+                          {(metricsPeriodTab === 'today' ? costInfo.isServerCostZero : monthlyCostInfo.isServerCostZero) ? '서버 0원' : '초과 과금'}
+                        </span>
+                      </div>
+
+                      {metricsPeriodTab === 'both' ? (
+                        <div className="space-y-1.5 my-1">
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-[11px] text-[#A6A097]">오늘 원가:</span>
+                            <span className="text-lg font-black font-serif text-[#F1D3C6]">{costInfo.totalCost.toLocaleString()}원</span>
+                          </div>
+                          <div className="flex items-baseline justify-between border-t border-white/10 pt-1">
+                            <span className="text-[11px] text-[#A6A097]">당월 누적:</span>
+                            <span className="text-lg font-black font-serif text-white">{monthlyCostInfo.totalCost.toLocaleString()}원</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-2xl font-black font-serif text-white tracking-tight">
+                              {(metricsPeriodTab === 'today' ? costInfo.totalCost : monthlyCostInfo.totalCost).toLocaleString()}
+                            </span>
+                            <span className="text-xs text-[#F1D3C6]">원 예상</span>
+                          </div>
+                          <p className="text-[10px] text-[#CDBEAF] mt-1 line-clamp-1">
+                            {(metricsPeriodTab === 'today' ? costInfo.isServerCostZero : monthlyCostInfo.isServerCostZero)
+                              ? '✅ DB 서버 전액 무료 쿼터 적용 중 (0원)'
+                              : `⚠️ DB 초과비용: 약 ${(metricsPeriodTab === 'today' ? costInfo.firestoreCost : monthlyCostInfo.firestoreCost).toLocaleString()}원`}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-[11px]">
+                      <span className="text-[#A6A097]">구간 판정:</span>
+                      <span className="font-bold text-emerald-300">
+                        {(metricsPeriodTab === 'today' ? costInfo.isServerCostZero : monthlyCostInfo.isServerCostZero) ? '안전 무료 구간' : '주의 유료 구간'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* 1. 실시간 종합 통계 KPI 카드 (5종) */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 shrink-0">
                 <div className="p-3.5 bg-white rounded-2xl border border-[#E7E5DF] shadow-2xs flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-[#F5F3ED] text-[#6E6A63] flex items-center justify-center shrink-0 border border-[#E7E5DF]">
                     <Users className="w-4 h-4 stroke-[2px]" />
@@ -931,6 +1466,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       >
                         가입순
                       </button>
+                      <button
+                        onClick={() => setSortBy('serverScore')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${sortBy === 'serverScore' ? 'bg-[#FAF0EB] text-[#C46A40] border border-[#F1D3C6]' : 'text-[#6E6A63] hover:bg-[#F5F3ED]'}`}
+                      >
+                        서버 점유순
+                      </button>
                     </div>
                   </div>
 
@@ -942,11 +1483,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           <tr className="bg-[#F7F5F0] border-b border-[#E7E5DF] text-[#6E6A63]">
                             <th className="py-3 px-4 font-bold">이름</th>
                             <th className="py-3 px-4 font-bold">이메일</th>
-                            <th className="py-3 px-3 font-bold text-center">기기수</th>
-                            <th className="py-3 px-3 font-bold text-center">남은 크레딧</th>
-                            <th className="py-3 px-3 font-bold text-center">총 결제수</th>
-                            <th className="py-3 px-3 font-bold text-center">최근 결제일</th>
-                            <th className="py-3 px-3 font-bold text-center">앱 접속수</th>
+                            <th className="py-3 px-3 font-bold text-center">기기</th>
+                            <th className="py-3 px-3 font-bold text-center">잔여 크레딧</th>
+                            <th className="py-3 px-3 font-bold text-center">AI 연구 / 누적원가</th>
+                            <th className="py-3 px-3 font-bold text-center">서버 보관 자료</th>
+                            <th className="py-3 px-3 font-bold text-center">서버 안전지수</th>
+                            <th className="py-3 px-3 font-bold text-center">총 결제</th>
                             <th className="py-3 px-4 font-bold text-center">최근 접속일</th>
                             <th className="py-3 px-3 font-bold text-center">상세</th>
                           </tr>
@@ -954,7 +1496,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         <tbody className="divide-y divide-[#EFECE6]">
                           {paginatedUsers.length === 0 ? (
                             <tr>
-                              <td colSpan={9} className="py-12 text-center">
+                              <td colSpan={10} className="py-12 text-center">
                                 {fetchError ? (
                                   <div className="flex flex-col items-center gap-2 text-red-500">
                                     <AlertCircle className="w-8 h-8" />
@@ -977,7 +1519,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                               const userDevices = (user.devices && user.devices.length > 0) 
                                 ? user.devices 
                                 : (user.deviceInfo ? [{ device: user.deviceInfo, lastLoginAt: user.lastLoginAt || Date.now(), loginCount: user.loginCount || 1 }] : []);
-                              const totalRemainingCredits = (user.aiCredits?.freeRemaining || 0) + (user.aiCredits?.paidRemaining || 0);
+                              const totalRemainingCredits = (user.aiCredits?.freeRemaining || 0) + (user.aiCredits?.monthlyRemaining || 0) + (user.aiCredits?.bonusRemaining || 0) + (user.aiCredits?.paidRemaining || 0);
+                              const userRes = calculateUserResourceUsage(user);
 
                               return (
                                 <tr 
@@ -1015,29 +1558,55 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                                     {totalRemainingCredits}회
                                   </td>
 
-                                  {/* 5. 총 결제수 */}
+                                  {/* 5. AI 연구 / 누적원가 (신규) */}
+                                  <td className="py-3.5 px-3 text-center">
+                                    <div className="flex flex-col items-center">
+                                      <span className="font-bold text-[#2C2B29]">{userRes.totalAiUsed}회</span>
+                                      <span className="text-[10px] text-amber-700 font-semibold">약 {userRes.totalAiCost.toLocaleString()}원</span>
+                                    </div>
+                                  </td>
+
+                                  {/* 6. 서버 보관 자료 (신규) */}
+                                  <td className="py-3.5 px-3 text-center">
+                                    <div className="flex flex-col items-center text-[11px]" title={`설교 ${userRes.sermonCount}편 · 구절노트 ${userRes.noteCount}개 · 관주 ${userRes.crossRefCount}개 · 구절주석 ${userRes.commentaryCount}개 · AI주석 ${userRes.cloudCommentaryCount}구절`}>
+                                      <span className="font-semibold text-indigo-900">총 {userRes.totalStoredDocuments}건</span>
+                                      <span className="text-[10px] text-[#8C877D] whitespace-nowrap">
+                                        설교 {userRes.sermonCount} · 노트 {userRes.noteCount} · 관주 {userRes.crossRefCount}
+                                      </span>
+                                    </div>
+                                  </td>
+
+                                  {/* 7. 서버 안전지수 (신규) */}
+                                  <td className="py-3.5 px-3 text-center">
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                      userRes.safetyStatus === 'warning' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
+                                      userRes.safetyStatus === 'caution' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
+                                      userRes.safetyStatus === 'normal' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                                      'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                                    }`}>
+                                      {userRes.safetyStatus === 'warning' ? '경고 (헤비)' :
+                                       userRes.safetyStatus === 'caution' ? '주의' :
+                                       userRes.safetyStatus === 'normal' ? '정상' : '안전'}
+                                    </span>
+                                  </td>
+
+                                  {/* 8. 총 결제 */}
                                   <td className="py-3.5 px-3 text-center font-semibold text-[#2C2B29]">
-                                    {recHistory.length}건
+                                    {recHistory.length > 0 ? (
+                                      <span className="text-[#C46A40] font-bold">{calculateTotalPaymentAmount(recHistory).toLocaleString()}원</span>
+                                    ) : (
+                                      <span className="text-[#A39E94]">-</span>
+                                    )}
                                   </td>
 
-                                  {/* 6. 최근 결제일 */}
-                                  <td className="py-3.5 px-3 text-center text-[11px] text-[#78746D] whitespace-nowrap">
-                                    {latestRecharge ? new Date(latestRecharge.date).toLocaleDateString('ko-KR') : '-'}
-                                  </td>
-
-                                  {/* 7. 앱 접속수 */}
-                                  <td className="py-3.5 px-3 text-center font-medium text-[#5A564F]">
-                                    {user.loginCount || 1}회
-                                  </td>
-
-                                  {/* 8. 최근 접속일 */}
+                                  {/* 9. 최근 접속일 */}
                                   <td className="py-3.5 px-4 text-center text-[11px] text-[#78746D] whitespace-nowrap">
                                     {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('ko-KR', {
                                       month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'
                                     }) : '-'}
                                   </td>
 
-                                  {/* 9. 관리 버튼 */}
+                                  {/* 10. 관리 버튼 */}
                                   <td className="py-3.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
                                     <button
                                       type="button"
@@ -1418,6 +1987,728 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         </table>
                       </div>
                     )}
+                  </div>
+
+                  {/* ── 구독 이용권 플랜 & 클라우드 멤버십 설정 카드 ── */}
+                  <div className="p-5 bg-white rounded-2xl border border-[#E7E5DF] shadow-2xs space-y-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-[#F0EFEA]">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-[#FAF0EB] text-[#C46A40] flex items-center justify-center border border-[#F1D3C6]">
+                          <Database className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-[#2C2B29] flex items-center gap-1.5">
+                            클라우드 멤버십 &amp; 이용권 플랜 설정
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">배포 없이 실시간 즉시 반영</span>
+                          </h4>
+                          <p className="text-[11px] text-[#7A756D] mt-0.5">
+                            월간/연간 금액, 크레딧 지급 수, 주석 서버 보관 한도, 클라우드 동기화 정책을 수정하면 파이어베이스에 즉시 반영됩니다.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSavePlans}
+                        disabled={isSavingPlans}
+                        className="w-full sm:w-auto px-4 py-2 bg-[#C46A40] hover:bg-[#B55434] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-50 shrink-0"
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>{isSavingPlans ? '파이어베이스 저장 중...' : '플랜 설정 저장하기'}</span>
+                      </button>
+                    </div>
+
+                    {/* 크레딧 이용 기준 안내 배너 - 아이콘 삭제 및 배경 흰색 */}
+                    <div className="p-3.5 bg-white border border-[#E8E5DE] rounded-xl text-xs space-y-1.5">
+                      <div className="font-bold text-[#2C2B29]">
+                        <span>크레딧 이용 기준 안내 (100 크레딧 기준)</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[#524F4A]">
+                        <div>• <strong>AI 구절 주석:</strong> 100회 (1구절 당 1 크레딧)</div>
+                        <div>• <strong>AI 설교 자료 5종 set:</strong> 33회 (설교 1편 5종 패키지당 3 크레딧)</div>
+                      </div>
+                      <p className="text-[11px] text-[#7A756D] pt-1.5 border-t border-[#EAE6DE]">
+                        설교자료 5종 set: 설교문 교정, 성경공부지, 5일 묵상지, 구절 PPT 대본, 설교 PPT 슬라이드 구성
+                      </p>
+                    </div>
+
+                    {/* 섹션 1: 클라우드 멤버십 요금제 (라이트 / 프로 / 마스터) */}
+                    <div>
+                      <h5 className="text-xs font-bold text-[#2C2B29] mb-3 flex items-center gap-1.5">
+                        <Database className="w-3.5 h-3.5 text-[#C46A40]" />
+                        클라우드 멤버십 플랜 설정 (전 기기 실시간 연동 &amp; 설교/메모 클라우드 무제한 동기화 포함)
+                      </h5>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                        {/* 1. 클라우드 라이트 */}
+                        {(() => {
+                          const plan = planSettings.membershipPlans?.lite || DEFAULT_PLANS_SETTINGS.membershipPlans.lite;
+                          return (
+                            <div className="p-4 rounded-xl border border-[#E8E3DA] bg-[#FAF8F5]/60 flex flex-col gap-2.5">
+                              <div className="flex items-center justify-between pb-1.5 border-b border-[#EAE5DC]">
+                                <span className="text-xs font-bold text-[#2C2B29]">{plan.name}</span>
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-sky-100 text-sky-800 font-bold">200구절 보관</span>
+                              </div>
+                              <p className="text-[10px] text-[#7A756D] leading-tight">{plan.targetUser}</p>
+
+                              <div className="grid grid-cols-2 gap-2 pt-1">
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">월간 구독료 (원)</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={100}
+                                    value={plan.monthlyPrice}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          lite: { ...(prev.membershipPlans?.lite || DEFAULT_PLANS_SETTINGS.membershipPlans.lite), monthlyPrice: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">월 지급 크레딧</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={plan.monthlyCredits}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          lite: { ...(prev.membershipPlans?.lite || DEFAULT_PLANS_SETTINGS.membershipPlans.lite), monthlyCredits: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">연간 결제료 (원)</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={1000}
+                                    value={plan.yearlyPrice}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          lite: { ...(prev.membershipPlans?.lite || DEFAULT_PLANS_SETTINGS.membershipPlans.lite), yearlyPrice: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">연간 즉시 크레딧</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={plan.yearlyCredits}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          lite: { ...(prev.membershipPlans?.lite || DEFAULT_PLANS_SETTINGS.membershipPlans.lite), yearlyCredits: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="text-[10px] text-[#7A756D] block mb-0.5">클라우드 보관 구절 수</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={plan.cloudVerseLimit}
+                                  onChange={(e) => {
+                                    const val = parseInt(e.target.value) || 0;
+                                    setPlanSettings(prev => ({
+                                      ...prev,
+                                      membershipPlans: {
+                                        ...prev.membershipPlans,
+                                        lite: { ...(prev.membershipPlans?.lite || DEFAULT_PLANS_SETTINGS.membershipPlans.lite), cloudVerseLimit: val }
+                                      }
+                                    }));
+                                  }}
+                                  className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                />
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* 2. 클라우드 프로 */}
+                        {(() => {
+                          const plan = planSettings.membershipPlans?.pro || DEFAULT_PLANS_SETTINGS.membershipPlans.pro;
+                          return (
+                            <div className="p-4 rounded-xl border-2 border-[#C46A40]/40 bg-[#FFFBF8] flex flex-col gap-2.5">
+                              <div className="flex items-center justify-between pb-1.5 border-b border-[#F1D3C6]">
+                                <span className="text-xs font-bold text-[#2C2B29]">{plan.name}</span>
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#C46A40] text-white font-bold">목회자 추천 (500구절)</span>
+                              </div>
+                              <p className="text-[10px] text-[#7A756D] leading-tight">{plan.targetUser}</p>
+
+                              <div className="grid grid-cols-2 gap-2 pt-1">
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">월간 구독료 (원)</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={100}
+                                    value={plan.monthlyPrice}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          pro: { ...(prev.membershipPlans?.pro || DEFAULT_PLANS_SETTINGS.membershipPlans.pro), monthlyPrice: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">월 지급 크레딧</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={plan.monthlyCredits}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          pro: { ...(prev.membershipPlans?.pro || DEFAULT_PLANS_SETTINGS.membershipPlans.pro), monthlyCredits: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">연간 결제료 (원)</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={1000}
+                                    value={plan.yearlyPrice}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          pro: { ...(prev.membershipPlans?.pro || DEFAULT_PLANS_SETTINGS.membershipPlans.pro), yearlyPrice: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">연간 즉시 크레딧</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={plan.yearlyCredits}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          pro: { ...(prev.membershipPlans?.pro || DEFAULT_PLANS_SETTINGS.membershipPlans.pro), yearlyCredits: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="text-[10px] text-[#7A756D] block mb-0.5">클라우드 보관 구절 수</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={plan.cloudVerseLimit}
+                                  onChange={(e) => {
+                                    const val = parseInt(e.target.value) || 0;
+                                    setPlanSettings(prev => ({
+                                      ...prev,
+                                      membershipPlans: {
+                                        ...prev.membershipPlans,
+                                        pro: { ...(prev.membershipPlans?.pro || DEFAULT_PLANS_SETTINGS.membershipPlans.pro), cloudVerseLimit: val }
+                                      }
+                                    }));
+                                  }}
+                                  className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                />
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* 3. 클라우드 마스터 */}
+                        {(() => {
+                          const plan = planSettings.membershipPlans?.master || DEFAULT_PLANS_SETTINGS.membershipPlans.master;
+                          return (
+                            <div className="p-4 rounded-xl border border-[#E8E3DA] bg-white flex flex-col gap-2.5">
+                              <div className="flex items-center justify-between pb-1.5 border-b border-[#EAE5DC]">
+                                <span className="text-xs font-bold text-[#2C2B29]">{plan.name}</span>
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 font-bold">성경 66권 전체 보관</span>
+                              </div>
+                              <p className="text-[10px] text-[#7A756D] leading-tight">{plan.targetUser}</p>
+
+                              <div className="grid grid-cols-2 gap-2 pt-1">
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">월간 구독료 (원)</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={100}
+                                    value={plan.monthlyPrice}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          master: { ...(prev.membershipPlans?.master || DEFAULT_PLANS_SETTINGS.membershipPlans.master), monthlyPrice: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">월 지급 크레딧</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={plan.monthlyCredits}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          master: { ...(prev.membershipPlans?.master || DEFAULT_PLANS_SETTINGS.membershipPlans.master), monthlyCredits: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">연간 결제료 (원)</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={1000}
+                                    value={plan.yearlyPrice}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          master: { ...(prev.membershipPlans?.master || DEFAULT_PLANS_SETTINGS.membershipPlans.master), yearlyPrice: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-[#7A756D] block mb-0.5">즉시 지급 크레딧 (2년 유효)</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={plan.yearlyCredits}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setPlanSettings(prev => ({
+                                        ...prev,
+                                        membershipPlans: {
+                                          ...prev.membershipPlans,
+                                          master: { ...(prev.membershipPlans?.master || DEFAULT_PLANS_SETTINGS.membershipPlans.master), yearlyCredits: val }
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                                  />
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="text-[10px] text-[#7A756D] block mb-0.5">서버 보관 정책</label>
+                                <div className="px-2 py-1 text-xs bg-[#FAF9F5] border border-[#DDD8CE] rounded-lg text-[#2C2B29] font-medium">
+                                  성경 66권 전체 영구 보관 (31,102구절)
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* 섹션 2: 클라우드 멤버십 전용 갱신권 & AI 크레딧 충전 상품 */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                      {/* 갱신권 (클라우드 +365) */}
+                      <div className="p-4 rounded-xl border border-[#E8E3DA] bg-[#FAF8F5]/60 flex flex-col gap-2">
+                        <div className="flex items-center justify-between pb-1.5 border-b border-[#EAE5DC]">
+                          <span className="text-xs font-bold text-[#2C2B29] flex items-center gap-1.5">
+                            <CreditCard className="w-3.5 h-3.5 text-[#C46A40]" />
+                            클라우드 멤버십 전용 갱신권 (클라우드 +365)
+                          </span>
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#FAF0EB] text-[#C46A40] font-bold">2년차 연장권</span>
+                        </div>
+                        <p className="text-[10px] text-[#7A756D]">
+                          연간결제 이용자 전용 서버 유지 및 기존 구축 데이터 동기화 연장권
+                        </p>
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div>
+                            <label className="text-[10px] text-[#7A756D] block mb-0.5">연간 연장 금액 (원)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={500}
+                              value={planSettings.renewalPlan?.price ?? 11000}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                setPlanSettings(prev => ({
+                                  ...prev,
+                                  renewalPlan: { ...(prev.renewalPlan || DEFAULT_PLANS_SETTINGS.renewalPlan), price: val }
+                                }));
+                              }}
+                              className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-[#7A756D] block mb-0.5">갱신 감사 크레딧 (회)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={planSettings.renewalPlan?.bonusCredits ?? 200}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                setPlanSettings(prev => ({
+                                  ...prev,
+                                  renewalPlan: { ...(prev.renewalPlan || DEFAULT_PLANS_SETTINGS.renewalPlan), bonusCredits: val }
+                                }));
+                              }}
+                              className="w-full px-2 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* AI 크레딧 단독 충전 상품 (AI 200 / AI 500) */}
+                      <div className="p-4 rounded-xl border border-[#E8E3DA] bg-[#FAF8F5]/60 flex flex-col gap-2">
+                        <div className="flex items-center justify-between pb-1.5 border-b border-[#EAE5DC]">
+                          <span className="text-xs font-bold text-[#2C2B29] flex items-center gap-1.5">
+                            <Coins className="w-3.5 h-3.5 text-[#C46A40]" />
+                            AI 크레딧 단독 충전 요금 (유효기간 1년)
+                          </span>
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-bold">단독 충전</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 pt-1">
+                          {/* AI 200 */}
+                          <div className="p-2.5 bg-white rounded-lg border border-[#EAE5DC] space-y-1.5">
+                            <span className="text-xs font-bold text-[#2C2B29]">AI 200</span>
+                            <div>
+                              <label className="text-[9px] text-[#7A756D] block">판매 금액 (원)</label>
+                              <input
+                                type="number"
+                                min={0}
+                                step={500}
+                                value={planSettings.creditPackages?.ai200?.price ?? 5500}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  setPlanSettings(prev => ({
+                                    ...prev,
+                                    creditPackages: {
+                                      ...prev.creditPackages,
+                                      ai200: { ...(prev.creditPackages?.ai200 || DEFAULT_PLANS_SETTINGS.creditPackages.ai200), price: val }
+                                    }
+                                  }));
+                                }}
+                                className="w-full px-2 py-0.5 text-xs bg-white border border-[#DDD8CE] rounded text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] text-[#7A756D] block">지급 크레딧 (회)</label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={planSettings.creditPackages?.ai200?.credits ?? 200}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  setPlanSettings(prev => ({
+                                    ...prev,
+                                    creditPackages: {
+                                      ...prev.creditPackages,
+                                      ai200: { ...(prev.creditPackages?.ai200 || DEFAULT_PLANS_SETTINGS.creditPackages.ai200), credits: val }
+                                    }
+                                  }));
+                                }}
+                                className="w-full px-2 py-0.5 text-xs bg-white border border-[#DDD8CE] rounded text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                              />
+                            </div>
+                          </div>
+
+                          {/* AI 500 */}
+                          <div className="p-2.5 bg-white rounded-lg border border-[#EAE5DC] space-y-1.5">
+                            <span className="text-xs font-bold text-[#2C2B29]">AI 500</span>
+                            <div>
+                              <label className="text-[9px] text-[#7A756D] block">판매 금액 (원)</label>
+                              <input
+                                type="number"
+                                min={0}
+                                step={500}
+                                value={planSettings.creditPackages?.ai500?.price ?? 11000}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  setPlanSettings(prev => ({
+                                    ...prev,
+                                    creditPackages: {
+                                      ...prev.creditPackages,
+                                      ai500: { ...(prev.creditPackages?.ai500 || DEFAULT_PLANS_SETTINGS.creditPackages.ai500), price: val }
+                                    }
+                                  }));
+                                }}
+                                className="w-full px-2 py-0.5 text-xs bg-white border border-[#DDD8CE] rounded text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[9px] text-[#7A756D] block">지급 크레딧 (회)</label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={planSettings.creditPackages?.ai500?.credits ?? 500}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  setPlanSettings(prev => ({
+                                    ...prev,
+                                    creditPackages: {
+                                      ...prev.creditPackages,
+                                      ai500: { ...(prev.creditPackages?.ai500 || DEFAULT_PLANS_SETTINGS.creditPackages.ai500), credits: val }
+                                    }
+                                  }));
+                                }}
+                                className="w-full px-2 py-0.5 text-xs bg-white border border-[#DDD8CE] rounded text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 섹션 3: 구독권별 노트/설교 클라우드 서버 저장 허용 설정 */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h5 className="text-xs font-bold text-[#2C2B29] flex items-center gap-1.5">
+                          <HardDrive className="w-3.5 h-3.5 text-[#C46A40]" />
+                          구독권별 설교/구절 노트 클라우드 서버 동기화 허용 정책 (기본: 기기 무제한 보관)
+                        </h5>
+                      </div>
+                      <p className="text-[11px] text-[#7A756D] mb-2.5 leading-relaxed">
+                        모든 회원은 기본적으로 기기(로컬)에 무제한으로 안전하게 보관됩니다. 여기서 체크(ON)된 멤버십 회원의 데이터만 서버에 저장되어 여러 기기(PC/모바일/태블릿) 간 실시간 동기화됩니다.
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+                        {/* 무료 회원 */}
+                        <label className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                          planSettings.cloudNotesPolicy?.free ? 'bg-emerald-50/70 border-emerald-300' : 'bg-[#FAF8F5] border-[#E8E3DA]'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-[#2C2B29]">무료 회원</span>
+                            <input
+                              type="checkbox"
+                              checked={!!planSettings.cloudNotesPolicy?.free}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setPlanSettings(prev => ({
+                                  ...prev,
+                                  cloudNotesPolicy: { ...prev.cloudNotesPolicy, free: checked }
+                                }));
+                              }}
+                              className="accent-[#C46A40] w-4 h-4 cursor-pointer"
+                            />
+                          </div>
+                          <span className={`text-[10px] font-bold ${planSettings.cloudNotesPolicy?.free ? 'text-emerald-700' : 'text-[#8C877D]'}`}>
+                            {planSettings.cloudNotesPolicy?.free ? '✓ 서버 동기화 ON' : '기기 저장 전용 (OFF)'}
+                          </span>
+                        </label>
+
+                        {/* 클라우드 라이트 */}
+                        <label className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                          planSettings.cloudNotesPolicy?.lite ? 'bg-emerald-50/70 border-emerald-300' : 'bg-[#FAF8F5] border-[#E8E3DA]'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-[#2C2B29]">클라우드 라이트</span>
+                            <input
+                              type="checkbox"
+                              checked={!!planSettings.cloudNotesPolicy?.lite}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setPlanSettings(prev => ({
+                                  ...prev,
+                                  cloudNotesPolicy: { ...prev.cloudNotesPolicy, lite: checked }
+                                }));
+                              }}
+                              className="accent-[#C46A40] w-4 h-4 cursor-pointer"
+                            />
+                          </div>
+                          <span className={`text-[10px] font-bold ${planSettings.cloudNotesPolicy?.lite ? 'text-emerald-700' : 'text-[#8C877D]'}`}>
+                            {planSettings.cloudNotesPolicy?.lite ? '✓ 서버 동기화 ON' : '기기 저장 전용 (OFF)'}
+                          </span>
+                        </label>
+
+                        {/* 클라우드 프로 */}
+                        <label className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                          planSettings.cloudNotesPolicy?.pro ? 'bg-emerald-50/70 border-emerald-300' : 'bg-[#FAF8F5] border-[#E8E3DA]'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-[#2C2B29]">클라우드 프로</span>
+                            <input
+                              type="checkbox"
+                              checked={!!planSettings.cloudNotesPolicy?.pro}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setPlanSettings(prev => ({
+                                  ...prev,
+                                  cloudNotesPolicy: { ...prev.cloudNotesPolicy, pro: checked }
+                                }));
+                              }}
+                              className="accent-[#C46A40] w-4 h-4 cursor-pointer"
+                            />
+                          </div>
+                          <span className={`text-[10px] font-bold ${planSettings.cloudNotesPolicy?.pro ? 'text-emerald-700' : 'text-[#8C877D]'}`}>
+                            {planSettings.cloudNotesPolicy?.pro ? '✓ 서버 동기화 ON' : '기기 저장 전용 (OFF)'}
+                          </span>
+                        </label>
+
+                        {/* 클라우드 마스터 */}
+                        <label className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                          (planSettings.cloudNotesPolicy?.master ?? true) ? 'bg-emerald-50/70 border-emerald-300' : 'bg-[#FAF8F5] border-[#E8E3DA]'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-[#2C2B29]">클라우드 마스터</span>
+                            <input
+                              type="checkbox"
+                              checked={!!(planSettings.cloudNotesPolicy?.master ?? true)}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setPlanSettings(prev => ({
+                                  ...prev,
+                                  cloudNotesPolicy: { ...prev.cloudNotesPolicy, master: checked }
+                                }));
+                              }}
+                              className="accent-[#C46A40] w-4 h-4 cursor-pointer"
+                            />
+                          </div>
+                          <span className={`text-[10px] font-bold ${(planSettings.cloudNotesPolicy?.master ?? true) ? 'text-emerald-700' : 'text-[#8C877D]'}`}>
+                            {(planSettings.cloudNotesPolicy?.master ?? true) ? '✓ 서버 동기화 ON' : '기기 저장 전용 (OFF)'}
+                          </span>
+                        </label>
+
+                        {/* 클라우드 이용권 구매자 (레거시 호환) */}
+                        <label className={`p-3 rounded-xl border cursor-pointer transition-all flex flex-col justify-between gap-2 ${
+                          planSettings.cloudNotesPolicy?.cloudPurchased ? 'bg-emerald-50/70 border-emerald-300' : 'bg-[#FAF8F5] border-[#E8E3DA]'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-[#2C2B29]">기존 클라우드 구매자</span>
+                            <input
+                              type="checkbox"
+                              checked={!!planSettings.cloudNotesPolicy?.cloudPurchased}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setPlanSettings(prev => ({
+                                  ...prev,
+                                  cloudNotesPolicy: { ...prev.cloudNotesPolicy, cloudPurchased: checked }
+                                }));
+                              }}
+                              className="accent-[#C46A40] w-4 h-4 cursor-pointer"
+                            />
+                          </div>
+                          <span className={`text-[10px] font-bold ${planSettings.cloudNotesPolicy?.cloudPurchased ? 'text-emerald-700' : 'text-[#8C877D]'}`}>
+                            {planSettings.cloudNotesPolicy?.cloudPurchased ? '✓ 서버 동기화 ON' : '기기 저장 전용 (OFF)'}
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* 섹션 4: 무료 기본 정책 */}
+                    <div className="pt-3 border-t border-[#F0EFEA] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#FAF8F5]/80 p-3 rounded-xl border border-[#EFECE6]">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 text-xs">
+                        <div className="flex items-center gap-2">
+                          <label className="text-[#5A564F] font-medium whitespace-nowrap">신규 가입 기본 무료 크레딧:</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={planSettings.freeMonthlyCredits}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              setPlanSettings(prev => ({ ...prev, freeMonthlyCredits: val }));
+                            }}
+                            className="w-20 px-2.5 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                          />
+                          <span className="text-[#7A756D]">회</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-[#5A564F] font-medium whitespace-nowrap">기기 로컬 무료 보관 일수:</label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={planSettings.freeDeviceRetentionDays}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              setPlanSettings(prev => ({ ...prev, freeDeviceRetentionDays: val }));
+                            }}
+                            className="w-20 px-2.5 py-1 text-xs bg-white border border-[#DDD8CE] rounded-lg text-[#2C2B29] outline-none focus:border-[#C46A40]"
+                          />
+                          <span className="text-[#7A756D]">일</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSavePlans}
+                        disabled={isSavingPlans}
+                        className="px-3.5 py-1.5 bg-[#C46A40] hover:bg-[#B55434] text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 shadow-2xs cursor-pointer disabled:opacity-50 shrink-0"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>{isSavingPlans ? '저장 중...' : '플랜 설정 저장'}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1912,10 +3203,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         <div className="p-4 bg-white rounded-2xl border border-[#E7E5DF] shadow-2xs">
                           <span className="text-[10px] font-bold text-[#8C877D] uppercase">남은 AI 크레딧</span>
                           <p className="text-lg font-bold font-serif text-[#2C2B29] mt-0.5">
-                            {((selectedUserForDetail.aiCredits?.paidRemaining || 0) + (selectedUserForDetail.aiCredits?.freeRemaining || 0)).toLocaleString()}회
+                            {((selectedUserForDetail.aiCredits?.paidRemaining || 0) + (selectedUserForDetail.aiCredits?.bonusRemaining || 0) + (selectedUserForDetail.aiCredits?.monthlyRemaining || 0) + (selectedUserForDetail.aiCredits?.freeRemaining || 0)).toLocaleString()}회
                           </p>
                           <span className="text-[10px] text-[#A39E94]">
-                            유료 {selectedUserForDetail.aiCredits?.paidRemaining || 0} / 무료 {selectedUserForDetail.aiCredits?.freeRemaining || 0}
+                            월한도 {(selectedUserForDetail.aiCredits?.monthlyRemaining || selectedUserForDetail.aiCredits?.freeRemaining || 0)} / 선물 {selectedUserForDetail.aiCredits?.bonusRemaining || 0} / 유료 {selectedUserForDetail.aiCredits?.paidRemaining || 0}
                           </span>
                         </div>
 
@@ -1942,6 +3233,149 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         </div>
                       </div>
                     </div>
+
+                    {/* ── [신규] 회원별 서버 점유량 & 원가 분석 카드 (추가 DB 읽기 0회 즉시 계산) ── */}
+                    {(() => {
+                      const userRes = calculateUserResourceUsage(selectedUserForDetail);
+                      return (
+                        <div className="bg-gradient-to-br from-[#FAF9F5] to-white rounded-2xl border border-[#E7E5DF] p-4 sm:p-5 shadow-2xs">
+                          <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-[#E7E5DF]">
+                            <h4 className="font-bold text-xs text-[#2C2B29] flex items-center gap-2">
+                              <Server className="w-4 h-4 text-[#C46A40]" />
+                              <span>회원별 서버 점유량 &amp; 원가 분석 (과금 0원 온디맨드 계산)</span>
+                            </h4>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
+                              추가 DB 읽기 0회 (메타데이터 즉시 환산)
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            {/* 1. 개인별 총 AI 주석 사용량 및 누적 원가 */}
+                            <div className="p-3.5 bg-white rounded-xl border border-[#EAE7E0] shadow-2xs flex flex-col justify-between">
+                              <div>
+                                <span className="text-[10px] font-bold text-[#8C877D] uppercase flex items-center gap-1">
+                                  <Sparkles className="w-3 h-3 text-amber-500" />
+                                  AI 연구 사용량 &amp; 원가
+                                </span>
+                                <p className="text-base font-bold font-serif text-[#2C2B29] mt-1">
+                                  {userRes.totalAiUsed.toLocaleString()}회
+                                </p>
+                              </div>
+                              <div className="mt-2 pt-2 border-t border-[#F0ECE1] text-[11px] flex items-center justify-between">
+                                <span className="text-[#8C877D]">누적 원가:</span>
+                                <span className="font-bold text-amber-700">약 {userRes.totalAiCost.toLocaleString()}원</span>
+                              </div>
+                              <span className="text-[9px] text-[#A39E94] mt-0.5">Gemini Flash (1회 약 2원 기준)</span>
+                            </div>
+
+                            {/* 2. 개인별 클라우드 서버 저장량 */}
+                            <div className="p-3.5 bg-white rounded-xl border border-[#EAE7E0] shadow-2xs flex flex-col justify-between">
+                              <div>
+                                <span className="text-[10px] font-bold text-[#8C877D] uppercase flex items-center gap-1">
+                                  <HardDrive className="w-3 h-3 text-indigo-500" />
+                                  클라우드 서버 보관량
+                                </span>
+                                <p className="text-base font-bold font-serif text-indigo-950 mt-1">
+                                  총 {userRes.totalStoredDocuments.toLocaleString()}건
+                                </p>
+                              </div>
+                              <div className="mt-2 pt-2 border-t border-[#F0ECE1] text-[10px] text-[#5A564F] flex flex-col gap-1">
+                                <div className="flex justify-between">
+                                  <span>설교노트:</span>
+                                  <strong className="text-indigo-800">{userRes.sermonCount}편</strong>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>구절노트:</span>
+                                  <strong className="text-indigo-800">{userRes.noteCount}개</strong>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>관주(교차참조):</span>
+                                  <strong className="text-indigo-800">{userRes.crossRefCount}개</strong>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>구절주석(메모):</span>
+                                  <strong className="text-indigo-800">{userRes.commentaryCount}개</strong>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>AI 주석(영구보관):</span>
+                                  <strong className="text-indigo-800">{userRes.cloudCommentaryCount}구절</strong>
+                                </div>
+                                <div className="flex justify-between pt-1 border-t border-dashed border-[#EAE7E0]">
+                                  <span className="text-[#8C877D]">AI 연구 누적 호출:</span>
+                                  <strong className="text-amber-800">{userRes.totalAiUsed}회</strong>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* 3. 서버 점유 부하 지수 & 헤비 유저 여부 */}
+                            <div className="p-3.5 bg-white rounded-xl border border-[#EAE7E0] shadow-2xs flex flex-col justify-between">
+                              <div>
+                                <span className="text-[10px] font-bold text-[#8C877D] uppercase flex items-center gap-1">
+                                  <Cpu className="w-3 h-3 text-emerald-500" />
+                                  서버 점유 안전 지수
+                                </span>
+                                <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                                    userRes.safetyStatus === 'warning' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                                    userRes.safetyStatus === 'caution' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                    userRes.safetyStatus === 'normal' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                    'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  }`}>
+                                    {userRes.safetyLabel}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="mt-2 pt-2 border-t border-[#F0ECE1]">
+                                <div className="flex justify-between text-[10px] text-[#78746D] mb-1">
+                                  <span>서버 부하 스코어</span>
+                                  <span className="font-bold">{userRes.loadScore}점</span>
+                                </div>
+                                <div className="w-full h-1.5 bg-[#EAE7E0] rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${
+                                      userRes.safetyStatus === 'warning' ? 'bg-rose-500' :
+                                      userRes.safetyStatus === 'caution' ? 'bg-amber-500' :
+                                      'bg-emerald-500'
+                                    }`}
+                                    style={{ width: `${Math.max(4, userRes.safetyScorePercent)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* 4. 결제 기여도 vs 원가 마진 분석 */}
+                            <div className="p-3.5 bg-white rounded-xl border border-[#EAE7E0] shadow-2xs flex flex-col justify-between">
+                              <div>
+                                <span className="text-[10px] font-bold text-[#8C877D] uppercase flex items-center gap-1">
+                                  <TrendingUp className="w-3 h-3 text-[#C46A40]" />
+                                  원가 대비 운영 마진
+                                </span>
+                                <p className="text-base font-bold font-serif text-[#C46A40] mt-1">
+                                  {userRes.totalPaid > 0 ? (
+                                    <span>+{userRes.netContribution.toLocaleString()}원</span>
+                                  ) : (
+                                    <span className="text-xs font-sans text-[#78746D]">무료 지원 ({userRes.totalAiCost}원 소모)</span>
+                                  )}
+                                </p>
+                              </div>
+                              <div className="mt-2 pt-2 border-t border-[#F0ECE1] text-[10px] text-[#5A564F]">
+                                {userRes.totalPaid > 0 ? (
+                                  <div className="flex justify-between">
+                                    <span>수익 마진율:</span>
+                                    <strong className="text-emerald-700 font-bold">{userRes.marginPercent}% (우량)</strong>
+                                  </div>
+                                ) : (
+                                  <div className="text-[10px] text-[#8C877D]">
+                                    기본 무료/체험 혜택 이용 중
+                                  </div>
+                                )}
+                              </div>
+                              <span className="text-[9px] text-[#A39E94] mt-0.5">총 결제 {userRes.totalPaid.toLocaleString()}원 - 원가 {userRes.totalAiCost.toLocaleString()}원</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* 2. 결제 & 충전 히스토리 내역 (전체 목록) */}
                     <div className="bg-white rounded-2xl border border-[#E7E5DF] p-4 sm:p-5 shadow-2xs">
@@ -2125,6 +3559,80 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           })()}
                         </div>
                       </div>
+
+                      {/* 4-1.2. 설교 & 구절 노트 클라우드 서버 저장 개별 제어 */}
+                      {(() => {
+                        const isSyncActive = canUserSyncCloudNotes(selectedUserForDetail, planSettings);
+                        const manualState = selectedUserForDetail.cloudNotesAllowed;
+                        const isActionLoading = actionLoadingUid === `${selectedUserForDetail.uid}_cloudNotes`;
+
+                        return (
+                          <div className="space-y-2 pt-2 border-t border-[#F0EBE1]">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] font-bold text-[#5A564F] flex items-center gap-1.5">
+                                <HardDrive className="w-3.5 h-3.5 text-[#C46A40]" />
+                                설교 & 구절 노트 클라우드 서버 동기화 권한
+                              </label>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                  isSyncActive ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-700'
+                                }`}>
+                                  {isSyncActive ? '현재: 서버 동기화 ON' : '현재: 기기 저장 전용 (OFF)'}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="p-3 bg-[#FAF9F5] border border-[#DDD8CE] rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                              <div>
+                                <span className="text-xs font-bold text-[#2C2B29] block">
+                                  {manualState === true ? '관리자 강제 허용 (ON)' : (manualState === false ? '관리자 강제 차단 (OFF)' : '기본값: 플랜 정책 자동 따름')}
+                                </span>
+                                <span className="text-[10px] text-[#78746D]">
+                                  {manualState !== undefined ? '특정 회원 개별 지정 값이 플랜 설정보다 최우선 적용됩니다.' : '현재 구독 이용권 및 주석 클라우드 보유 여부에 따라 자동 결정됩니다.'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetUserCloudNotes(selectedUserForDetail, true)}
+                                  disabled={isActionLoading}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                    manualState === true 
+                                      ? 'bg-emerald-600 text-white shadow-2xs ring-2 ring-emerald-300' 
+                                      : 'bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-50'
+                                  }`}
+                                >
+                                  강제 허용
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetUserCloudNotes(selectedUserForDetail, false)}
+                                  disabled={isActionLoading}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                    manualState === false 
+                                      ? 'bg-red-600 text-white shadow-2xs ring-2 ring-red-300' 
+                                      : 'bg-white border border-red-300 text-red-700 hover:bg-red-50'
+                                  }`}
+                                >
+                                  강제 차단
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetUserCloudNotes(selectedUserForDetail, null)}
+                                  disabled={isActionLoading}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                    manualState === undefined 
+                                      ? 'bg-[#2C2B29] text-white shadow-2xs' 
+                                      : 'bg-white border border-[#DDD8CE] text-[#5A564F] hover:bg-gray-100'
+                                  }`}
+                                >
+                                  기본 정책 복원
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* 4-2. AI 연구 크레딧 즉시 지급 */}
                       <div className="space-y-2 pt-2 border-t border-[#F0EBE1]">

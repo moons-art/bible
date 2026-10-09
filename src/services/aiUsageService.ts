@@ -3,7 +3,9 @@
 export interface AiUsageState {
   monthKey: string; // 'YYYY-MM' 형식 (예: '2026-09')
   monthlyFreeRemaining: number; // 월 10회 기본 제공 중 잔여 횟수
-  paidRemaining: number; // 유료 충전 잔여 횟수
+  monthlyQuotaRemaining?: number; // 월간 구독 한도 크레딧 잔여 (라이트 20, 프로 40, 마스터 80 등, 이월 불가)
+  bonusRemaining?: number; // 선물/프로모션/추천 보너스 잔여 (유효기간 1년)
+  paidRemaining: number; // 유료 충전 잔여 횟수 (유효기간 1년/2년)
   paidExpiresAt?: number; // 유료 충전 만료 타임스탬프 (1년 365일 유효)
   totalUsed: number; // 누적 사용 횟수
   cloudCommentaryLimit?: number;
@@ -34,6 +36,8 @@ export function getAiUsageState(): AiUsageState {
       const initial: AiUsageState = {
         monthKey: currentMonth,
         monthlyFreeRemaining: MONTHLY_FREE_QUOTA,
+        monthlyQuotaRemaining: 0,
+        bonusRemaining: 0,
         paidRemaining: 0,
         totalUsed: 0,
         cloudCommentaryLimit: 0,
@@ -51,7 +55,7 @@ export function getAiUsageState(): AiUsageState {
     // 미구독자이거나 크레딧을 다 써서 paidRemaining === 0인 경우 다음 달부터 10개로 갱신 (누적 합산이 아닌 10개로 시작)
     if (state.monthKey !== currentMonth) {
       state.monthKey = currentMonth;
-      state.monthlyFreeRemaining = (state.paidRemaining && state.paidRemaining > 0) ? 0 : MONTHLY_FREE_QUOTA;
+      state.monthlyFreeRemaining = ((state.paidRemaining && state.paidRemaining > 0) || (state.monthlyQuotaRemaining && state.monthlyQuotaRemaining > 0)) ? 0 : MONTHLY_FREE_QUOTA;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
 
@@ -61,6 +65,8 @@ export function getAiUsageState(): AiUsageState {
     return {
       monthKey: currentMonth,
       monthlyFreeRemaining: MONTHLY_FREE_QUOTA,
+      monthlyQuotaRemaining: 0,
+      bonusRemaining: 0,
       paidRemaining: 0,
       totalUsed: 0,
       cloudCommentaryLimit: 0,
@@ -82,35 +88,54 @@ function saveAiUsageState(state: AiUsageState) {
 
 // AI 사용 가능 여부 확인
 export function canUseAi(): boolean {
-  const state = getAiUsageState();
-  return (state.monthlyFreeRemaining + state.paidRemaining) > 0;
+  return getTotalRemainingCredits() > 0;
 }
 
-// 총 잔여 횟수 반환
+// 총 잔여 횟수 반환 (무료한도 + 월간구독한도 + 선물크레딧 + 유료크레딧)
 export function getTotalRemainingCredits(): number {
   const state = getAiUsageState();
-  return state.monthlyFreeRemaining + state.paidRemaining;
+  return (state.monthlyFreeRemaining || 0) + 
+         (state.monthlyQuotaRemaining || 0) + 
+         (state.bonusRemaining || 0) + 
+         (state.paidRemaining || 0);
 }
 
 // 총 제공/충전 한도 반환 (기본 10회, 유료 충전 시 충전된 총 수량)
 export function getTotalCapacity(): number {
   const state = getAiUsageState();
-  if (state.paidRemaining <= 0) {
+  const totalRemaining = getTotalRemainingCredits();
+  if (totalRemaining <= 0) {
     return MONTHLY_FREE_QUOTA;
   }
-  return state.paidRemaining + (state.totalUsed || 0);
+  return totalRemaining + (state.totalUsed || 0);
 }
 
-// 1회 크레딧 차감 (무료 크레딧 우선 차감 후 유료 크레딧 차감)
+// 1회 크레딧 차감: 1) 월간한도/무료 -> 2) 선물크레딧 -> 3) 유효기간 유료크레딧 순차 차감
 export function consumeAiCredit(reference: string): boolean {
   const state = getAiUsageState();
-  if (state.monthlyFreeRemaining > 0) {
+  if ((state.monthlyQuotaRemaining || 0) > 0) {
+    // 1순위: 월간 구독 한도 크레딧 차감 (이월 불가 한도형 최우선 소진)
+    state.monthlyQuotaRemaining = (state.monthlyQuotaRemaining || 0) - 1;
+    state.totalUsed += 1;
+    state.history.unshift({ timestamp: Date.now(), reference });
+    saveAiUsageState(state);
+    return true;
+  } else if ((state.monthlyFreeRemaining || 0) > 0) {
+    // 1순위: 무료 기본 한도 크레딧 차감
     state.monthlyFreeRemaining -= 1;
     state.totalUsed += 1;
     state.history.unshift({ timestamp: Date.now(), reference });
     saveAiUsageState(state);
     return true;
-  } else if (state.paidRemaining > 0) {
+  } else if ((state.bonusRemaining || 0) > 0) {
+    // 2순위: 선물/프로모션 크레딧 차감 (유료 구매분 보존 위해 선물 우선 소진)
+    state.bonusRemaining = (state.bonusRemaining || 0) - 1;
+    state.totalUsed += 1;
+    state.history.unshift({ timestamp: Date.now(), reference });
+    saveAiUsageState(state);
+    return true;
+  } else if ((state.paidRemaining || 0) > 0) {
+    // 3순위: 유효기간이 있는 유료/연간 결제 크레딧 차감
     state.paidRemaining -= 1;
     state.totalUsed += 1;
     state.history.unshift({ timestamp: Date.now(), reference });

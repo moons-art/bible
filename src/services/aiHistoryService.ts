@@ -16,7 +16,6 @@ export interface CommentaryHistoryItem {
 
 const STORAGE_KEY = 'nations_ai_commentary_history_v1';
 const RETENTION_PERIOD_MS = 30 * 24 * 60 * 60 * 1000; // 30일 (밀리초)
-const MAX_HISTORY_ITEMS = 30; // localStorage 5MB 초과 방지를 위한 최대 보관 개수
 
 // 동일 세션 내 syncLocalHistoryToCloud 중복 실행 방지 메모리 가드
 const syncedSessions = new Set<string>();
@@ -30,7 +29,7 @@ export function getCommentaryHistory(): CommentaryHistoryItem[] {
     const items: CommentaryHistoryItem[] = JSON.parse(raw);
     const now = Date.now();
 
-    // 30일 이내의 유효한 기록만 필터링 (30일 경과 항목 자동 폐기)
+    // 30일 이내의 유효한 기록만 필터링 (30일 경과 항목은 순차적으로 자동 폐기)
     // 단어 심층 연구, 구절 신학 연구 등 부속 연구는 제외하고 순수 성경 구절 주석만 유지
     const validItems = items.filter(item => {
       if (item.expiresAt <= now) return false;
@@ -66,7 +65,7 @@ export function getCommentaryFromHistory(reference: string): AiCommentaryData | 
   return null;
 }
 
-// 주석 분석 결과를 30일 보관용으로 저장 (최대 30개 및 용량 안전 가드)
+// 주석 분석 결과를 30일 보관용으로 저장 (개수 제한 없이 30일간 보관, 30일 경과 시 순차 삭제)
 export function saveCommentaryToHistory(data: AiCommentaryData, storageType: 'cloud' | 'local' = 'local'): void {
   try {
     const now = Date.now();
@@ -84,20 +83,21 @@ export function saveCommentaryToHistory(data: AiCommentaryData, storageType: 'cl
       verse: parseInt(data.reference.split(':')[1] || '1', 10),
       scriptureText: data.scriptureText,
       createdAt: now,
-      expiresAt: now + RETENTION_PERIOD_MS,
+      expiresAt: now + RETENTION_PERIOD_MS, // 생성일로부터 30일 뒤 만료
       data,
       storageType,
     };
 
     filtered.unshift(newItem);
-    const limited = filtered.slice(0, MAX_HISTORY_ITEMS);
 
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(limited));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
     } catch (quotaErr) {
-      // 용량 초과(QuotaExceededError) 방어: 오래된 절반 폐기 후 재시도
-      console.warn('[aiHistoryService] Storage quota exceeded, pruning old items:', quotaErr);
-      const pruned = limited.slice(0, Math.max(5, Math.floor(limited.length / 2)));
+      // 브라우저 5MB 용량 한도(QuotaExceededError)에 도달할 경우에만
+      // 만료일이 가장 가까운 오래된 항목부터 점진적으로 정리하여 에러 방어
+      console.warn('[aiHistoryService] Storage quota exceeded, pruning oldest items:', quotaErr);
+      const sortedByOldest = [...filtered].sort((a, b) => a.expiresAt - b.expiresAt);
+      const pruned = sortedByOldest.slice(Math.ceil(sortedByOldest.length * 0.2)); // 가장 오래된 20%만 안전 정리
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(pruned));
       } catch (e) {}
@@ -269,20 +269,25 @@ export async function fetchCloudCommentaryHistory(uid: string): Promise<Commenta
  */
 export async function getCloudCommentaryCount(uid: string): Promise<number> {
   try {
-    const { collection, getDocs } = await import('firebase/firestore');
+    const { collection, getCountFromServer, doc, getDoc, query, where } = await import('firebase/firestore');
     const { db } = await import('../api/firebaseConfig');
-    const colRef = collection(db, 'users', uid, 'cloudCommentaries');
-    const snap = await getDocs(colRef);
-    
-    // 단어 심층 연구, 구절 신학 연구를 제외한 순수 성경 구절 주석 개수 집계
-    const count = snap.docs.filter(d => {
-      const dt = d.data();
-      if (dt.type && dt.type !== 'commentary') return false;
-      if (d.id.includes('_etymology') || d.id.includes('_passage')) return false;
-      return true;
-    }).length;
 
-    return count;
+    // 1. 상위 유저 문서(users/{uid})의 usedCloudCommentaryCount 캐시 필드 먼저 확인 (0~1회 가벼운 읽기)
+    const userRef = doc(db, 'users', uid);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      const userData = userSnap.data();
+      if (typeof userData.usedCloudCommentaryCount === 'number') {
+        return userData.usedCloudCommentaryCount;
+      }
+    }
+
+    // 2. 캐시가 없는 경우 문서 본문 다운로드(getDocs) 대신 getCountFromServer와 type: 'commentary' 쿼리로 정밀 집계
+    //    (원어 단어 연구 _etymology, 구절 신학 연구 _passage 등의 부속 문서 제외)
+    const colRef = collection(db, 'users', uid, 'cloudCommentaries');
+    const q = query(colRef, where('type', '==', 'commentary'));
+    const countSnap = await getCountFromServer(q);
+    return countSnap.data().count;
   } catch (err) {
     console.warn('[aiHistoryService] getCloudCommentaryCount non-fatal:', err);
     return 0;

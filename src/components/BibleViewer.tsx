@@ -147,6 +147,7 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
     mainEnVersionId, 
     verseData, 
     setVerseData, 
+    flushVerseData,
     showAnnotations, 
     setShowAnnotations 
   } = useBible();
@@ -258,7 +259,10 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
     openSpecificPopup(currentBookId, currentChapter, v, type);
   }, [currentBookId, currentChapter, openSpecificPopup]);
 
-  const closePopup = React.useCallback((id: string) => setPopups(prev => prev.filter(p => p.id !== id)), []);
+  const closePopup = React.useCallback((id: string) => {
+    flushVerseData();
+    setPopups(prev => prev.filter(p => p.id !== id));
+  }, [flushVerseData]);
   
   const bringToFront = React.useCallback((id: string) => {
     setPopups(prev => prev.map(p => p.id === id ? { ...p, zIndex: (window.__topZIndex || 10000) + 1 } : p));

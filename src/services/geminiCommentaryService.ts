@@ -4,9 +4,11 @@ import { getCommentaryFromHistory, saveCommentaryToHistory } from './aiHistorySe
 import { auth, db } from '../api/firebaseConfig';
 import { doc, setDoc, updateDoc, increment, getDoc } from 'firebase/firestore';
 import { consumeCreditInFirestore } from './userService';
+import { trackAiCall, trackFirestoreWrite } from './systemMetricsService';
 
 // 로컬 및 파이어베이스 Firestore 동시 1회 차감 헬퍼 함수
 function deductCredit(refKey: string) {
+  trackAiCall(1);
   consumeAiCredit(refKey);
   if (auth.currentUser) {
     consumeCreditInFirestore(auth.currentUser.uid, refKey).catch(err => {
@@ -53,12 +55,14 @@ async function saveToCloudIfEligible(result: any, type: 'commentary' | 'word' | 
       type,
       savedAt: Date.now()
     }, { merge: true });
+    trackFirestoreWrite(1);
     
     // 기존에 저장된 적이 없는 문서라면 개수 증가
     if (!existingSnap.exists()) {
       await updateDoc(userRef, {
         usedCloudCommentaryCount: increment(1)
       });
+      trackFirestoreWrite(1);
     }
   } catch (err) {
     console.error('[geminiCommentaryService] saveToCloudIfEligible failed:', err);

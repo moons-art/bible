@@ -11,10 +11,16 @@ import {
   onSnapshot, 
   serverTimestamp,
   increment,
-  arrayUnion 
+  arrayUnion,
+  query,
+  orderBy,
+  limit,
+  deleteField
 } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 import { db } from '../api/firebaseConfig';
+import { trackFirestoreRead, trackFirestoreWrite } from './systemMetricsService';
+import { getMonthlyCreditsQuota } from './planConfigService';
 
 export const ADMIN_EMAILS = ['ymoonsik@gmail.com', 'global0103@naver.com'];
 export const ADMIN_EMAIL = 'ymoonsik@gmail.com';
@@ -51,17 +57,22 @@ export interface UserProfile {
   deviceInfo: string;
   devices?: DeviceSession[]; // 로그인/접속했던 모든 기기 목록 및 세션 정보
   aiCredits: {
-    freeRemaining: number;
-    paidRemaining: number;
+    freeRemaining: number;        // 무료 기본 한도 (월 10회)
+    monthlyRemaining?: number;    // 월간 구독 한도 크레딧 잔여 (라이트 20, 프로 40, 마스터 80 등, 이월 불가 한도형)
+    bonusRemaining?: number;      // 선물/프로모션/추천 보너스 크레딧 잔여 (유효기간 1년)
+    paidRemaining: number;        // 유료 충전/연간 결제 크레딧 잔여 (유효기간 1년/2년)
     totalUsed: number;
-    lastResetMonth: string; // 'YYYY-MM'
+    lastResetMonth: string;       // 'YYYY-MM'
     paidExpiresAt?: number;
   };
   cloudCommentaryLimit?: number;
   usedCloudCommentaryCount?: number;
+  cloudNotesAllowed?: boolean; // 관리자 개별 지정 노트/설교 클라우드 저장 허용 여부 (true: 강제 허용, false: 강제 차단, undefined: 플랜 정책 따름)
   allowedVersions: string[]; // 관리자가 원격 허용한 번역본 ID 목록 (예: ['built-in-krv'])
   noteCount?: number;
   sermonCount?: number;
+  crossRefCount?: number;
+  commentaryCount?: number;
   activityCount?: number;
   lastAction?: string;
   lastBonusReason?: string;
@@ -138,7 +149,7 @@ function cleanUndefined<T extends Record<string, any>>(obj: T): T {
  */
 export async function syncUserProfile(
   user: SyncUserInput | User, 
-  extraStats?: { noteCount?: number; sermonCount?: number }
+  extraStats?: { noteCount?: number; sermonCount?: number; crossRefCount?: number; commentaryCount?: number }
 ): Promise<UserProfile> {
   const uid = user.uid;
   if (!uid) throw new Error('유효한 사용자 ID(uid)가 없습니다.');
@@ -185,16 +196,18 @@ export async function syncUserProfile(
 
   try {
     const snap = await getDoc(userRef);
+    trackFirestoreRead(1);
 
     if (!snap.exists()) {
       // 신규 유저 생성 (프로모션 설정 확인 후 보너스 자동 지급)
       let initialPaidCredits = inheritedPaidCredits;
+      let initialBonusCredits = 0;
       let bonusReason = '';
       try {
         const { getPromotionSettings } = await import('./promotionService');
         const promo = await getPromotionSettings();
         if (promo.enabled && promo.bonusCredits > 0) {
-          initialPaidCredits += promo.bonusCredits;
+          initialBonusCredits = promo.bonusCredits;
           bonusReason = `가입 프로모션 (${promo.name}): +${promo.bonusCredits}회`;
           const signupHistoryItem: RechargeHistoryItem = {
             id: `signup_${now}`,
@@ -237,11 +250,13 @@ export async function syncUserProfile(
         deviceInfo: devInfo,
         devices: initialDevices,
         aiCredits: {
-          freeRemaining: initialPaidCredits > 0 ? 0 : 10,
+          freeRemaining: (initialPaidCredits > 0 || initialBonusCredits > 0) ? 0 : 10,
+          monthlyRemaining: 0,
+          bonusRemaining: initialBonusCredits,
           paidRemaining: initialPaidCredits,
           totalUsed: 0,
           lastResetMonth: currentMonth,
-          paidExpiresAt: initialPaidCredits > 0 ? oneYearLater : inheritedPaidExpiresAt,
+          paidExpiresAt: (initialPaidCredits > 0 || initialBonusCredits > 0) ? oneYearLater : inheritedPaidExpiresAt,
         },
         cloudCommentaryLimit: inheritedCloudLimit,
         cloudSubscribedAt: inheritedCloudSubscribedAt,
@@ -252,6 +267,8 @@ export async function syncUserProfile(
         allowedVersions: inheritedAllowedVersions,
         noteCount: extraStats?.noteCount || 0,
         sermonCount: extraStats?.sermonCount || 0,
+        crossRefCount: extraStats?.crossRefCount || 0,
+        commentaryCount: extraStats?.commentaryCount || 0,
         lastBonusReason: bonusReason || undefined,
         lastBonusGrantedAt: bonusReason ? now : undefined,
         isNewSignUp: true,
@@ -259,6 +276,7 @@ export async function syncUserProfile(
       };
 
       await setDoc(userRef, cleanUndefined(newProfile));
+      trackFirestoreWrite(1);
 
       // 중복 fallback 문서 정리
       if (hasFallbackDocToDelete && userEmail) {
@@ -293,23 +311,61 @@ export async function syncUserProfile(
         lastResetMonth: currentMonth
       };
 
-      // 월이 바뀌었으면 무료 10회 갱신 체크:
+      // 월이 바뀌었으면 크레딧 한도 갱신 체크:
       if (aiCredits.lastResetMonth !== currentMonth) {
-        const isPaidUser = (aiCredits.paidRemaining || 0) > 0;
-        aiCredits = {
-          ...aiCredits,
-          freeRemaining: isPaidUser ? 0 : 10,
-          lastResetMonth: currentMonth,
-        };
+        const quotaInfo = getMonthlyCreditsQuota(existing.subscribedPlan);
+
+        if (quotaInfo.isMonthlySubscriber) {
+          // 월간 구독자: 이전 달 잔여분이 얼마였든 간에 이월되지 않고 해당 플랜의 월 한도로 깔끔하게 리셋!
+          // (예: 남은 크레딧이 10이어도 다음 달 한도가 40이면 40만 남음)
+          // 중요: bonusRemaining(선물)과 paidRemaining(유효기간 유료 크레딧)은 절대로 사라지지 않고 안전 보존!
+          aiCredits = {
+            ...aiCredits,
+            monthlyRemaining: quotaInfo.quota,
+            freeRemaining: 0,
+            lastResetMonth: currentMonth,
+          };
+        } else {
+          // 비구독자 / 무료 사용자: 매월 10회 무료 한도로 리셋
+          const isPaidUser = ((aiCredits.paidRemaining || 0) + (aiCredits.bonusRemaining || 0)) > 0;
+          aiCredits = {
+            ...aiCredits,
+            freeRemaining: isPaidUser ? 0 : 10,
+            monthlyRemaining: 0,
+            lastResetMonth: currentMonth,
+          };
+        }
       }
 
-      // 유료 횟수 1년 만료 체크
-      if (aiCredits.paidExpiresAt && aiCredits.paidExpiresAt < now && aiCredits.paidRemaining > 0) {
-        aiCredits = {
-          ...aiCredits,
-          paidRemaining: 0,
-          paidExpiresAt: undefined,
-        };
+      // 유료 횟수 만료 체크:
+      // paidExpiresAt이 10자리(초 단위)인 경우 밀리초(13자리)로 자동 보정
+      let expiresAtMs = aiCredits.paidExpiresAt;
+      if (expiresAtMs && expiresAtMs < 10000000000) {
+        expiresAtMs = expiresAtMs * 1000;
+        aiCredits.paidExpiresAt = expiresAtMs;
+      }
+
+      if (expiresAtMs && expiresAtMs < now && (aiCredits.paidRemaining || 0) > 0) {
+        // 유효한 충전/보너스 내역이 남아있는지 확인
+        const activeItem = (existing.rechargeHistory || []).find(item => {
+          let itemExp = item.expiresAt;
+          if (itemExp && itemExp < 10000000000) itemExp = itemExp * 1000;
+          return (item.remaining ?? item.amount) > 0 && (!itemExp || itemExp > now);
+        });
+
+        if (activeItem) {
+          // 관리자 수동 지급 또는 유효한 내역이 있으면 유효기간을 안전하게 1년 연장하여 크레딧 보존
+          aiCredits.paidExpiresAt = now + 365 * 24 * 60 * 60 * 1000;
+        } else {
+          aiCredits = {
+            ...aiCredits,
+            paidRemaining: 0,
+            paidExpiresAt: undefined,
+          };
+        }
+      } else if (!expiresAtMs && (aiCredits.paidRemaining || 0) > 0) {
+        // 잔여 유료 크레딧이 있는데 만료일이 없으면 1년 뒤로 안전하게 세팅
+        aiCredits.paidExpiresAt = now + 365 * 24 * 60 * 60 * 1000;
       }
 
       // fallback 문서에 부여된 권한이 있다면 병합
@@ -393,16 +449,27 @@ export async function syncUserProfile(
         ...(mergedSubscribedPlan ? { subscribedPlan: mergedSubscribedPlan } : {}),
         ...(mergedSubscribedAt ? { subscribedAt: mergedSubscribedAt } : {}),
         ...(mergedRechargeHistory.length > 0 ? { rechargeHistory: mergedRechargeHistory } : {}),
+        ...(extraStats?.sermonCount !== undefined ? { sermonCount: extraStats.sermonCount } : {}),
+        ...(extraStats?.noteCount !== undefined ? { noteCount: extraStats.noteCount } : {}),
+        ...(extraStats?.crossRefCount !== undefined ? { crossRefCount: extraStats.crossRefCount } : {}),
+        ...(extraStats?.commentaryCount !== undefined ? { commentaryCount: extraStats.commentaryCount } : {}),
         isNewSignUp: false,
         hasSeenWelcome: existing.hasSeenWelcome || false,
       };
 
-      // 과도한 새로고침 시 불필요한 lastLoginAt DB 쓰기 방지 (마지막 갱신 후 1시간 이상 경과 시에만 쓰기)
+      // 과도한 새로고침 시 불필요한 lastLoginAt DB 쓰기 방지 (마지막 갱신 후 1시간 이상 경과 시 또는 통계 갱신 시 쓰기)
       const ONE_HOUR = 60 * 60 * 1000;
-      const shouldUpdateDb = !existing.lastLoginAt || (now - existing.lastLoginAt > ONE_HOUR) || hasFallbackDocToDelete;
+      const hasStatsUpdate = extraStats !== undefined && (
+        extraStats.sermonCount !== undefined ||
+        extraStats.noteCount !== undefined ||
+        extraStats.crossRefCount !== undefined ||
+        extraStats.commentaryCount !== undefined
+      );
+      const shouldUpdateDb = !existing.lastLoginAt || (now - existing.lastLoginAt > ONE_HOUR) || hasFallbackDocToDelete || hasStatsUpdate;
 
       if (shouldUpdateDb) {
         await updateDoc(userRef, cleanUndefined(updated));
+        trackFirestoreWrite(1);
       }
 
       // 중복 fallback 문서 정리
@@ -513,22 +580,55 @@ export async function consumeCreditInFirestore(uid: string, reference: string): 
   const userRef = doc(db, 'users', uid);
   try {
     const snap = await getDoc(userRef);
+    trackFirestoreRead(1);
     if (!snap.exists()) return false;
     const profile = snap.data() as UserProfile;
     const credits = profile.aiCredits;
     if (!credits) return false;
 
     let free = credits.freeRemaining || 0;
+    let monthly = credits.monthlyRemaining || 0;
+    let bonus = credits.bonusRemaining || 0;
     let paid = credits.paidRemaining || 0;
     const used = (credits.totalUsed || 0) + 1;
     let updatedRechargeHistory: RechargeHistoryItem[] | undefined = undefined;
 
-    if (free > 0) {
+    // ── 3단계 차감 순서: 1) 월간한도 -> 2) 선물크레딧 -> 3) 유효기간 유료크레딧 ──
+    if (monthly > 0) {
+      // 1순위: 월간 구독 한도 크레딧 (이월 불가 한도형이므로 최우선 차감)
+      monthly -= 1;
+    } else if (free > 0) {
+      // 1순위: 무료 기본 한도 크레딧 (이월 불가 한도형이므로 최우선 차감)
       free -= 1;
+    } else if (bonus > 0) {
+      // 2순위: 선물로 받은 크레딧 (유료 구매분 보존을 위해 선물/보너스 우선 차감)
+      bonus -= 1;
+
+      // rechargeHistory에서 보너스/선물 항목 잔여 차감
+      if (profile.rechargeHistory && profile.rechargeHistory.length > 0) {
+        const historyCopy = profile.rechargeHistory.map(item => ({
+          ...item,
+          remaining: item.remaining !== undefined ? item.remaining : item.amount,
+        }));
+
+        const bonusItems = historyCopy
+          .filter(item => {
+            const plan = (item.planName || '').toLowerCase();
+            return (item.remaining ?? 0) > 0 &&
+              (plan.includes('보너스') || plan.includes('프로모션') || plan.includes('추천') || plan.includes('선물') || item.id.startsWith('promo_') || item.id.startsWith('bonus_'));
+          })
+          .sort((a, b) => (a.expiresAt || 0) - (b.expiresAt || 0));
+
+        if (bonusItems.length > 0) {
+          const target = bonusItems[0];
+          target.remaining = Math.max(0, (target.remaining ?? 1) - 1);
+          updatedRechargeHistory = historyCopy.map(h => h.id === target.id ? target : h);
+        }
+      }
     } else if (paid > 0) {
+      // 3순위: 유효기간이 있는 유료/연간 크레딧 차감 (만료일 가장 임박한 순 FIFO)
       paid -= 1;
 
-      // 유효기간이 가장 적게 남은 크레딧부터 우선 차감 (만료일 오름차순 FIFO)
       if (profile.rechargeHistory && profile.rechargeHistory.length > 0) {
         const historyCopy: RechargeHistoryItem[] = profile.rechargeHistory.map(item => ({
           ...item,
@@ -536,7 +636,6 @@ export async function consumeCreditInFirestore(uid: string, reference: string): 
           remaining: item.remaining !== undefined ? item.remaining : item.amount,
         }));
 
-        // 잔여량이 있는 항목 중 expiresAt이 가장 빠른(적게 남은) 항목 검색
         const activeItems = historyCopy
           .filter(item => (item.remaining ?? 0) > 0)
           .sort((a, b) => (a.expiresAt || 0) - (b.expiresAt || 0));
@@ -548,11 +647,13 @@ export async function consumeCreditInFirestore(uid: string, reference: string): 
         }
       }
     } else {
-      return false; // 잔여 횟수 없음
+      return false; // 잔여 크레딧 없음
     }
 
     const updates: any = {
       'aiCredits.freeRemaining': free,
+      'aiCredits.monthlyRemaining': monthly,
+      'aiCredits.bonusRemaining': bonus,
       'aiCredits.paidRemaining': paid,
       'aiCredits.totalUsed': used,
       'lastActiveAt': Date.now(),
@@ -564,6 +665,7 @@ export async function consumeCreditInFirestore(uid: string, reference: string): 
     }
 
     await updateDoc(userRef, updates);
+    trackFirestoreWrite(1);
 
     return true;
   } catch (err) {
@@ -581,6 +683,7 @@ export async function fetchAllUsers(): Promise<UserProfile[]> {
   try {
     const usersRef = collection(db, 'users');
     const userDocsSnap = await getDocs(usersRef);
+    trackFirestoreRead(userDocsSnap.size);
     const rawUsers: UserProfile[] = [];
 
     // 1. users 컬렉션에 실존하는 문서 파싱
@@ -620,10 +723,13 @@ export async function fetchAllUsers(): Promise<UserProfile[]> {
         allowedVersions: data.allowedVersions || [],
         noteCount: data.noteCount || 0,
         sermonCount: data.sermonCount || 0,
+        crossRefCount: data.crossRefCount || 0,
+        commentaryCount: data.commentaryCount || 0,
         activityCount: data.activityCount || 0,
         lastAction: data.lastAction || '',
         lastBonusReason: data.lastBonusReason,
         lastBonusGrantedAt: data.lastBonusGrantedAt,
+        cloudNotesAllowed: data.cloudNotesAllowed,
       } as UserProfile);
     });
 
@@ -675,6 +781,9 @@ export async function fetchAllUsers(): Promise<UserProfile[]> {
 
           // 2) 클라우드 구독 & 용량
           primary.cloudCommentaryLimit = Math.max(primary.cloudCommentaryLimit || 0, sec.cloudCommentaryLimit || 0);
+          if (primary.cloudNotesAllowed === undefined && sec.cloudNotesAllowed !== undefined) {
+            primary.cloudNotesAllowed = sec.cloudNotesAllowed;
+          }
           if (!primary.cloudSubscribedAt && sec.cloudSubscribedAt) primary.cloudSubscribedAt = sec.cloudSubscribedAt;
           if (!primary.subscribedPlan && sec.subscribedPlan) primary.subscribedPlan = sec.subscribedPlan;
           if (!primary.subscribedAt && sec.subscribedAt) primary.subscribedAt = sec.subscribedAt;
@@ -715,6 +824,37 @@ export async function fetchAllUsers(): Promise<UserProfile[]> {
           }
         }
 
+        // ⚠️ [치명적 버그 수정] 병합된 크레딧/권한을 Firestore 메인 문서에 즉시 영구 저장!
+        const primaryRef = doc(db, 'users', primary.uid);
+        const updatesToSave = cleanUndefined({
+          aiCredits: primary.aiCredits,
+          cloudCommentaryLimit: primary.cloudCommentaryLimit,
+          cloudNotesAllowed: primary.cloudNotesAllowed,
+          cloudSubscribedAt: primary.cloudSubscribedAt,
+          subscribedPlan: primary.subscribedPlan,
+          subscribedAt: primary.subscribedAt,
+          rechargeHistory: primary.rechargeHistory,
+          allowedVersions: primary.allowedVersions,
+          devices: primary.devices,
+          createdAt: primary.createdAt,
+          lastLoginAt: primary.lastLoginAt,
+          loginCount: primary.loginCount,
+          activityCount: primary.activityCount,
+          lastAction: primary.lastAction,
+        });
+
+        // 비동기로 메인 문서에 저장 완료 후 안전하게 정리
+        updateDoc(primaryRef, updatesToSave).then(() => {
+          if (docsToDelete.length > 0) {
+            docsToDelete.forEach(dId => {
+              deleteDoc(doc(db, 'users', dId)).catch(() => {});
+            });
+            console.log(`[userService] 🧹 중복 fallback 문서 ${docsToDelete.length}개 안전 정리 완료 (${email})`);
+          }
+        }).catch((err) => {
+          console.warn('[userService] Failed to persist merged profile before deletion:', err);
+        });
+
         mergedUserMap.set(primary.uid, primary);
       }
     }
@@ -723,92 +863,9 @@ export async function fetchAllUsers(): Promise<UserProfile[]> {
       mergedUserMap.set(u.uid, u);
     }
 
-    // 중복 fallback 문서 백그라운드 자동 청소 (비동기 처리)
-    if (docsToDelete.length > 0) {
-      docsToDelete.forEach(dId => {
-        deleteDoc(doc(db, 'users', dId)).catch(() => {});
-      });
-      console.log(`[userService] 🧹 중복 fallback 문서 ${docsToDelete.length}개 자동 정리 완료`);
-    }
-
-    // 3. activity_logs 컬렉션 조회하여 사용자 정보 보강
-    try {
-      const logsSnap = await getDocs(collection(db, 'activity_logs'));
-      const logUsers = new Map<string, { email: string; name: string; lastTime: number; count: number; lastAction: string }>();
-
-      logsSnap.forEach(logDoc => {
-        const logData = logDoc.data();
-        const email = (logData.userEmail || '').trim();
-        if (!email) return;
-
-        const time = logData.timestamp ? new Date(logData.timestamp).getTime() : 0;
-        const current = logUsers.get(email.toLowerCase());
-        if (!current) {
-          logUsers.set(email.toLowerCase(), {
-            email,
-            name: logData.userName || '',
-            lastTime: time,
-            count: 1,
-            lastAction: logData.action || ''
-          });
-        } else {
-          current.count += 1;
-          if (time > current.lastTime) {
-            current.lastTime = time;
-            current.lastAction = logData.action || current.lastAction;
-            if (logData.userName && !current.name) current.name = logData.userName;
-          }
-        }
-      });
-
-      // logUsers를 기반으로 mergedUserMap 보강 (절대 기존 회원을 중복 생성하지 않음)
-      for (const [lowerEmail, logUser] of logUsers.entries()) {
-        const matchedUser = Array.from(mergedUserMap.values()).find(u => (u.email || '').toLowerCase() === lowerEmail);
-
-        if (matchedUser) {
-          matchedUser.activityCount = (matchedUser.activityCount || 0) + logUser.count;
-          if (logUser.lastTime > (matchedUser.lastLoginAt || 0)) {
-            matchedUser.lastLoginAt = logUser.lastTime;
-          }
-          if (!matchedUser.displayName || matchedUser.displayName === '이용자') {
-            matchedUser.displayName = logUser.name || matchedUser.displayName;
-          }
-          matchedUser.lastAction = logUser.lastAction;
-        } else {
-          // users 컬렉션에 정말 전혀 없는 극단적 케이스일 때만 단일 생성
-          const fallbackUid = 'user_' + lowerEmail.replace(/[^a-zA-Z0-9]/g, '_');
-          const newProfile: UserProfile = {
-            uid: fallbackUid,
-            email: logUser.email,
-            displayName: logUser.name || logUser.email.split('@')[0] || '이용자',
-            photoURL: '',
-            createdAt: logUser.lastTime || Date.now(),
-            lastLoginAt: logUser.lastTime || Date.now(),
-            loginCount: logUser.count,
-            deviceInfo: '웹 브라우저',
-            devices: [{ device: '웹 브라우저', lastLoginAt: logUser.lastTime || Date.now(), loginCount: logUser.count }],
-            aiCredits: {
-              freeRemaining: 10,
-              paidRemaining: 0,
-              totalUsed: 0,
-              lastResetMonth: getCurrentMonthKey(),
-            },
-            allowedVersions: [],
-            noteCount: 0,
-            sermonCount: 0,
-            activityCount: logUser.count,
-            lastAction: logUser.lastAction
-          };
-
-          mergedUserMap.set(fallbackUid, newProfile);
-        }
-      }
-    } catch (logErr) {
-      console.warn('[userService] activity_logs aggregation non-fatal:', logErr);
-    }
-
-    // 4. 서브컬렉션(verseData, sermons) 전수조사 완전 제거:
-    // 유저 문서 자체에 저장된 noteCount, sermonCount 메타데이터를 사용하여 Firestore 읽기 비용 99% 절감
+    // 3. 서브컬렉션 및 외부 로그 전수조사 완전 제거:
+    // 유저 문서 자체에 실시간 기록되는 noteCount, sermonCount, crossRefCount, commentaryCount 메타데이터를 사용하여
+    // 대시보드 진입 시 Firestore 읽기 비용을 오직 실제 회원 수(1회당 1문서)로만 초경량 제한합니다.
     const userList = Array.from(mergedUserMap.values());
     console.log(`[userService] fetchAllUsers 완료 (초경량): 총 ${userList.length}명`);
     return userList.sort((a, b) => (b.lastLoginAt || 0) - (a.lastLoginAt || 0));
@@ -819,23 +876,102 @@ export async function fetchAllUsers(): Promise<UserProfile[]> {
 }
 
 /**
- * [관리자 전용] 활동 로그 목록 조회
+ * [관리자 전용] 활동 로그 목록 조회 (기본 50건으로 경량화)
  */
-export async function fetchActivityLogs(limitCount: number = 200): Promise<ActivityLogEntry[]> {
+export async function fetchActivityLogs(limitCount: number = 50): Promise<ActivityLogEntry[]> {
   const logsRef = collection(db, 'activity_logs');
   try {
-    const snap = await getDocs(logsRef);
+    let snap;
+    try {
+      snap = await getDocs(query(logsRef, orderBy('timestamp', 'desc'), limit(limitCount)));
+    } catch (qErr) {
+      snap = await getDocs(query(logsRef, limit(limitCount)));
+    }
+    if (snap) trackFirestoreRead(snap.size);
     const logs: ActivityLogEntry[] = [];
     snap.forEach(docSnap => {
       logs.push({ id: docSnap.id, ...docSnap.data() } as ActivityLogEntry);
     });
-    return logs
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, limitCount);
+    return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   } catch (err) {
     console.error('[userService] fetchActivityLogs failed:', err);
     throw err;
   }
+}
+
+/**
+ * 사용자 리소스 개수(설교, 구절노트, 관주, 구절주석)를 Firestore 프로필에 경량 업데이트
+ */
+export async function updateUserResourceCounts(
+  uid: string, 
+  stats: { sermonCount?: number; noteCount?: number; crossRefCount?: number; commentaryCount?: number }
+): Promise<void> {
+  if (!uid) return;
+  try {
+    const userRef = doc(db, 'users', uid);
+    const updatesToSave: Record<string, any> = {};
+    if (stats.sermonCount !== undefined) updatesToSave.sermonCount = stats.sermonCount;
+    if (stats.noteCount !== undefined) updatesToSave.noteCount = stats.noteCount;
+    if (stats.crossRefCount !== undefined) updatesToSave.crossRefCount = stats.crossRefCount;
+    if (stats.commentaryCount !== undefined) updatesToSave.commentaryCount = stats.commentaryCount;
+
+    if (Object.keys(updatesToSave).length > 0) {
+      await updateDoc(userRef, updatesToSave);
+      trackFirestoreWrite(1);
+    }
+  } catch (err) {
+    console.warn('[userService] updateUserResourceCounts 경고:', err);
+  }
+}
+
+/**
+ * 로컬 기기(localStorage)에 저장된 사용자의 설교노트, 구절노트, 관주, 구절주석 개수를 집계
+ */
+export function getLocalUserResourceCounts(): {
+  sermonCount: number;
+  noteCount: number;
+  crossRefCount: number;
+  commentaryCount: number;
+} {
+  let sermonCount = 0;
+  let noteCount = 0;
+  let crossRefCount = 0;
+  let commentaryCount = 0;
+
+  try {
+    const rawSermons = localStorage.getItem('bible-local-sermons');
+    if (rawSermons) {
+      const sermons = JSON.parse(rawSermons);
+      if (Array.isArray(sermons)) {
+        sermonCount = sermons.length;
+      }
+    }
+  } catch (e) {}
+
+  try {
+    const rawVerseData = localStorage.getItem('bible-local-verse-data');
+    if (rawVerseData) {
+      const vData = JSON.parse(rawVerseData);
+      if (vData && typeof vData === 'object') {
+        for (const key of Object.keys(vData)) {
+          const entry = vData[key];
+          if (entry) {
+            if (entry.note && typeof entry.note === 'string' && entry.note.trim() !== '') {
+              noteCount++;
+            }
+            if (entry.crossRef && typeof entry.crossRef === 'string' && entry.crossRef.trim() !== '') {
+              crossRefCount++;
+            }
+            if (entry.sermon && typeof entry.sermon === 'string' && entry.sermon.trim() !== '') {
+              commentaryCount++;
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  return { sermonCount, noteCount, crossRefCount, commentaryCount };
 }
 
 /**
@@ -873,28 +1009,40 @@ export async function addCreditsToUser(
       remaining: count,
     };
     const updates = {
-      'aiCredits.paidRemaining': increment(count),
-      'aiCredits.freeRemaining': 0, // 플랜 구독자는 무료 크레딧 미지급 원칙
+      'aiCredits.bonusRemaining': increment(count),
       'aiCredits.paidExpiresAt': oneYearLater,
       'lastBonusGrantedAt': Date.now(),
       'lastBonusReason': reason,
-      'subscribedPlan': reason,
-      'subscribedAt': Date.now(),
       'rechargeHistory': arrayUnion(historyEntry),
     };
 
-    await updateDoc(userRef, updates);
+    await setDoc(userRef, updates, { merge: true });
+    trackFirestoreWrite(1);
 
-    // 동일 이메일의 fallback 문서가 존재하는 경우에만 단 1건 핀셋 동기화 (전체 컬렉션 전수조사 방지)
+    // 동일 이메일의 계정이 존재하는 경우 양방향 핀셋 동기화 (크레딧 증발 방지)
     if (targetEmail) {
       const lower = targetEmail.trim().toLowerCase();
       const fallbackId = 'user_' + lower.replace(/[^a-zA-Z0-9]/g, '_');
+      
+      // 1) fallback 문서가 별도로 있다면 거기도 동기화
       if (fallbackId !== uid) {
         const fbRef = doc(db, 'users', fallbackId);
-        getDoc(fbRef).then(snap => {
-          if (snap.exists()) {
-            updateDoc(fbRef, updates).catch(() => {});
+        getDoc(fbRef).then(fbSnap => {
+          if (fbSnap.exists()) {
+            setDoc(fbRef, updates, { merge: true }).catch(() => {});
           }
+        }).catch(() => {});
+      }
+
+      // 2) 만약 충전한 대상 uid가 fallbackId라면, 실제 Auth UID 문서도 찾아서 함께 충전
+      if (uid.startsWith('user_')) {
+        const q = query(collection(db, 'users'), where('email', '==', targetEmail));
+        getDocs(q).then(qSnap => {
+          qSnap.forEach(d => {
+            if (d.id !== uid) {
+              setDoc(d.ref, updates, { merge: true }).catch(() => {});
+            }
+          });
         }).catch(() => {});
       }
     }
@@ -932,6 +1080,7 @@ export async function toggleUserAllowedVersion(
 
     // 1. 현재 타깃 문서 업데이트
     await setDoc(userRef, { allowedVersions: allowed }, { merge: true });
+    trackFirestoreWrite(1);
 
     // 2. 이메일 fallback 문서가 존재하는 경우에만 단 1건 핀셋 전파 (전체 컬렉션 전수조사 방지)
     if (targetEmail) {
@@ -996,7 +1145,8 @@ export async function addCloudCapacityToUser(
       updates['rechargeHistory'] = arrayUnion(historyEntry);
     }
 
-    await updateDoc(userRef, updates);
+    await setDoc(userRef, updates, { merge: true });
+    trackFirestoreWrite(1);
 
     if (targetEmail) {
       const lower = targetEmail.trim().toLowerCase();
@@ -1005,8 +1155,16 @@ export async function addCloudCapacityToUser(
         const fbRef = doc(db, 'users', fallbackId);
         getDoc(fbRef).then(snap => {
           if (snap.exists()) {
-            updateDoc(fbRef, updates).catch(() => {});
+            setDoc(fbRef, updates, { merge: true }).catch(() => {});
           }
+        }).catch(() => {});
+      }
+      if (uid.startsWith('user_')) {
+        const q = query(collection(db, 'users'), where('email', '==', targetEmail));
+        getDocs(q).then(qSnap => {
+          qSnap.forEach(d => {
+            if (d.id !== uid) setDoc(d.ref, updates, { merge: true }).catch(() => {});
+          });
         }).catch(() => {});
       }
     }
@@ -1015,3 +1173,50 @@ export async function addCloudCapacityToUser(
     throw err;
   }
 }
+
+/**
+ * 관리자가 특정 회원의 노트/설교 클라우드 서버 동기화 권한을 개별 수동 변경
+ * allowed: true(강제 허용), false(강제 차단), null(기본 정책으로 복원)
+ */
+export async function setUserCloudNotesAllowed(
+  uid: string, 
+  allowed: boolean | null,
+  targetEmail?: string
+): Promise<void> {
+  try {
+    const userRef = doc(db, 'users', uid);
+    const updates: any = {
+      cloudNotesAllowed: allowed === null ? deleteField() : allowed,
+      lastAction: allowed === null ? '노트 클라우드 기본정책 복원' : (allowed ? '노트 클라우드 수동 허용' : '노트 클라우드 수동 차단'),
+      updatedAt: serverTimestamp(),
+    };
+
+    await setDoc(userRef, updates, { merge: true });
+    trackFirestoreWrite(1);
+
+    if (targetEmail) {
+      const lower = targetEmail.trim().toLowerCase();
+      const fallbackId = 'user_' + lower.replace(/[^a-zA-Z0-9]/g, '_');
+      if (fallbackId !== uid) {
+        const fbRef = doc(db, 'users', fallbackId);
+        getDoc(fbRef).then(snap => {
+          if (snap.exists()) {
+            setDoc(fbRef, updates, { merge: true }).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+      if (uid.startsWith('user_')) {
+        const q = query(collection(db, 'users'), where('email', '==', targetEmail));
+        getDocs(q).then(qSnap => {
+          qSnap.forEach(d => {
+            if (d.id !== uid) setDoc(d.ref, updates, { merge: true }).catch(() => {});
+          });
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.error('[userService] setUserCloudNotesAllowed failed:', err);
+    throw err;
+  }
+}
+

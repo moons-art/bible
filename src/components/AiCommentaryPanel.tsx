@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { auth } from '../api/firebaseConfig';
 import { getReferralSettings, submitReferralRequest, getPromotionSettings } from '../services/promotionService';
+import { getPlanSettings, DEFAULT_PLANS_SETTINGS, type SubscriptionPlansSettings } from '../services/planConfigService';
 import { 
   generateBibleAiCommentary, 
   getCachedCommentary, 
@@ -169,6 +170,23 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
     getPromotionSettings().then(setPromoSettings).catch(() => {});
   }, []);
 
+  // 구독 이용권 & 클라우드 플랜 설정 (관리자 대시보드와 파이어베이스 실시간 연동)
+  const [planSettings, setPlanSettings] = useState<SubscriptionPlansSettings>(DEFAULT_PLANS_SETTINGS);
+
+  useEffect(() => {
+    getPlanSettings().then(setPlanSettings).catch(() => {});
+
+    const handlePlanConfigUpdate = (e: any) => {
+      if (e.detail) {
+        setPlanSettings(e.detail);
+      }
+    };
+    window.addEventListener('plan-config-updated', handlePlanConfigUpdate);
+    return () => {
+      window.removeEventListener('plan-config-updated', handlePlanConfigUpdate);
+    };
+  }, []);
+
   // 친구 추천 혜택 관련 상태 (이메일 기반)
   const [referralBonusCount, setReferralBonusCount] = useState<number>(50);
   const [isReferralFormOpen, setIsReferralFormOpen] = useState(false);
@@ -181,6 +199,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
   // 모달 오픈 시 추천 혜택 설정 불러오기 및 본인 이메일 자동 세팅
   useEffect(() => {
     if (showRechargeModal) {
+      getPlanSettings(true).then(setPlanSettings).catch(() => {});
       getReferralSettings().then(st => {
         if (st && st.bonusCredits) setReferralBonusCount(st.bonusCredits);
       }).catch(() => {});
@@ -919,21 +938,21 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                       <div className="font-bold text-base text-[#7A756D]">무료 (0원)</div>
                     </div>
                     <ul className="text-[11px] text-[#7A756D] space-y-1">
-                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#7A756D]" /> 매월 10 크래딧 무료</li>
-                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#7A756D]" /> 기기에 30일 저장</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#7A756D]" /> 매월 {planSettings.freeMonthlyCredits} 크래딧 무료</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#7A756D]" /> 기기에 {planSettings.freeDeviceRetentionDays}일 저장</li>
                     </ul>
                   </div>
 
                   {/* 플랜 1: 라이트 플랜 */}
                   <div className="p-4 rounded-xl border border-[#E8E3DA] hover:border-[#C46A40] bg-white transition-all flex flex-col gap-3 shadow-xs">
                     <div className="flex items-center justify-between">
-                      <div className="font-bold text-sm text-[#2C2B29]">라이트 플랜</div>
-                      <div className="font-bold text-lg text-[#C46A40]">5,000원</div>
+                      <div className="font-bold text-sm text-[#2C2B29]">{planSettings.creditPlans.lite.name}</div>
+                      <div className="font-bold text-lg text-[#C46A40]">{planSettings.creditPlans.lite.price.toLocaleString()}원</div>
                     </div>
                     <ul className="text-[11px] text-[#7A756D] space-y-1">
-                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> ai 주석 200 크레딧 제공</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> ai 주석 {planSettings.creditPlans.lite.credits.toLocaleString()} 크레딧 제공</li>
                       <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 구절, 단어 심층연구</li>
-                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 기기에 30일 저장</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 기기에 {planSettings.freeDeviceRetentionDays}일 저장</li>
                     </ul>
                     <button
                       onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
@@ -946,13 +965,13 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   {/* 플랜 2: 스탠다드 플랜 */}
                   <div className="p-4 rounded-xl border border-[#E8E3DA] hover:border-[#C46A40] bg-white transition-all flex flex-col gap-3 shadow-xs">
                     <div className="flex items-center justify-between">
-                      <div className="font-bold text-sm text-[#2C2B29]">스탠다드 플랜</div>
-                      <div className="font-bold text-lg text-[#C46A40]">10,000원</div>
+                      <div className="font-bold text-sm text-[#2C2B29]">{planSettings.creditPlans.standard.name}</div>
+                      <div className="font-bold text-lg text-[#C46A40]">{planSettings.creditPlans.standard.price.toLocaleString()}원</div>
                     </div>
                     <ul className="text-[11px] text-[#7A756D] space-y-1">
-                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> ai 주석 500 크레딧 제공</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> ai 주석 {planSettings.creditPlans.standard.credits.toLocaleString()} 크레딧 제공</li>
                       <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 구절, 단어 심층연구</li>
-                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 기기에 30일 저장</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 기기에 {planSettings.freeDeviceRetentionDays}일 저장</li>
                     </ul>
                     <button
                       onClick={() => alert('준비중입니다.\n곧 서비스 오픈 예정입니다!')}
@@ -965,13 +984,13 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                   {/* 플랜 3: 프로플랜 */}
                   <div className="p-4 rounded-xl border border-[#E8E3DA] hover:border-[#2C2B29] transition-all flex flex-col gap-3 shadow-xs bg-slate-50">
                     <div className="flex items-center justify-between">
-                      <div className="font-bold text-sm text-[#2C2B29]">프로플랜</div>
-                      <div className="font-bold text-lg text-[#2C2B29]">15,000원</div>
+                      <div className="font-bold text-sm text-[#2C2B29]">{planSettings.creditPlans.pro.name}</div>
+                      <div className="font-bold text-lg text-[#2C2B29]">{planSettings.creditPlans.pro.price.toLocaleString()}원</div>
                     </div>
                     <ul className="text-[11px] text-[#7A756D] space-y-1">
-                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> ai 주석 1,000 크레딧 제공</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> ai 주석 {planSettings.creditPlans.pro.credits.toLocaleString()} 크레딧 제공</li>
                       <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 구절, 단어 심층연구</li>
-                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 기기에 30일 저장</li>
+                      <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 기기에 {planSettings.freeDeviceRetentionDays}일 저장</li>
                       <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 모든 노트, 메모, 설교노트 클라우드 평생 저장 (AI 주석 제외)</li>
                       <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 모든 기기 실시간 연동 (AI 주석 제외)</li>
                     </ul>
@@ -986,7 +1005,7 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
 
                 {/* 크레딧 구매 플랜 소개 아래 안내문 */}
                 <div className="text-xs text-[#1A1918] leading-relaxed mb-6 space-y-1">
-                  <p>생성된 주석은 해당 기기에 30일동안 저장됩니다.</p>
+                  <p>생성된 주석은 해당 기기에 {planSettings.freeDeviceRetentionDays}일동안 저장됩니다.</p>
                   <p>서버 클라우드에 평생 저장, 모든 기기에서 열람하려면 우측의 주석 클라우드 이용권을 구매해주세요.</p>
                 </div>
 
@@ -1075,12 +1094,12 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                     {/* 클라우드 300 */}
                     <div className="p-4 rounded-xl border border-[#E8E3DA] hover:border-[#C46A40] bg-white transition-all flex flex-col gap-3 shadow-xs">
                       <div className="flex items-center justify-between">
-                        <div className="font-bold text-sm text-[#2C2B29]">주석 클라우드 300</div>
-                        <div className="font-bold text-lg text-[#C46A40]">19,000원</div>
+                        <div className="font-bold text-sm text-[#2C2B29]">{planSettings.cloudPlans.cloud300.name}</div>
+                        <div className="font-bold text-lg text-[#C46A40]">{planSettings.cloudPlans.cloud300.price.toLocaleString()}원</div>
                       </div>
                       <ul className="text-[11px] text-[#7A756D] space-y-1">
-                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 300구절 평생보관</li>
-                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> +200 ai 주석 크레딧 증정</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> {planSettings.cloudPlans.cloud300.limit.toLocaleString()}구절 평생보관</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> +{planSettings.cloudPlans.cloud300.bonusCredits.toLocaleString()} ai 주석 크레딧 증정</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 모든 기기 실시간 연동</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 모든 노트, 메모, 설교노트 클라우드 평생 저장</li>
                       </ul>
@@ -1095,12 +1114,12 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                         가장 인기
                       </span>
                       <div className="flex items-center justify-between">
-                        <div className="font-bold text-sm text-[#2C2B29]">주석 클라우드 1000</div>
-                        <div className="font-bold text-lg text-[#C46A40]">35,000원</div>
+                        <div className="font-bold text-sm text-[#2C2B29]">{planSettings.cloudPlans.cloud1000.name}</div>
+                        <div className="font-bold text-lg text-[#C46A40]">{planSettings.cloudPlans.cloud1000.price.toLocaleString()}원</div>
                       </div>
                       <ul className="text-[11px] text-[#7A756D] space-y-1">
-                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 1000구절 평생보관</li>
-                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> +500 ai 주석 크레딧 증정</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> {planSettings.cloudPlans.cloud1000.limit.toLocaleString()}구절 평생보관</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> +{planSettings.cloudPlans.cloud1000.bonusCredits.toLocaleString()} ai 주석 크레딧 증정</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 모든 기기 실시간 연동</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#C46A40]" /> 모든 노트, 메모, 설교노트 클라우드 평생 저장</li>
                       </ul>
@@ -1112,12 +1131,12 @@ export const AiCommentaryPanel: React.FC<AiCommentaryPanelProps> = ({
                     {/* 클라우드 무제한 */}
                     <div className="p-4 rounded-xl border border-[#E8E3DA] hover:border-[#2C2B29] transition-all flex flex-col gap-3 shadow-xs bg-slate-50">
                       <div className="flex items-center justify-between">
-                        <div className="font-bold text-sm text-[#2C2B29]">주석 클라우드 무제한</div>
-                        <div className="font-bold text-lg text-[#2C2B29]">49,000원</div>
+                        <div className="font-bold text-sm text-[#2C2B29]">{planSettings.cloudPlans.cloudUnlimited.name}</div>
+                        <div className="font-bold text-lg text-[#2C2B29]">{planSettings.cloudPlans.cloudUnlimited.price.toLocaleString()}원</div>
                       </div>
                       <ul className="text-[11px] text-[#7A756D] space-y-1">
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 성경 전체 평생 보관</li>
-                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> +1000 ai 주석 크레딧 증정</li>
+                        <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> +{planSettings.cloudPlans.cloudUnlimited.bonusCredits.toLocaleString()} ai 주석 크레딧 증정</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 모든 기기 실시간 연동</li>
                         <li className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-[#2C2B29]" /> 모든 노트, 메모, 설교노트 클라우드 평생 저장</li>
                       </ul>

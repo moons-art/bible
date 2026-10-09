@@ -3,6 +3,11 @@
 @theme {
   --font-serif: 'Noto Serif KR', 'Source Serif 4', Georgia, serif;
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-noto-serif: 'Noto Serif KR', serif;
+  --font-nanum-myeongjo: 'Nanum Myeongjo', serif;
+  --font-maru-buri: 'MaruBuri', serif;
+  --font-noto-sans: 'Noto Sans KR', sans-serif;
+  --font-pretendard: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
 
   /* Claude Signature Colors */
   --color-claude-canvas: #FAF9F5;
@@ -86,6 +91,13 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  [contenteditable][data-placeholder]:empty:before {
+    content: attr(data-placeholder);
+    color: #A3A19B;
+    pointer-events: none;
+    display: block;
   }
 
   /* Scripture Reading & Verse Styling */
@@ -190,5 +202,47 @@
   .search-result-item:hover {
     background-color: #FAF0EB;
     border-left-color: #C96442;
+  }
+
+  /* 설교노트 인라인 성경 구절 칩 */
+  .bible-verse-chip {
+    display: inline-flex !important;
+    align-items: center !important;
+    padding: 0.125rem 0.45rem !important;
+    margin: 0.125rem 0.25rem !important;
+    background-color: #FFFFFF !important;
+    color: #2C2B29 !important;
+    border: 1px solid rgba(0, 0, 0, 0.2) !important;
+    border-radius: 0.375rem !important;
+    font-size: 0.85em !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    user-select: text !important;
+    vertical-align: baseline !important;
+    transition: all 0.15s ease !important;
+    text-decoration: none !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+  }
+  .bible-verse-chip:hover {
+    background-color: #F7F6F2 !important;
+    border-color: rgba(0, 0, 0, 0.35) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+    transform: translateY(-0.5px);
+  }
+
+  /* 설교노트 성경 본문 인용 카드 */
+  .bible-verse-quote-card {
+    display: block !important;
+    margin: 0.35rem 0 !important;
+    padding: 0.4rem 0.75rem !important;
+    background-color: #FFFFFF !important;
+    border: 1px solid rgba(0, 0, 0, 0.15) !important;
+    border-radius: 0.5rem !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+    user-select: text !important;
+    font-size: 0.85em !important;
+  }
+  .bible-verse-quote-card .bible-quote-line {
+    font-size: 1em !important;
   }
 }

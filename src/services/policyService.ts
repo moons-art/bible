@@ -1,6 +1,7 @@
 // NATIONS BIBLE 서비스 정책, 약관, 사업자 정보 및 카카오톡 채널 관리 서비스
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../api/firebaseConfig';
+import { trackFirestoreRead, trackFirestoreWrite } from './systemMetricsService';
 
 export interface SitePolicy {
   businessName: string;         // 서비스 / 상호명
@@ -92,33 +93,46 @@ export const DEFAULT_SITE_POLICY: SitePolicy = {
 const STORAGE_KEY = 'nations_site_policy_cache_v1';
 
 /**
- * 서비스 정책 및 사업자 정보 조회 (캐시 우선 + Firestore 실시간 동기화)
+ * 로컬 캐시된 정책 정보 동기 반환 (초기 렌더링 깜빡임 및 불필요한 네트워크 호출 방지)
  */
-export async function getSitePolicy(): Promise<SitePolicy> {
-  // 1. 로컬 캐시 확인
+export function getCachedSitePolicy(): SitePolicy {
   try {
     const cached = localStorage.getItem(STORAGE_KEY);
     if (cached) {
-      const parsed = JSON.parse(cached);
-      // 백그라운드에서 최신 데이터 비동기 갱신
-      fetchRemoteSitePolicy().catch(() => {});
-      return { ...DEFAULT_SITE_POLICY, ...parsed };
+      return { ...DEFAULT_SITE_POLICY, ...JSON.parse(cached) };
     }
   } catch (e) {}
+  return DEFAULT_SITE_POLICY;
+}
 
+// ── [싱글톤] 단일 Firestore onSnapshot 채널 및 멀티캐스트 구독자 풀 관리 ──
+let singletonUnsubscribe: (() => void) | null = null;
+const policySubscribers = new Set<(policy: SitePolicy) => void>();
+let cachedSingletonPolicy: SitePolicy | null = null;
+let teardownTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * 서비스 정책 및 사업자 정보 조회 (싱글톤 메모리 캐시 및 로컬 캐시 우선 반환)
+ */
+export async function getSitePolicy(): Promise<SitePolicy> {
+  if (cachedSingletonPolicy) return cachedSingletonPolicy;
+  const cached = getCachedSitePolicy();
+  if (cached && cached !== DEFAULT_SITE_POLICY) return cached;
   return await fetchRemoteSitePolicy();
 }
 
 /**
- * 원격 Firestore에서 최신 정책 정보 로드
+ * 원격 Firestore에서 최신 정책 정보 로드 (수동 1회 갱신용)
  */
 export async function fetchRemoteSitePolicy(): Promise<SitePolicy> {
   try {
     const docRef = doc(db, 'settings', 'site_policy');
     const snap = await getDoc(docRef);
+    trackFirestoreRead(1);
     if (snap.exists()) {
       const data = snap.data() as SitePolicy;
       const merged = { ...DEFAULT_SITE_POLICY, ...data };
+      cachedSingletonPolicy = merged;
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
       } catch (e) {}
@@ -141,32 +155,81 @@ export async function saveSitePolicy(policy: Partial<SitePolicy>): Promise<void>
   };
 
   await setDoc(docRef, updated, { merge: true });
+  trackFirestoreWrite(1);
 
-  // 로컬 캐시 즉시 갱신 및 이벤트 전파
+  // 로컬 캐시 및 싱글톤 캐시 즉시 갱신 및 모든 구독자에 전파
   try {
     const full = { ...DEFAULT_SITE_POLICY, ...updated };
+    cachedSingletonPolicy = full;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(full));
+    policySubscribers.forEach(cb => {
+      try { cb(full); } catch (e) {}
+    });
     window.dispatchEvent(new CustomEvent('site-policy-updated', { detail: full }));
   } catch (e) {}
 }
 
 /**
- * 실시간 정책 정보 변경 구독
+ * 실시간 정책 정보 변경 구독 (완전 싱글톤 멀티캐스트)
+ * - 컴포넌트가 몇 번 리렌더링되거나 몇 군데서 호출되든 Firestore onSnapshot 채널은 단 1개만 생성됩니다.
+ * - React StrictMode 또는 빠른 리렌더링 시 채널이 닫혔다 열렸다(canceled)하는 플리커링을 10초 Teardown Debounce로 완벽 방지합니다.
  */
 export function subscribeSitePolicy(onUpdate: (policy: SitePolicy) => void): () => void {
-  const docRef = doc(db, 'settings', 'site_policy');
-  return onSnapshot(docRef, (snap) => {
-    if (snap.exists()) {
-      const merged = { ...DEFAULT_SITE_POLICY, ...(snap.data() as SitePolicy) };
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-      } catch (e) {}
-      onUpdate(merged);
-    } else {
-      onUpdate(DEFAULT_SITE_POLICY);
+  // 1. 구독자 등록
+  policySubscribers.add(onUpdate);
+
+  // 2. 종료 대기 중인 채널 해제 타이머가 있다면 즉시 취소하여 기존 연결 유지
+  if (teardownTimer) {
+    clearTimeout(teardownTimer);
+    teardownTimer = null;
+  }
+
+  // 3. 현재 보유한 최신 데이터 즉시 공급 (0ms 지연)
+  if (cachedSingletonPolicy) {
+    onUpdate(cachedSingletonPolicy);
+  } else {
+    onUpdate(getCachedSitePolicy());
+  }
+
+  // 4. Firestore onSnapshot이 아직 실행 중이 아니라면 최초 1회만 단일 생성
+  if (!singletonUnsubscribe) {
+    const docRef = doc(db, 'settings', 'site_policy');
+    singletonUnsubscribe = onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        const merged = { ...DEFAULT_SITE_POLICY, ...(snap.data() as SitePolicy) };
+        cachedSingletonPolicy = merged;
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        } catch (e) {}
+        policySubscribers.forEach(cb => {
+          try { cb(merged); } catch (e) {}
+        });
+      } else {
+        cachedSingletonPolicy = DEFAULT_SITE_POLICY;
+        policySubscribers.forEach(cb => {
+          try { cb(DEFAULT_SITE_POLICY); } catch (e) {}
+        });
+      }
+    }, (err) => {
+      console.warn('[policyService] subscribeSitePolicy error:', err);
+      policySubscribers.forEach(cb => {
+        try { cb(DEFAULT_SITE_POLICY); } catch (e) {}
+      });
+    });
+  }
+
+  // 5. 구독 해제 함수 (구독자가 0명이 되어도 10초 동안은 채널을 유지하여 불필요한 재연결 및 canceled 방지)
+  return () => {
+    policySubscribers.delete(onUpdate);
+    if (policySubscribers.size === 0 && singletonUnsubscribe) {
+      if (teardownTimer) clearTimeout(teardownTimer);
+      teardownTimer = setTimeout(() => {
+        if (policySubscribers.size === 0 && singletonUnsubscribe) {
+          singletonUnsubscribe();
+          singletonUnsubscribe = null;
+          teardownTimer = null;
+        }
+      }, 10000);
     }
-  }, (err) => {
-    console.warn('[policyService] subscribeSitePolicy error:', err);
-    onUpdate(DEFAULT_SITE_POLICY);
-  });
+  };
 }

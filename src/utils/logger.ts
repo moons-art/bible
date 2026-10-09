@@ -14,9 +14,19 @@ export const logActivity = async (action: string, details?: string, customUser?:
   }
 
   const now = Date.now();
-  // 중복 로깅 방지: 같은 액션은 3초 이내에 다시 기록하지 않음
-  if (lastLogTimes[action] && now - lastLogTimes[action] < 3000) {
+  // 중복 로깅 방지: 같은 액션은 10초 이내에 다시 기록하지 않음
+  if (lastLogTimes[action] && now - lastLogTimes[action] < 10000) {
     return;
+  }
+
+  // '로그인' 액션: 새로고침마다 중복 쓰기 방지 (브라우저 세션 유지 동안 최초 1회만 기록)
+  if (action === '로그인') {
+    try {
+      const sessionKey = 'session_login_logged';
+      if (sessionStorage.getItem(sessionKey)) {
+        return;
+      }
+    } catch (e) {}
   }
   lastLogTimes[action] = now;
 
@@ -57,6 +67,11 @@ export const logActivity = async (action: string, details?: string, customUser?:
       timestamp: new Date().toISOString()
     });
     console.log(`[Logger] ✅ Logged action: ${action} (${email})`);
+    if (action === '로그인') {
+      try {
+        sessionStorage.setItem('session_login_logged', 'true');
+      } catch (e) {}
+    }
   } catch (error) {
     console.error('[Logger] Failed to log activity:', error);
   }

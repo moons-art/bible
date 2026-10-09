@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { BibleVersion } from '../types/bible';
 import { searchService } from '../services/searchService';
 import { BibleParser } from '../services/bibleParser';
@@ -7,7 +7,8 @@ import { bibleDB } from '../utils/indexedDB';
 import { db, auth } from '../api/firebaseConfig';
 import { doc, collection, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
 import { fetchUserProfile } from '../api/gdriveWebService';
-import { subscribeUserProfile } from '../services/userService';
+import { subscribeUserProfile, updateUserResourceCounts } from '../services/userService';
+import { getPlanSettings, canUserSyncCloudNotes, type SubscriptionPlansSettings } from '../services/planConfigService';
 
 export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const DEFAULT_KOR: BibleVersion = {
@@ -76,9 +77,37 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [mainEnVersionId]);
 
-  const [verseData, setVerseData] = useState<Record<string, { note?: string; crossRef?: string; sermon?: string }>>({});
+  // ✅ 구절 노트: 기본적으로 기기(localStorage)에 무제한 영구 보관
+  const [verseData, setVerseData] = useState<Record<string, { note?: string; crossRef?: string; sermon?: string }>>(() => {
+    try {
+      const local = localStorage.getItem('bible-local-verse-data');
+      if (local) return JSON.parse(local);
+    } catch {}
+    return {};
+  });
   const [showAnnotations, setShowAnnotations] = useState<boolean>(true);
   const [googleUserId, setGoogleUserId] = useState<string | null>(null);
+
+  // 클라우드 노트 동기화 권한 여부 Ref (기본값: false - 기기 저장 전용)
+  const canSyncCloudNotesRef = useRef<boolean>(false);
+  const planSettingsRef = useRef<SubscriptionPlansSettings | null>(null);
+
+  // 최신 플랜 설정 로드 및 변경 이벤트 구독
+  useEffect(() => {
+    getPlanSettings().then(st => {
+      planSettingsRef.current = st;
+    }).catch(() => {});
+
+    const handlePlanUpdate = (e: any) => {
+      if (e.detail) {
+        planSettingsRef.current = e.detail;
+      }
+    };
+    window.addEventListener('plan-config-updated', handlePlanUpdate);
+    return () => {
+      window.removeEventListener('plan-config-updated', handlePlanUpdate);
+    };
+  }, []);
 
   // ✅ 로딩 완료 및 DB 덮어쓰기 방지를 위한 초기화 완료 플래그
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
@@ -91,25 +120,32 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // 원격 데이터 수신 시 Firestore 역전송(Echo) 무한 루프 방지 플래그
   const isRemoteSyncRef = useRef<boolean>(false);
 
-  // ── Firestore verseData 동기화 함수 ─────────────────────────────────────
+  // ── Firestore verseData 동기화 함수 (클라우드 권한 보유 시에만 실행) ────────────────
   const subscribeToVerseData = (uid: string) => {
     if (unsubscribeVerseDataRef.current) {
       unsubscribeVerseDataRef.current();
     }
     const versesCol = collection(db, 'users', uid, 'verseData');
     const unsubscribe = onSnapshot(versesCol, (snapshot) => {
-      const data: Record<string, { note?: string; crossRef?: string; sermon?: string }> = {};
+      const serverData: Record<string, { note?: string; crossRef?: string; sermon?: string }> = {};
       snapshot.forEach(docSnap => {
-        data[docSnap.id] = docSnap.data() as any;
+        serverData[docSnap.id] = docSnap.data() as any;
       });
       isRemoteSyncRef.current = true;
-      setVerseData(data);
+      setVerseData(prev => {
+        // 서버 데이터와 로컬 데이터를 병합하여 기기에 최신 캐시 보관
+        const merged = { ...prev, ...serverData };
+        try {
+          localStorage.setItem('bible-local-verse-data', JSON.stringify(merged));
+        } catch {}
+        return merged;
+      });
       // React 상태 반영 후 플래그 안전 해제
       setTimeout(() => {
         isRemoteSyncRef.current = false;
       }, 50);
     }, (error) => {
-      console.warn('[BibleProvider] Firestore offline/sync error (정상 - 오프라인 캐시 사용 중):', error.code);
+      console.warn('[BibleProvider] Firestore offline/sync error (정상 - 로컬 기기 보관 사용 중):', error.code);
     });
     unsubscribeVerseDataRef.current = unsubscribe;
   };
@@ -264,20 +300,33 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const unsubAuth = auth.onAuthStateChanged((user) => {
       if (user) {
         setGoogleUserId(user.uid);
-        subscribeToVerseData(user.uid);
         console.log('[BibleProvider] ✅ Firebase Auth 연결됨. 사용자 ID:', user.uid);
 
-        // 관리자가 허용한 특별 번역본 실시간 감지 (UID 및 이메일 양방향 감시)
+        // 관리자가 허용한 특별 번역본 및 클라우드 노트 동기화 권한 실시간 감지
         if (unsubProfile) unsubProfile();
         unsubProfile = subscribeUserProfile(user.uid, (profile) => {
           if (profile) {
             checkAndHydrateAllowedVersions(profile.allowedVersions || []);
+
+            // 클라우드 노트 서버 동기화 권한 판별
+            const canSync = canUserSyncCloudNotes(profile, planSettingsRef.current);
+            canSyncCloudNotesRef.current = canSync;
+
+            if (canSync) {
+              subscribeToVerseData(user.uid);
+            } else {
+              // 동기화 권한이 없으면 서버 리스너 해제 (로컬 기기 무제한 보관 모드)
+              if (unsubscribeVerseDataRef.current) {
+                unsubscribeVerseDataRef.current();
+                unsubscribeVerseDataRef.current = null;
+              }
+            }
           }
         }, user.email);
       } else {
         setGoogleUserId(null);
-        // 로그아웃 시 주석/설교 상태 완전히 초기화
-        setVerseData({});
+        canSyncCloudNotesRef.current = false;
+        // 로그아웃 시 서버 구독만 안전 해제 (로컬 기기에 저장된 verseData는 영구 보존)
         if (unsubscribeVerseDataRef.current) {
           unsubscribeVerseDataRef.current();
           unsubscribeVerseDataRef.current = null;
@@ -300,7 +349,107 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, []);
 
-  // ── verseData 저장 함수 (Firestore + 로컬 state 동기화) ─────────────────
+  // 마지막으로 Firestore 서버에 커밋된 verseData 스냅샷 (더티 체킹용)
+  const lastCommittedVerseDataRef = useRef<Record<string, { note?: string; crossRef?: string; sermon?: string }>>({});
+  // 최신 대기 중인 verseData
+  const pendingVerseDataRef = useRef<Record<string, { note?: string; crossRef?: string; sermon?: string }>>({});
+  // 30초 스로틀 타이머 및 스케줄 시간
+  const verseThrottleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nextVerseSaveTimeRef = useRef<number>(0);
+  const isVerseFlushingRef = useRef<boolean>(false);
+
+  // ── Firestore 실제 플러시(Flush) 함수: 변경된 항목만 batch/개별 setDoc ──
+  const flushVerseData = useCallback(async () => {
+    if (!googleUserId || !canSyncCloudNotesRef.current || isVerseFlushingRef.current) return;
+    if (verseThrottleTimerRef.current) {
+      clearTimeout(verseThrottleTimerRef.current);
+      verseThrottleTimerRef.current = null;
+    }
+
+    const current = pendingVerseDataRef.current;
+    const committed = lastCommittedVerseDataRef.current;
+
+    // 변경된 키 찾기 (엄격한 더티 체킹)
+    const dirtyKeys: string[] = [];
+    Object.keys(current).forEach(key => {
+      if (JSON.stringify(committed[key]) !== JSON.stringify(current[key])) {
+        dirtyKeys.push(key);
+      }
+    });
+    // 삭제된 키
+    const deletedKeys = Object.keys(committed).filter(key => !(key in current));
+
+    if (dirtyKeys.length === 0 && deletedKeys.length === 0) {
+      return;
+    }
+
+    isVerseFlushingRef.current = true;
+    try {
+      await Promise.all([
+        ...dirtyKeys.map(key => {
+          const docRef = doc(db, 'users', googleUserId, 'verseData', key);
+          const entry = current[key];
+          if (!entry || (!entry.note && !entry.crossRef && !entry.sermon)) {
+            return deleteDoc(docRef);
+          } else {
+            return setDoc(docRef, entry, { merge: true });
+          }
+        }),
+        ...deletedKeys.map(key => {
+          const docRef = doc(db, 'users', googleUserId, 'verseData', key);
+          return deleteDoc(docRef);
+        })
+      ]);
+
+      // 커밋 기준 스냅샷 업데이트
+      lastCommittedVerseDataRef.current = { ...current };
+
+      // 유저 프로필 메인 문서에 구절노트, 관주, 구절주석 통계 동기화
+      let noteCount = 0;
+      let crossRefCount = 0;
+      let commentaryCount = 0;
+      for (const k of Object.keys(current)) {
+        const item = current[k];
+        if (item) {
+          if (item.note && typeof item.note === 'string' && item.note.trim() !== '') noteCount++;
+          if (item.crossRef && typeof item.crossRef === 'string' && item.crossRef.trim() !== '') crossRefCount++;
+          if (item.sermon && typeof item.sermon === 'string' && item.sermon.trim() !== '') commentaryCount++;
+        }
+      }
+      if (googleUserId) {
+        updateUserResourceCounts(googleUserId, { noteCount, crossRefCount, commentaryCount });
+      }
+    } catch (err) {
+      console.warn('[BibleProvider] verseData Firestore flush 실패 (로컬 기기 보관 유지):', err);
+    } finally {
+      isVerseFlushingRef.current = false;
+    }
+  }, [googleUserId]);
+
+  // 생명주기 플러시: 창 닫기, 탭 전환, 모바일 홈 나가기 시 즉시 저장
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushVerseData();
+      }
+    };
+    const handlePageHide = () => {
+      flushVerseData();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handlePageHide);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handlePageHide);
+      if (verseThrottleTimerRef.current) clearTimeout(verseThrottleTimerRef.current);
+    };
+  }, [flushVerseData]);
+
+  // ── verseData 저장 함수 (로컬 즉시 반영 + 권한 있을 시 Firestore 1분 스로틀) ─────────────────
   const syncVerseData = (
     newData: Record<string, { note?: string; crossRef?: string; sermon?: string }> |
              ((prev: Record<string, { note?: string; crossRef?: string; sermon?: string }>) =>
@@ -309,32 +458,32 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setVerseData(prev => {
       const next = typeof newData === 'function' ? newData(prev) : newData;
 
+      // ✅ 1) 항상 기기(localStorage)에 즉시 무제한 보관!
+      try {
+        localStorage.setItem('bible-local-verse-data', JSON.stringify(next));
+      } catch (e) {
+        console.warn('[BibleProvider] verseData 로컬 기기 저장 경고:', e);
+      }
+
       // 원격 동기화 수신 중일 때는 Firestore 역전송 완전 차단
       if (isRemoteSyncRef.current) {
+        lastCommittedVerseDataRef.current = { ...next };
+        pendingVerseDataRef.current = { ...next };
         return next;
       }
 
-      // Firestore 동기화 (로그인된 사용자가 직접 수정한 경우에만)
-      if (googleUserId) {
-        Object.keys(next).forEach(key => {
-          if (prev[key] === next[key]) return;
-          if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) {
-            const docRef = doc(db, 'users', googleUserId, 'verseData', key);
-            const entry = next[key];
-            if (!entry || (!entry.note && !entry.crossRef && !entry.sermon)) {
-              deleteDoc(docRef).catch(console.error);
-            } else {
-              setDoc(docRef, entry).catch(console.error);
-            }
-          }
-        });
-        // 삭제된 키도 Firestore에서 제거
-        Object.keys(prev).forEach(key => {
-          if (!(key in next)) {
-            const docRef = doc(db, 'users', googleUserId, 'verseData', key);
-            deleteDoc(docRef).catch(console.error);
-          }
-        });
+      pendingVerseDataRef.current = { ...next };
+
+      // ✅ 2) 클라우드 동기화 권한이 있는 경우에만 Firestore 1분 스로틀 스케줄링
+      if (googleUserId && canSyncCloudNotesRef.current) {
+        const now = Date.now();
+        if (now >= nextVerseSaveTimeRef.current) {
+          nextVerseSaveTimeRef.current = now + 60000; // 1분(60초) 스로틀
+          if (verseThrottleTimerRef.current) clearTimeout(verseThrottleTimerRef.current);
+          verseThrottleTimerRef.current = setTimeout(() => {
+            flushVerseData();
+          }, 60000);
+        }
       }
 
       return next;
@@ -550,10 +699,10 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (validOnes.length > 0) {
       validOnes.forEach(v => {
         if (!indexedVersionIds.current.has(v.id) || !searchService.hasIndex(v.id)) {
+          indexedVersionIds.current.add(v.id);
           // 1.5초 여유 마진 후 조용히 백그라운드 인덱싱 실행 (앱 기동 렉 방지)
           setTimeout(() => {
             searchService.indexVersion(v);
-            indexedVersionIds.current.add(v.id);
           }, 1500);
         }
       });
@@ -694,6 +843,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       mainEnVersionId, setMainEnVersionId,
       lineHeight, setLineHeight: (val) => setLineHeight(Math.max(1.3, val)),
       verseData, setVerseData: syncVerseData,
+      flushVerseData,
       showAnnotations, setShowAnnotations
     }}>
       {children}

@@ -56,6 +56,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   const {
     isLoggedIn,
+    totalRemaining,
     paidRemaining,
     freeRemaining,
     cloudCommentaryLimit,
@@ -137,7 +138,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="flex flex-wrap gap-4 text-sm">
               <div className="flex items-center gap-1.5 text-[#2B2927]">
                 <span className="font-semibold">잔여 크레딧</span>
-                <span className="text-[#C96442] font-bold">{paidRemaining + freeRemaining}</span>
+                <span className="text-[#C96442] font-bold">{totalRemaining}회</span>
               </div>
               <div className="flex items-center gap-1.5 text-[#2B2927]">
                 <span className="font-semibold">저장상태</span>

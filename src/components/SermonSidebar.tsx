@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileEdit, Plus, Calendar, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers, BookOpen, Folder, FolderOpen, ArrowLeft } from 'lucide-react';
+import { X, FileEdit, Plus, Calendar, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers, BookOpen, Folder, FolderOpen, ArrowLeft, Bold, Italic, Underline, Highlighter, HardDrive, Cloud, CloudOff } from 'lucide-react';
 import { db, auth } from '../api/firebaseConfig';
 import { doc, collection, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
 import { BIBLE_LIST } from '../constants/bibleMeta';
 import { extractBibleBookFromText, parseBibleReference, isBibleReferenceMatch } from '../utils/referenceParser';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useSermonSync, type SermonDocument } from '../hooks/useSermonSync';
+import { matchBibleReferences, getVersesFromLocalDB, createVerseQuoteHtml } from '../services/localBibleService';
+import { subscribeUserProfile, updateUserResourceCounts } from '../services/userService';
+import { getPlanSettings, canUserSyncCloudNotes, type SubscriptionPlansSettings } from '../services/planConfigService';
 
 
 interface Sermon {
@@ -14,6 +18,11 @@ interface Sermon {
   title: string;
   date: string;
   content?: string;
+  version?: number;
+  updatedAt?: number;
+  fontId?: string;
+  fontSize?: number;
+  autoVerseConversion?: boolean;
 }
 
 export type DockPosition = 'right' | 'bottom' | 'free';
@@ -40,6 +49,27 @@ export interface SermonSidebarRef {
   isFullyOpenOnRight: () => boolean;
 }
 
+/**
+ * 에디터의 HTML 서식 태그(<span style=...>, <div>, <br> 등)를 
+ * 목록 미리보기 및 검색에서 깔끔한 일반 글자로 변환해주는 헬퍼
+ */
+const stripHtml = (html?: string): string => {
+  if (!html) return '';
+  return html
+    .replace(/<br\s*[\/]?>/gi, ' ')
+    .replace(/<\/p>/gi, ' ')
+    .replace(/<\/div>/gi, ' ')
+    .replace(/<[^>]+>/g, '') // 모든 HTML 태그 제거
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/[#*`\n\r\t]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
 export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({ 
   isOpen, 
   onClose, 
@@ -57,9 +87,42 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   onSidebarHeightChange,
 }, ref) => {
   const isMobile = useIsMobile(768);
-  const [sermons, setSermons] = useState<Sermon[]>([]);
+  // ✅ 설교 목록: 기본적으로 기기(localStorage)에 무제한 영구 보관
+  const [sermons, setSermons] = useState<Sermon[]>(() => {
+    try {
+      const saved = localStorage.getItem('bible-local-sermons');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
   const [googleUserId, setGoogleUserId] = useState<string | null>(null);
+  const [canSyncCloud, setCanSyncCloud] = useState<boolean>(false);
+  const planSettingsRef = useRef<SubscriptionPlansSettings | null>(null);
   const unsubscribeSermonsRef = useRef<(() => void) | null>(null);
+
+  // 로컬 기기에 설교 목록 영구 저장 헬퍼
+  const saveSermonsToLocal = (data: Sermon[]) => {
+    try {
+      localStorage.setItem('bible-local-sermons', JSON.stringify(data));
+    } catch (e) {
+      console.warn('[SermonSidebar] 로컬 기기 저장 경고:', e);
+    }
+  };
+
+  // 최신 플랜 설정 로드 및 실시간 업데이트 수신
+  useEffect(() => {
+    getPlanSettings().then(st => {
+      planSettingsRef.current = st;
+    }).catch(() => {});
+
+    const handlePlanUpdate = (e: any) => {
+      if (e.detail) planSettingsRef.current = e.detail;
+    };
+    window.addEventListener('plan-config-updated', handlePlanUpdate);
+    return () => {
+      window.removeEventListener('plan-config-updated', handlePlanUpdate);
+    };
+  }, []);
 
   const subscribeToSermons = (uid: string) => {
     if (unsubscribeSermonsRef.current) unsubscribeSermonsRef.current();
@@ -71,57 +134,77 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
       });
       data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setSermons(data);
+      saveSermonsToLocal(data);
     }, (err) => {
-      console.warn('[SermonSidebar] Firestore offline (캐시 사용 중):', err.code);
+      console.warn('[SermonSidebar] Firestore offline (로컬 기기 보관 사용 중):', err.code);
     });
     unsubscribeSermonsRef.current = unsubscribe;
   };
 
   useEffect(() => {
+    let unsubProfile: (() => void) | null = null;
+
     const unsubAuth = auth.onAuthStateChanged((user) => {
       if (user) {
         setGoogleUserId(user.uid);
-        subscribeToSermons(user.uid);
+
+        if (unsubProfile) unsubProfile();
+        unsubProfile = subscribeUserProfile(user.uid, (profile) => {
+          if (profile) {
+            const allowed = canUserSyncCloudNotes(profile, planSettingsRef.current);
+            setCanSyncCloud(allowed);
+
+            if (allowed) {
+              subscribeToSermons(user.uid);
+            } else {
+              // 동기화 꺼져있으면 서버 리스너 해제 (로컬 기기 저장 모드 유지)
+              if (unsubscribeSermonsRef.current) {
+                unsubscribeSermonsRef.current();
+                unsubscribeSermonsRef.current = null;
+              }
+            }
+          }
+        }, user.email);
       } else {
         setGoogleUserId(null);
-        setSermons([]);
+        setCanSyncCloud(false);
         if (unsubscribeSermonsRef.current) {
           unsubscribeSermonsRef.current();
           unsubscribeSermonsRef.current = null;
+        }
+        if (unsubProfile) {
+          unsubProfile();
+          unsubProfile = null;
         }
       }
     });
     return () => {
       unsubAuth();
+      if (unsubProfile) unsubProfile();
       if (unsubscribeSermonsRef.current) unsubscribeSermonsRef.current();
     };
   }, []);
 
-  const handleSaveSermon = async (id: string, title: string, content: string) => {
-    if (!googleUserId) return;
-    const docRef = doc(db, 'users', googleUserId, 'sermons', id);
-    const date = new Date().toISOString().split('T')[0];
-    try {
-      if (!googleUserId) {
-        throw new Error('Google User ID is missing');
-      }
-      const docRef = doc(db, 'users', googleUserId, 'sermons', id);
-      const date = new Date().toISOString().split('T')[0];
-      await setDoc(docRef, { title, content, date }, { merge: true });
-      setSaveStatus('saved');
-    } catch (err: any) {
-      console.error('[SermonSidebar] Save error:', err);
-      setSaveStatus('unsaved');
-      alert(`[디버그] 설교문 파이어베이스 저장 실패: ${err.message}`);
-    }
-  };
-
   const handleDeleteSermon = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!googleUserId) return;
     if (confirm('이 설교문을 정말 삭제하시겠습니까?')) {
-      const docRef = doc(db, 'users', googleUserId, 'sermons', id);
-      await deleteDoc(docRef);
+      const nextSermons = sermons.filter(s => s.id !== id);
+      setSermons(nextSermons);
+      saveSermonsToLocal(nextSermons);
+
+      if (googleUserId) {
+        updateUserResourceCounts(googleUserId, { sermonCount: nextSermons.length });
+      }
+
+      if (googleUserId && canSyncCloud) {
+        try {
+          const docRef = doc(db, 'users', googleUserId, 'sermons', id);
+          await deleteDoc(docRef);
+        } catch (err) {
+          console.warn('[SermonSidebar] Firestore delete error:', err);
+        }
+      }
+
       if (activeSermonId === id) {
         setView('list');
         setActiveSermonId(null);
@@ -130,13 +213,30 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     }
   };
 
-  const handleCreateNewSermon = async () => {
-    if (!googleUserId) return;
+  const handleCreateNewSermon = () => {
     const newId = 'sermon-' + Date.now();
-    await handleSaveSermon(newId, '새 설교문', '');
+    // [최적화]: 기기에서 ID 발급 후 즉시 에디터 오픈 (오프라인/로컬/클라우드 공통 지원)
     setActiveSermonId(newId);
+    setEditorTitle('');
     setEditorContent('');
+    setSermonFontId('noto-serif');
+    setSermonFontSize(16);
+    setIsAutoVerseEnabled(true);
+    resetSyncState({ 
+      id: newId, 
+      title: '', 
+      content: '', 
+      version: 1,
+      fontId: 'noto-serif',
+      fontSize: 16,
+      autoVerseConversion: true,
+    });
     setView('editor');
+    setTimeout(() => {
+      if (editorAreaRef.current) {
+        editorAreaRef.current.innerHTML = '';
+      }
+    }, 50);
   };
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -144,34 +244,689 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   const [activeSermonId, setActiveSermonId] = useState<string | null>(null);
   const [editorTitle, setEditorTitle] = useState('');
   const [editorContent, setEditorContent] = useState('');
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [syncToastMessage, setSyncToastMessage] = useState<string | null>(null);
 
-  const [sermonFontSize, setSermonFontSize] = useState(() => {
-    try {
-      const saved = localStorage.getItem('bible-app-sermon-font');
-      if (saved) return JSON.parse(saved);
-    } catch(e){}
-    return 16;
+  const activeSermonObj = useMemo(() => {
+    return sermons.find(s => s.id === activeSermonId) || null;
+  }, [sermons, activeSermonId]);
+
+  // useSermonSync 동기화 훅 바인딩
+  const {
+    syncStatus,
+    isDirty,
+    flushSave,
+    notifyChange,
+    resetSyncState,
+  } = useSermonSync({
+    userId: googleUserId,
+    sermonId: activeSermonId,
+    canSyncCloud,
+    initialTitle: activeSermonObj?.title || '',
+    initialContent: activeSermonObj?.content || '',
+    initialVersion: activeSermonObj?.version || 1,
+    throttleMs: 60000, // 1분(60초) 스로틀 서버 업로드 (무료 티어 극대화)
+    onConflictCreated: (conflictDocId, copyTitle) => {
+      setSyncToastMessage(`다른 기기 변경사항이 감지되어 현재 내용은 "${copyTitle}" 문서로 안전하게 보존되었습니다.`);
+    },
+    onRemoteUpdated: (updatedDoc: SermonDocument) => {
+      // 다른 기기에서 수정한 최신본으로 조용한 자동 갱신
+      setEditorTitle(updatedDoc.title);
+      setEditorContent(updatedDoc.content);
+      if (updatedDoc.fontId) setSermonFontId(updatedDoc.fontId);
+      if (typeof updatedDoc.fontSize === 'number') setSermonFontSize(updatedDoc.fontSize);
+      if (updatedDoc.autoVerseConversion !== undefined) setIsAutoVerseEnabled(updatedDoc.autoVerseConversion);
+
+      if (editorAreaRef.current) {
+        editorAreaRef.current.innerHTML = updatedDoc.content;
+      }
+      setSyncToastMessage('다른 기기에서 수정한 최신 설교 내용으로 자동 갱신되었습니다.');
+    },
+    onWarning: (msg: string) => {
+      setSyncToastMessage(msg);
+    },
   });
 
+  const SERMON_FONTS = [
+    { id: 'noto-serif', name: '본명조 (Noto Serif)', family: "'Noto Serif KR', Georgia, serif" },
+    { id: 'nanum-myeongjo', name: '나눔명조 (Nanum)', family: "'Nanum Myeongjo', serif" },
+    { id: 'maru-buri', name: '마루 부리 (Maru Buri)', family: "'MaruBuri', serif" },
+    { id: 'pretendard', name: '프리텐다드 (Pretendard)', family: "'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif" },
+    { id: 'noto-sans', name: '본고딕 (Noto Sans)', family: "'Noto Sans KR', sans-serif" },
+  ];
+
+  const TEXT_COLORS = [
+    { label: '기본검정', value: '#2C2B29' },
+    { label: '빨강', value: '#DC2626' },
+    { label: '주황/클로드', value: '#C96442' },
+    { label: '파랑', value: '#2563EB' },
+    { label: '초록', value: '#16A34A' },
+    { label: '보라', value: '#9333EA' },
+    { label: '회색', value: '#6A6864' },
+  ];
+
+  const HIGHLIGHT_COLORS = [
+    { label: '없음', value: 'transparent' },
+    { label: '노랑', value: '#FEF08A' },
+    { label: '형광연두', value: '#BBF7D0' },
+    { label: '하늘색', value: '#BAE6FD' },
+    { label: '살구/피치', value: '#FED7AA' },
+    { label: '연분홍', value: '#FBCFE8' },
+  ];
+
+  const [sermonFontId, setSermonFontId] = useState('noto-serif');
+  const [sermonFontSize, setSermonFontSize] = useState<number>(16);
+  const [fontSizeInput, setFontSizeInput] = useState<string>('16');
+  // 구절 자동 변환 스위치 (기본값 ON: true, 각 노트별로 독립 설정)
+  const [isAutoVerseEnabled, setIsAutoVerseEnabled] = useState<boolean>(true);
+
+  // 텍스트 스타일 상태
+  const [isBold, setIsBold] = useState(false);
+  const [isItalic, setIsItalic] = useState(false);
+  const [isUnderline, setIsUnderline] = useState(false);
+  const [textColor, setTextColor] = useState('#2C2B29');
+  const [highlightColor, setHighlightColor] = useState('transparent');
+
+  // 드롭다운 팝오버 열림 상태
+  const [isFontDropdownOpen, setIsFontDropdownOpen] = useState(false);
+  const [isColorDropdownOpen, setIsColorDropdownOpen] = useState(false);
+  const [isHighlightDropdownOpen, setIsHighlightDropdownOpen] = useState(false);
+
   useEffect(() => {
-    localStorage.setItem('bible-app-sermon-font', JSON.stringify(sermonFontSize));
+    setFontSizeInput(String(sermonFontSize));
   }, [sermonFontSize]);
 
-  // Auto-save with 2-second debounce
-  useEffect(() => {
-    if (!activeSermonId || !googleUserId) return;
-    setSaveStatus('unsaved');
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(async () => {
-      setSaveStatus('saving');
-      const titleToSave = editorTitle.trim() || '제목 없음';
-      await handleSaveSermon(activeSermonId, titleToSave, editorContent);
-      setSaveStatus('saved');
-    }, 2000);
-    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
-  }, [editorTitle, editorContent]);
+  const activeFontFamily = useMemo(() => {
+    const found = SERMON_FONTS.find(f => f.id === sermonFontId);
+    return found ? found.family : "'Noto Serif KR', Georgia, serif";
+  }, [sermonFontId]);
+
+  const editorAreaRef = useRef<HTMLDivElement>(null);
+  const savedSelectionRangeRef = useRef<Range | null>(null);
+
+  // 선택 영역 저장 (툴바 버튼 클릭 시 selection 풀림 방지)
+  const saveCurrentSelection = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      if (editorAreaRef.current && editorAreaRef.current.contains(range.commonAncestorContainer)) {
+        savedSelectionRangeRef.current = range.cloneRange();
+        return;
+      }
+    }
+  };
+
+  // 선택 영역 복원
+  const restoreSavedSelection = () => {
+    if (savedSelectionRangeRef.current) {
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(savedSelectionRangeRef.current);
+      }
+    }
+  };
+
+  // 블록 지정된 텍스트에 서식 적용 (또는 전체 폰트/크기 적용)
+  const applyFormattingToSelection = (type: 'font' | 'size' | 'bold' | 'italic' | 'underline' | 'color' | 'highlight', value?: string | number) => {
+    if (!editorAreaRef.current) return;
+    editorAreaRef.current.focus();
+    restoreSavedSelection();
+
+    const sel = window.getSelection();
+    const hasSelection = sel && !sel.isCollapsed && editorAreaRef.current.contains(sel.anchorNode);
+
+    if (hasSelection && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+
+      if (type === 'bold') {
+        document.execCommand('bold', false);
+      } else if (type === 'italic') {
+        document.execCommand('italic', false);
+      } else if (type === 'underline') {
+        document.execCommand('underline', false);
+      } else if (type === 'color' && typeof value === 'string') {
+        document.execCommand('foreColor', false, value);
+      } else if (type === 'font' && typeof value === 'string') {
+        document.execCommand('fontName', false, value);
+      } else if (type === 'size' && value) {
+        // 선택 영역을 span으로 감싸 명확한 px 크기 적용
+        const span = document.createElement('span');
+        span.style.fontSize = `${value}px`;
+        try {
+          span.appendChild(range.extractContents());
+          range.insertNode(span);
+          sel.removeAllRanges();
+          const newRange = document.createRange();
+          newRange.selectNodeContents(span);
+          sel.addRange(newRange);
+          savedSelectionRangeRef.current = newRange.cloneRange();
+        } catch (e) {
+          console.error(e);
+        }
+      } else if (type === 'highlight' && typeof value === 'string') {
+        if (value === 'transparent') {
+          document.execCommand('removeFormat', false);
+        } else {
+          // 형광펜: 글자 배경에 형광펜 패딩과 라운드 처리된 span 적용
+          const mark = document.createElement('span');
+          mark.style.backgroundColor = value;
+          mark.style.padding = '0.1em 0.25em';
+          mark.style.borderRadius = '3px';
+          mark.style.boxDecorationBreak = 'clone';
+          (mark.style as any).webkitBoxDecorationBreak = 'clone';
+          try {
+            mark.appendChild(range.extractContents());
+            range.insertNode(mark);
+            sel.removeAllRanges();
+            const newRange = document.createRange();
+            newRange.selectNodeContents(mark);
+            sel.addRange(newRange);
+            savedSelectionRangeRef.current = newRange.cloneRange();
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+    } else {
+      // 선택 영역이 없을 때: 폰트 종류나 기본 크기는 기본 상태로 저장
+      if (type === 'font' && typeof value === 'string') {
+        const found = SERMON_FONTS.find(f => f.family === value || f.id === value);
+        if (found) setSermonFontId(found.id);
+      } else if (type === 'size' && typeof value === 'number') {
+        setSermonFontSize(value);
+      } else if (type === 'color' && typeof value === 'string') {
+        document.execCommand('foreColor', false, value);
+      } else if (type === 'highlight' && typeof value === 'string') {
+        if (value === 'transparent') {
+          document.execCommand('removeFormat', false);
+        } else {
+          document.execCommand('hiliteColor', false, value);
+        }
+      } else if (type === 'bold') {
+        document.execCommand('bold', false);
+      } else if (type === 'italic') {
+        document.execCommand('italic', false);
+      } else if (type === 'underline') {
+        document.execCommand('underline', false);
+      }
+    }
+
+    // 에디터 내용 동기화 및 훅에 변경 통지 (Local-First 0.3s 캐싱 + 60s 스로틀)
+    if (editorAreaRef.current) {
+      const updatedHtml = editorAreaRef.current.innerHTML;
+      setEditorContent(updatedHtml);
+      const targetFontId = (type === 'font' && typeof value === 'string') 
+        ? (SERMON_FONTS.find(f => f.family === value || f.id === value)?.id || sermonFontId) 
+        : sermonFontId;
+      const targetFontSize = (type === 'size' && typeof value === 'number') ? value : sermonFontSize;
+
+      notifyChange(editorTitle, updatedHtml, {
+        fontId: targetFontId,
+        fontSize: targetFontSize,
+        autoVerseConversion: isAutoVerseEnabled,
+      });
+    }
+  };
+
+  // 에디터 마우스/키보드 선택 감지
+  const handleSelectionChange = () => {
+    saveCurrentSelection();
+  };
+
+  // ── 성경 구절 인식 및 인라인 칩 변환 함수군 ──
+  const convertTextNodeToBibleChips = (textNode: Text): { changed: boolean; lastChip: HTMLElement | null } => {
+    const text = textNode.nodeValue;
+    if (!text) return { changed: false, lastChip: null };
+
+    // 이미 변환된 chip 내부나 인용 카드 내부인 경우 제외
+    if (textNode.parentElement?.closest('.bible-verse-chip, .bible-verse-quote-card')) {
+      return { changed: false, lastChip: null };
+    }
+
+    const matches = matchBibleReferences(text);
+    if (matches.length === 0) return { changed: false, lastChip: null };
+
+    const parent = textNode.parentNode;
+    if (!parent) return { changed: false, lastChip: null };
+
+    const frag = document.createDocumentFragment();
+    let lastIndex = 0;
+    let lastChipNode: HTMLElement | null = null;
+
+    for (const match of matches) {
+      const matchIndex = text.indexOf(match.rawMatch, lastIndex);
+      if (matchIndex === -1) continue;
+
+      if (matchIndex > lastIndex) {
+        frag.appendChild(document.createTextNode(text.substring(lastIndex, matchIndex)));
+      }
+
+      // 칩 앞에 빈 텍스트(또는 zero-width space)를 확보하여 줄 맨 앞에서도 커서가 위치하고 글자를 적을 수 있도록 지원
+      if (matchIndex === 0 && lastIndex === 0) {
+        frag.appendChild(document.createTextNode('\u200B'));
+      }
+
+      const chipSpan = document.createElement('span');
+      chipSpan.className = 'bible-verse-chip';
+      chipSpan.contentEditable = 'false';
+      chipSpan.setAttribute('data-book-id', match.bookId);
+      chipSpan.setAttribute('data-chapter', String(match.chapter));
+      chipSpan.setAttribute('data-start-verse', String(match.startVerse));
+      if (match.endVerse) {
+        chipSpan.setAttribute('data-end-verse', String(match.endVerse));
+      }
+      chipSpan.setAttribute('data-ref-text', match.standardLabel);
+      chipSpan.title = '클릭하여 성경 본문 펼치기';
+      chipSpan.innerHTML = match.standardLabel;
+      frag.appendChild(chipSpan);
+
+      // 칩 뒤 공백 노드
+      frag.appendChild(document.createTextNode('\u00A0'));
+      lastChipNode = chipSpan;
+
+      lastIndex = matchIndex + match.rawMatch.length;
+    }
+
+    if (lastIndex < text.length) {
+      frag.appendChild(document.createTextNode(text.substring(lastIndex)));
+    }
+
+    parent.replaceChild(frag, textNode);
+    return { changed: true, lastChip: lastChipNode };
+  };
+
+  const scanAndConvertAllBibleReferences = (root: Node): boolean => {
+    let anyChanged = false;
+    const walker = document.createTreeWalker(
+      root,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: (node) => {
+          if (node.parentElement?.closest('.bible-verse-chip, .bible-verse-quote-card')) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
+
+    const textNodes: Text[] = [];
+    let cur = walker.nextNode();
+    while (cur) {
+      textNodes.push(cur as Text);
+      cur = walker.nextNode();
+    }
+
+    for (const tn of textNodes) {
+      const res = convertTextNodeToBibleChips(tn);
+      if (res.changed) anyChanged = true;
+    }
+
+    return anyChanged;
+  };
+
+  // 타이핑 중 스페이스바/엔터 감지 및 구절칩 앞 커서 제어
+  const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // 1. 엔터 키 입력 시 구절칩 바로 앞인 경우 줄바꿈 및 커서 진입 처리
+    if (e.key === 'Enter') {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && editorAreaRef.current) {
+        const range = sel.getRangeAt(0);
+        let node: Node | null = range.startContainer;
+        const offset = range.startOffset;
+
+        let nextSibling: Node | null = null;
+        if (node.nodeType === Node.TEXT_NODE) {
+          if (offset === (node.nodeValue?.length || 0)) {
+            nextSibling = node.nextSibling;
+          }
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          nextSibling = node.childNodes[offset] || null;
+        }
+
+        if (nextSibling && (nextSibling as HTMLElement).classList?.contains('bible-verse-chip')) {
+          e.preventDefault();
+          const chipNode = nextSibling;
+          const br = document.createElement('br');
+          const spaceBefore = document.createTextNode('\u200B');
+          const parent = chipNode.parentNode;
+          if (parent) {
+            parent.insertBefore(br, chipNode);
+            parent.insertBefore(spaceBefore, chipNode);
+
+            const newRange = document.createRange();
+            newRange.setStart(spaceBefore, 0);
+            newRange.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(newRange);
+
+            const updatedHtml = editorAreaRef.current.innerHTML;
+            setEditorContent(updatedHtml);
+            notifyChange(editorTitle, updatedHtml);
+            return;
+          }
+        }
+      }
+    }
+
+    if (e.key === ' ' || e.key === 'Enter') {
+      setTimeout(() => {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0 || !editorAreaRef.current) return;
+        const range = sel.getRangeAt(0);
+        let node: Node | null = range.startContainer;
+
+        let targetTextNode: Text | null = null;
+        if (node && node.nodeType === Node.TEXT_NODE) {
+          targetTextNode = node as Text;
+        } else if (node && node.previousSibling && node.previousSibling.nodeType === Node.TEXT_NODE) {
+          targetTextNode = node.previousSibling as Text;
+        }
+
+        // 구절자동변환이 ON일 때만 타이핑 중 자동 변환 수행
+        if (targetTextNode && isAutoVerseEnabled) {
+          const res = convertTextNodeToBibleChips(targetTextNode);
+          if (res.changed && editorAreaRef.current) {
+            if (res.lastChip && res.lastChip.nextSibling) {
+              const newRange = document.createRange();
+              newRange.setStart(res.lastChip.nextSibling, (res.lastChip.nextSibling.nodeValue?.length || 1));
+              newRange.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(newRange);
+            }
+            const updatedHtml = editorAreaRef.current.innerHTML;
+            setEditorContent(updatedHtml);
+            notifyChange(editorTitle, updatedHtml, {
+              fontId: sermonFontId,
+              fontSize: sermonFontSize,
+              autoVerseConversion: isAutoVerseEnabled,
+            });
+          }
+        }
+
+        // 엔터 후 줄 맨 앞에 구절칩이 있는 경우 커서 진입을 위한 공백 확보
+        if (editorAreaRef.current) {
+          const chips = editorAreaRef.current.querySelectorAll('.bible-verse-chip');
+          chips.forEach(chip => {
+            const prev = chip.previousSibling;
+            if (!prev || (prev.nodeType === Node.TEXT_NODE && (prev.nodeValue === '' || prev.nodeValue === '\n'))) {
+              const textNode = document.createTextNode('\u200B');
+              chip.parentNode?.insertBefore(textNode, chip);
+            }
+          });
+        }
+      }, 10);
+    }
+  };
+
+  // 구절 칩 클릭 시 로컬 DB 본문 토글 펼치기 및 카드 닫기
+  const handleEditorClick = async (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+
+    // 1. 인용 카드 닫기(✕)
+    const closeBtn = target.closest('.bible-verse-quote-close');
+    if (closeBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const card = closeBtn.closest('.bible-verse-quote-card');
+      if (card && editorAreaRef.current) {
+        card.remove();
+        const updatedHtml = editorAreaRef.current.innerHTML;
+        setEditorContent(updatedHtml);
+        notifyChange(editorTitle, updatedHtml);
+      }
+      return;
+    }
+
+    // 2. 구절 칩 클릭
+    const chip = target.closest('.bible-verse-chip') as HTMLElement | null;
+    if (chip && editorAreaRef.current) {
+      // 칩의 왼쪽 가장자리(8px 이내) 클릭 시 토글 대신 앞쪽으로 커서 진입
+      const rect = chip.getBoundingClientRect();
+      if (e.clientX - rect.left < 8) {
+        let prev = chip.previousSibling;
+        if (!prev || prev.nodeType !== Node.TEXT_NODE) {
+          prev = document.createTextNode('\u200B');
+          chip.parentNode?.insertBefore(prev, chip);
+        }
+        const sel = window.getSelection();
+        if (sel) {
+          const newRange = document.createRange();
+          newRange.setStart(prev, (prev.nodeValue?.length || 0));
+          newRange.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+        }
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const bookId = chip.getAttribute('data-book-id');
+      const chapter = parseInt(chip.getAttribute('data-chapter') || '1', 10);
+      const startVerse = parseInt(chip.getAttribute('data-start-verse') || '1', 10);
+      const endVerseAttr = chip.getAttribute('data-end-verse');
+      const endVerse = endVerseAttr ? parseInt(endVerseAttr, 10) : undefined;
+      const refText = chip.getAttribute('data-ref-text') || '';
+
+      if (!bookId) return;
+
+      // 이미 열려있는지 확인 (토글 접기)
+      let nextElem: Element | null = chip.nextElementSibling;
+      while (nextElem && nextElem.nodeType === Node.TEXT_NODE) {
+        nextElem = nextElem.nextElementSibling;
+      }
+      if (nextElem && nextElem.classList.contains('bible-verse-quote-card') && nextElem.getAttribute('data-for-ref') === refText) {
+        // 닫기 전 형광펜, 색상 등 사용자가 수정한 본문 카드 내용을 구절칩의 data 속성에 보존
+        chip.setAttribute('data-saved-card-html', encodeURIComponent(nextElem.outerHTML));
+        nextElem.remove();
+        const updatedHtml = editorAreaRef.current.innerHTML;
+        setEditorContent(updatedHtml);
+        notifyChange(editorTitle, updatedHtml);
+        return;
+      }
+
+      const parentBlock = chip.closest('p, div, li');
+      if (parentBlock && parentBlock !== editorAreaRef.current) {
+        let nextBlock = parentBlock.nextElementSibling;
+        if (nextBlock && nextBlock.classList.contains('bible-verse-quote-card') && nextBlock.getAttribute('data-for-ref') === refText) {
+          // 닫기 전 수정한 본문 카드 내용을 구절칩에 보존
+          chip.setAttribute('data-saved-card-html', encodeURIComponent(nextBlock.outerHTML));
+          nextBlock.remove();
+          const updatedHtml = editorAreaRef.current.innerHTML;
+          setEditorContent(updatedHtml);
+          notifyChange(editorTitle, updatedHtml);
+          return;
+        }
+      }
+
+      // 카드 다시 열기: 이전에 수정한 본문 카드가 저장되어 있으면 해당 서식(형광펜, 색상 등) 그대로 복원
+      const savedCardHtml = chip.getAttribute('data-saved-card-html');
+      if (savedCardHtml) {
+        try {
+          const decodedHtml = decodeURIComponent(savedCardHtml);
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = decodedHtml.trim();
+          const cardNode = tempDiv.firstElementChild;
+          if (cardNode && editorAreaRef.current) {
+            if (parentBlock && parentBlock !== editorAreaRef.current && parentBlock.parentElement === editorAreaRef.current) {
+              parentBlock.insertAdjacentElement('afterend', cardNode);
+            } else {
+              chip.insertAdjacentElement('afterend', cardNode);
+            }
+            const updatedHtml = editorAreaRef.current.innerHTML;
+            setEditorContent(updatedHtml);
+            notifyChange(editorTitle, updatedHtml);
+            return;
+          }
+        } catch (e) {
+          console.warn('[SermonSidebar] 저장된 카드 복원 실패, 로컬 DB에서 다시 로드:', e);
+        }
+      }
+
+      // 저장된 카드가 없으면 로컬 DB(IndexedDB bibleDB)에서 구절 로드 (외부 API/Firestore 절대 조회 안 함)
+      try {
+        const verseResult = await getVersesFromLocalDB(bookId, chapter, startVerse, endVerse);
+        if (verseResult && editorAreaRef.current) {
+          const quoteHtml = createVerseQuoteHtml(verseResult);
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = quoteHtml.trim();
+          const cardNode = tempDiv.firstElementChild;
+
+          if (cardNode) {
+            if (parentBlock && parentBlock !== editorAreaRef.current && parentBlock.parentElement === editorAreaRef.current) {
+              parentBlock.insertAdjacentElement('afterend', cardNode);
+            } else {
+              chip.insertAdjacentElement('afterend', cardNode);
+            }
+
+            const updatedHtml = editorAreaRef.current.innerHTML;
+            setEditorContent(updatedHtml);
+            notifyChange(editorTitle, updatedHtml);
+          }
+        }
+      } catch (err) {
+        console.warn('[SermonSidebar] 로컬 구절 본문 펼치기 실패:', err);
+      }
+    }
+  };
+
+  // 구절자동변환 토글 핸들러: 누르면 활성화/해제 및 활성화 시 현재 텍스트 일괄 변환
+  const handleToggleAutoVerse = () => {
+    const nextState = !isAutoVerseEnabled;
+    setIsAutoVerseEnabled(nextState);
+
+    let updatedHtml = editorContent;
+    if (nextState && editorAreaRef.current) {
+      // ON으로 변경 시 작성된 텍스트 중 구절이 있으면 즉시 일괄 변환
+      const changed = scanAndConvertAllBibleReferences(editorAreaRef.current);
+      if (changed) {
+        updatedHtml = editorAreaRef.current.innerHTML;
+        setEditorContent(updatedHtml);
+      }
+    }
+
+    notifyChange(editorTitle, updatedHtml, {
+      fontId: sermonFontId,
+      fontSize: sermonFontSize,
+      autoVerseConversion: nextState,
+    });
+  };
+
+  const handleEditorBlur = () => {
+    if (!editorAreaRef.current || !isAutoVerseEnabled) return;
+    const changed = scanAndConvertAllBibleReferences(editorAreaRef.current);
+    if (changed) {
+      const updatedHtml = editorAreaRef.current.innerHTML;
+      setEditorContent(updatedHtml);
+      notifyChange(editorTitle, updatedHtml, {
+        fontId: sermonFontId,
+        fontSize: sermonFontSize,
+        autoVerseConversion: isAutoVerseEnabled,
+      });
+    }
+  };
+
+  const handleEditorPaste = () => {
+    setTimeout(() => {
+      if (!editorAreaRef.current || !isAutoVerseEnabled) return;
+      const changed = scanAndConvertAllBibleReferences(editorAreaRef.current);
+      if (changed) {
+        const updatedHtml = editorAreaRef.current.innerHTML;
+        setEditorContent(updatedHtml);
+        notifyChange(editorTitle, updatedHtml, {
+          fontId: sermonFontId,
+          fontSize: sermonFontSize,
+          autoVerseConversion: isAutoVerseEnabled,
+        });
+      }
+    }, 20);
+  };
+
+  // 복사 시 애플 메모, 한글, 구글 독스 등에 글자 크기, 굵기, 색상, 형광펜 등이 그대로 유지되도록 HTML 및 Text 클립보드 데이터 생성
+  const buildClipboardPayload = (container: HTMLElement) => {
+    const clone = container.cloneNode(true) as HTMLElement;
+
+    // 1. 구절칩 처리: 외곽선/배경/글자색 인라인 스타일 지정하여 외부 문서 붙여넣기 시 칩 형태 및 서식 보존
+    clone.querySelectorAll('.bible-verse-chip').forEach(chip => {
+      const refText = chip.getAttribute('data-ref-text') || chip.textContent || '';
+      const chipEl = chip as HTMLElement;
+      chipEl.style.display = 'inline-block';
+      chipEl.style.padding = '2px 6px';
+      chipEl.style.margin = '2px 4px';
+      chipEl.style.backgroundColor = '#FFFFFF';
+      chipEl.style.color = '#2C2B29';
+      chipEl.style.border = '1px solid rgba(0, 0, 0, 0.2)';
+      chipEl.style.borderRadius = '4px';
+      chipEl.style.fontSize = '0.85em';
+      chipEl.style.fontWeight = 'bold';
+      chipEl.style.textDecoration = 'none';
+      chipEl.textContent = refText;
+    });
+
+    // 2. 본문 인용 카드 처리: 인라인 스타일로 변환하여 외부 문서에서도 동일한 스타일 유지
+    clone.querySelectorAll('.bible-verse-quote-card').forEach(card => {
+      const cardEl = card as HTMLElement;
+      cardEl.style.display = 'block';
+      cardEl.style.margin = '8px 0';
+      cardEl.style.padding = '8px 12px';
+      cardEl.style.backgroundColor = '#FFFFFF';
+      cardEl.style.border = '1px solid #E5E0D8';
+      cardEl.style.borderRadius = '8px';
+      cardEl.style.fontSize = '0.85em';
+    });
+    clone.querySelectorAll('.bible-quote-line').forEach(line => {
+      const lineEl = line as HTMLElement;
+      lineEl.style.margin = '2px 0';
+      lineEl.style.lineHeight = '1.6';
+    });
+    clone.querySelectorAll('.bible-verse-quote-card span').forEach(span => {
+      const spanEl = span as HTMLElement;
+      if (spanEl.textContent?.includes('절')) {
+        spanEl.style.color = '#C96442';
+        spanEl.style.fontWeight = 'bold';
+        spanEl.style.marginRight = '6px';
+      }
+    });
+
+    // 3. 에디터 기본 폰트 및 크기 래핑
+    const wrapper = document.createElement('div');
+    wrapper.style.fontFamily = activeFontFamily;
+    wrapper.style.fontSize = `${sermonFontSize}px`;
+    wrapper.style.lineHeight = '1.7';
+    wrapper.style.color = '#2C2B29';
+    wrapper.innerHTML = clone.innerHTML;
+
+    // 순수 텍스트 추출용
+    const plainTextClone = container.cloneNode(true) as HTMLElement;
+    plainTextClone.querySelectorAll('.bible-verse-chip').forEach(chip => {
+      const refText = chip.getAttribute('data-ref-text') || chip.textContent || '';
+      const textNode = document.createTextNode(` ${refText} `);
+      chip.parentNode?.replaceChild(textNode, chip);
+    });
+    const plainText = plainTextClone.innerText || plainTextClone.textContent || '';
+
+    return {
+      html: wrapper.outerHTML,
+      text: plainText,
+    };
+  };
+
+  const handleEditorCopy = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+
+    // 선택 영역이 있을 때: 선택 영역의 DOM을 복제하여 서식을 인라인화한 후 클립보드에 전달
+    const range = sel.getRangeAt(0);
+    const tempDiv = document.createElement('div');
+    tempDiv.appendChild(range.cloneContents());
+
+    const { html, text } = buildClipboardPayload(tempDiv);
+    e.clipboardData.setData('text/html', html);
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
+  };
 
   const [isResizing, setIsResizing] = useState(false);
 
@@ -301,7 +1056,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
         let score = 0;
         // 1) 제목이나 본문 텍스트에 포함
         if (s.title.toLowerCase().includes(q)) score = Math.max(score, 1);
-        if (s.content && s.content.toLowerCase().includes(q)) score = Math.max(score, 1);
+        if (s.content && stripHtml(s.content).toLowerCase().includes(q)) score = Math.max(score, 1);
 
         // 2) 성경 구절 스마트 매칭 (예: '마 1 6', '마태 1:6', '롬 8:28')
         if (parsedQuery && s.extractedBook) {
@@ -343,8 +1098,33 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     setActiveSermonId(id);
     setView('editor');
     const sermon = sermons.find(s => s.id === id);
-    setEditorTitle(sermon?.title || '');
-    setEditorContent(sermon?.content || '');
+    const title = sermon?.title || '';
+    const content = sermon?.content || '';
+    const fontId = sermon?.fontId || 'noto-serif';
+    const fontSize = typeof sermon?.fontSize === 'number' ? sermon.fontSize : 16;
+    const autoVerse = sermon?.autoVerseConversion !== undefined ? sermon.autoVerseConversion : true;
+
+    setEditorTitle(title);
+    setEditorContent(content);
+    setSermonFontId(fontId);
+    setSermonFontSize(fontSize);
+    setIsAutoVerseEnabled(autoVerse);
+
+    resetSyncState({ 
+      id, 
+      title, 
+      content, 
+      version: sermon?.version || 1,
+      fontId,
+      fontSize,
+      autoVerseConversion: autoVerse,
+    });
+
+    setTimeout(() => {
+      if (editorAreaRef.current) {
+        editorAreaRef.current.innerHTML = content;
+      }
+    }, 50);
   };
 
   const createNewEditor = () => {
@@ -353,6 +1133,24 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     setView('editor');
     setEditorTitle('');
     setEditorContent('');
+    setSermonFontId('noto-serif');
+    setSermonFontSize(16);
+    setIsAutoVerseEnabled(true);
+
+    resetSyncState({ 
+      id: newId, 
+      title: '', 
+      content: '', 
+      version: 1,
+      fontId: 'noto-serif',
+      fontSize: 16,
+      autoVerseConversion: true,
+    });
+    setTimeout(() => {
+      if (editorAreaRef.current) {
+        editorAreaRef.current.innerHTML = '';
+      }
+    }, 50);
   };
 
   useEffect(() => {
@@ -360,22 +1158,76 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
       if (view === 'list') {
         openEditor(`new-${Date.now()}`);
       }
-      setEditorContent(prev => prev ? prev + '\n\n' + clipboardText : clipboardText);
+      setEditorContent(prev => {
+        const next = prev ? prev + '<br><br>' + clipboardText : clipboardText;
+        if (editorAreaRef.current) {
+          editorAreaRef.current.innerHTML = next;
+        }
+        notifyChange(editorTitle, next);
+        return next;
+      });
       onCollapseChange(false);
       onClipboardTextProcessed?.();
     }
   }, [clipboardText, view, onClipboardTextProcessed, onCollapseChange]);
 
-  const handleClose = () => {
-    if (view === 'editor') {
-      if (window.confirm("작성 중인 내용을 임시 저장하고 닫으시겠습니까?")) {
-        onClose();
-        onCollapseChange(false);
+  // 작성 중인 에디터 내용을 로컬 설교 목록에 즉시 동기화 (기기 무제한 보관)
+  const syncCurrentEditorToLocalSermons = () => {
+    if (!activeSermonId) return;
+    const titleToSave = editorTitle.trim() || '제목 없음';
+    const currentDate = new Date().toISOString().split('T')[0];
+    setSermons(prev => {
+      const exists = prev.some(s => s.id === activeSermonId);
+      let next: Sermon[];
+      if (exists) {
+        next = prev.map(s => s.id === activeSermonId ? {
+          ...s,
+          title: titleToSave,
+          content: editorContent,
+          date: s.date || currentDate,
+          updatedAt: Date.now(),
+          fontId: sermonFontId,
+          fontSize: sermonFontSize,
+          autoVerseConversion: isAutoVerseEnabled,
+        } : s);
+      } else {
+        next = [{
+          id: activeSermonId,
+          title: titleToSave,
+          content: editorContent,
+          date: currentDate,
+          updatedAt: Date.now(),
+          fontId: sermonFontId,
+          fontSize: sermonFontSize,
+          autoVerseConversion: isAutoVerseEnabled,
+        }, ...prev];
       }
+      saveSermonsToLocal(next);
+      if (googleUserId) {
+        updateUserResourceCounts(googleUserId, { sermonCount: next.length });
+      }
+      return next;
+    });
+  };
+
+  const handleClose = async () => {
+    if (view === 'editor') {
+      await flushSave();
+      syncCurrentEditorToLocalSermons();
+      onClose();
+      onCollapseChange(false);
     } else {
       onClose();
       onCollapseChange(false);
     }
+  };
+
+  const handleBackToList = async () => {
+    if (view === 'editor') {
+      await flushSave();
+      syncCurrentEditorToLocalSermons();
+    }
+    setView('list');
   };
 
   const getContainerClasses = () => {
@@ -615,43 +1467,43 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
               }
             }}
           >
-            <div className="flex items-center gap-1.5 relative z-[110]">
+            <div className="flex items-center gap-1.5 relative z-[110] shrink-0">
               {isMobile ? (
                 <>
                   <button 
                     onClick={handleClose}
-                    className="flex items-center gap-1 px-2 py-1 bg-white hover:bg-[#EAE4DA] rounded-lg transition-colors text-xs font-semibold text-[#6A6864] hover:text-[#2C2B29] mr-0.5 shadow-2xs cursor-pointer"
+                    className="flex items-center gap-1 px-2 py-1 bg-white hover:bg-[#EAE4DA] rounded-lg transition-colors text-xs font-semibold text-[#6A6864] hover:text-[#2C2B29] mr-0.5 shadow-2xs cursor-pointer whitespace-nowrap"
                     title="성경 본문으로 돌아가기"
                   >
-                    <ArrowLeft className="w-4 h-4 stroke-[2px]" />
+                    <ArrowLeft className="w-4 h-4 stroke-[2px] shrink-0" />
                     <span>본문으로</span>
                   </button>
                   {view === 'editor' && (
                     <button 
-                      onClick={() => setView('list')}
-                      className="flex items-center gap-0.5 px-1.5 py-1 hover:bg-white rounded-lg transition-colors text-xs font-medium text-[#6A6864] hover:text-[#2C2B29] cursor-pointer"
+                      onClick={handleBackToList}
+                      className="flex items-center gap-0.5 px-1.5 py-1 hover:bg-white rounded-lg transition-colors text-xs font-medium text-[#6A6864] hover:text-[#2C2B29] cursor-pointer whitespace-nowrap"
                       title="설교노트 목록으로"
                     >
-                      <ChevronLeft className="w-3.5 h-3.5 stroke-[1.5px]" />
+                      <ChevronLeft className="w-3.5 h-3.5 stroke-[1.5px] shrink-0" />
                       <span>목록</span>
                     </button>
                   )}
                 </>
               ) : (
                 <button 
-                  onClick={view === 'editor' ? () => setView('list') : handleClose}
+                  onClick={view === 'editor' ? handleBackToList : handleClose}
                   className="p-1 hover:bg-white rounded-lg transition-colors text-[#6A6864] hover:text-[#2C2B29] cursor-pointer"
                   title="뒤로가기"
                 >
                   <ChevronLeft className="w-4 h-4 stroke-[1.5px]" />
                 </button>
               )}
-              <h2 className="text-base font-serif font-bold text-[#2C2B29] flex items-center gap-1.5 truncate">
+              <h2 className="hidden sm:flex text-base font-serif font-bold text-[#2C2B29] items-center gap-1.5 truncate">
                 <FileEdit className="w-4 h-4 text-[#2C2B29] stroke-[1.5px] shrink-0" />
                 <span className="truncate">{view === 'editor' ? '설교노트' : '설교노트 목록'}</span>
               </h2>
             </div>
-            <div className="flex items-center gap-2 relative z-[110]">
+            <div className="flex items-center gap-1.5 sm:gap-2 relative z-[110] shrink-0">
               
               {/* Docking Controls */}
               <div className="hidden sm:flex items-center bg-white rounded-xl border border-[#E7E5DF] p-0.5 shadow-2xs mr-1">
@@ -661,34 +1513,41 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
               </div>
 
               {view === 'editor' && (
-                <div className="flex items-center gap-2">
-                  {saveStatus === 'saved' && (
-                    <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5">
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  {syncStatus === 'saved' && (
+                    <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5 whitespace-nowrap">
                       <span>✓</span> 저장됨
                     </span>
                   )}
-                  {saveStatus === 'saving' && (
-                    <span className="text-[10px] text-[#A3A19B] font-semibold animate-pulse">
-                      저장 중...
+                  {syncStatus === 'saving' && (
+                    <span className="text-[10px] text-[#C96442] font-semibold animate-pulse whitespace-nowrap">
+                      동기화 중...
                     </span>
                   )}
-                  {saveStatus === 'unsaved' && (
-                    <span className="text-[10px] text-[#D97706] font-semibold">
-                      저장 필요
+                  {syncStatus === 'unsaved' && (
+                    <span className="text-[10px] text-[#8C877D] font-semibold flex items-center gap-0.5 whitespace-nowrap bg-[#F5F3ED] px-1.5 py-0.5 rounded">
+                      <span>✓</span> 로컬보관
                     </span>
                   )}
-                  <button 
-                    onClick={async () => {
-                      if (activeSermonId) {
-                        setSaveStatus('saving');
-                        const titleToSave = editorTitle.trim() || '제목 없음';
-                        await handleSaveSermon(activeSermonId, titleToSave, editorContent);
-                        setSaveStatus('saved');
-                      }
-                    }}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-[#C96442] hover:bg-[#B55434] active:bg-[#A3472A] text-white rounded-xl transition-colors font-semibold text-xs shadow-2xs">
-                    <Save className="w-3.5 h-3.5 stroke-[1.5px]" /> 저장
-                  </button>
+                  {syncStatus === 'offline' && (
+                    <span className="text-[10px] text-[#D97706] font-semibold whitespace-nowrap">
+                      오프라인 보관
+                    </span>
+                  )}
+                  <div className="flex flex-col items-end">
+                    <button 
+                      onClick={async () => {
+                        if (activeSermonId) {
+                          await flushSave();
+                        }
+                      }}
+                      className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 bg-[#C96442] hover:bg-[#B55434] active:bg-[#A3472A] text-white rounded-lg sm:rounded-xl transition-colors font-semibold text-xs shadow-2xs cursor-pointer whitespace-nowrap">
+                      <Save className="w-3.5 h-3.5 stroke-[1.5px]" /> 저장
+                    </button>
+                    <span className="text-[9.5px] text-[#2C2B29] font-medium tracking-tight mt-0.5 whitespace-nowrap select-none origin-right">
+                      설교를 서버에 저장하세요
+                    </span>
+                  </div>
                 </div>
               )}
               <button onClick={handleClose} className="p-1 hover:bg-[#FAF0EB] hover:text-[#C96442] rounded-lg transition-colors text-[#A3A19B]">
@@ -696,6 +1555,19 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
               </button>
             </div>
           </div>
+
+          {/* 알림 토스트 배너 (충돌 복사본 분기 안내 및 원격 최신 갱신 알림) */}
+          {syncToastMessage && (
+            <div className="px-4 py-2 bg-[#FAF0EB] border-b border-[#F1D3C6] text-[#C96442] text-xs font-medium flex items-center justify-between shrink-0 animate-in fade-in duration-200">
+              <span className="leading-snug">{syncToastMessage}</span>
+              <button 
+                onClick={() => setSyncToastMessage(null)}
+                className="p-1 hover:bg-[#F2DDD1] rounded text-[#B85332] font-bold ml-2 text-xs shrink-0 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {view === 'list' ? (
             // --- LIST VIEW ---
@@ -777,7 +1649,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                           </h3>
                           <div className="flex items-center justify-between gap-2 mt-1">
                             <p className="text-[11px] text-[#6A6864] line-clamp-1 font-serif flex-1 min-w-0">
-                              {s.content ? s.content.replace(/[#*`\n]/g, ' ').trim() : ''}
+                              {stripHtml(s.content)}
                             </p>
                             <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1">
                               <Calendar className="w-3 h-3 stroke-[1.5px]" /> {s.date}
@@ -843,7 +1715,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                                     </h4>
                                     <div className="flex items-center justify-between gap-2 mt-1">
                                       <p className="text-[10px] text-[#6A6864] line-clamp-1 font-serif flex-1 min-w-0">
-                                        {s.content ? s.content.replace(/[#*`\n]/g, ' ').trim() : ''}
+                                        {stripHtml(s.content)}
                                       </p>
                                       <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1">
                                         <Calendar className="w-2.5 h-2.5" /> {s.date}
@@ -901,7 +1773,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                                   </h4>
                                   <div className="flex items-center justify-between gap-2 mt-1">
                                     <p className="text-[10px] text-[#6A6864] line-clamp-1 font-serif flex-1 min-w-0">
-                                      {s.content ? s.content.replace(/[#*`\n]/g, ' ').trim() : ''}
+                                      {stripHtml(s.content)}
                                     </p>
                                     <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1">
                                       <Calendar className="w-2.5 h-2.5" /> {s.date}
@@ -930,57 +1802,390 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
           ) : (
             // --- EDITOR VIEW ---
             <div className="flex-1 flex flex-col min-h-0 bg-[#FAF9F5] relative">
-              <div className="flex items-center justify-between px-4 py-1.5 bg-white border-b border-[#E7E5DF]">
-                <div className="flex items-center gap-1">
-                  <button onClick={() => setSermonFontSize(prev => Math.max(10, prev - 1))} className="p-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] transition-colors" title="글자 작게">
-                    <div className="flex items-center"><Type className="w-3 h-3 stroke-[1.5px]" /><Minus className="w-2.5 h-2.5 stroke-[1.5px]" /></div>
-                  </button>
-                  <span className="text-xs font-semibold text-[#A3A19B] min-w-4 text-center">{sermonFontSize}</span>
-                  <button onClick={() => setSermonFontSize(prev => Math.min(30, prev + 1))} className="p-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] transition-colors" title="글자 크게">
-                    <div className="flex items-center"><Type className="w-3.5 h-3.5 stroke-[1.5px]" /><Plus className="w-2.5 h-2.5 stroke-[1.5px]" /></div>
-                  </button>
+              {/* --- 상단 폰트 및 서식 툴바 --- */}
+              <div className="flex flex-wrap items-center justify-between gap-1.5 px-3 py-1.5 bg-white border-b border-[#E7E5DF] text-[#2C2B29] relative z-20">
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                  
+                  {/* 1. 폰트명 드롭다운 (5가지 선택) */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsFontDropdownOpen(!isFontDropdownOpen);
+                        setIsColorDropdownOpen(false);
+                        setIsHighlightDropdownOpen(false);
+                      }}
+                      className="flex items-center gap-1 h-7 px-2 bg-[#FAF9F5] hover:bg-[#F0EEE9] border border-[#E7E5DF] rounded-md text-xs font-medium transition-colors"
+                      title="글꼴 변경"
+                    >
+                      <span className="truncate max-w-[100px] sm:max-w-[120px]">
+                        {SERMON_FONTS.find(f => f.id === sermonFontId)?.name.split(' ')[0] || '본명조'}
+                      </span>
+                      <ChevronDown className="w-3 h-3 text-[#6A6864] shrink-0" />
+                    </button>
+                    {isFontDropdownOpen && (
+                      <>
+                        <div className="fixed inset-0 z-30" onClick={() => setIsFontDropdownOpen(false)} />
+                        <div className="absolute left-0 top-full mt-1 w-44 bg-white border border-[#E7E5DF] rounded-lg shadow-lg z-40 py-1">
+                          {SERMON_FONTS.map(font => (
+                            <button
+                              key={font.id}
+                              type="button"
+                              onClick={() => {
+                                setSermonFontId(font.id);
+                                applyFormattingToSelection('font', font.family);
+                                setIsFontDropdownOpen(false);
+                              }}
+                              style={{ fontFamily: font.family }}
+                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#FAF9F5] flex items-center justify-between transition-colors ${sermonFontId === font.id ? 'text-[#C96442] font-bold bg-[#FAF0EB]' : 'text-[#2C2B29]'}`}
+                            >
+                              <span>{font.name}</span>
+                              {sermonFontId === font.id && <span className="text-[10px]">✓</span>}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* 구분선 */}
+                  <div className="w-[1px] h-4 bg-[#E7E5DF]" />
+
+                  {/* 2. 폰트 크기 직접 입력창 및 위/아래 화살표 버튼 */}
+                  <div className="flex items-center border border-[#E7E5DF] rounded-md bg-[#FAF9F5] h-7 overflow-hidden">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={fontSizeInput}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFontSizeInput(val);
+                        const num = parseInt(val, 10);
+                        if (!isNaN(num) && num >= 8 && num <= 60) {
+                          setSermonFontSize(num);
+                          applyFormattingToSelection('size', num);
+                        }
+                      }}
+                      onBlur={() => {
+                        const num = parseInt(fontSizeInput, 10);
+                        if (isNaN(num) || num < 8) {
+                          setSermonFontSize(10);
+                          setFontSizeInput('10');
+                          applyFormattingToSelection('size', 10);
+                        } else if (num > 60) {
+                          setSermonFontSize(60);
+                          setFontSizeInput('60');
+                          applyFormattingToSelection('size', 60);
+                        }
+                      }}
+                      className="w-8 text-center text-xs font-semibold bg-transparent outline-none text-[#2C2B29]"
+                      title="폰트 크기 직접 입력 (8~60)"
+                    />
+                    <div className="flex flex-col border-l border-[#E7E5DF] h-full">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = Math.min(60, sermonFontSize + 1);
+                          setSermonFontSize(next);
+                          setFontSizeInput(String(next));
+                          applyFormattingToSelection('size', next);
+                        }}
+                        className="h-3.5 px-1 hover:bg-[#E7E5DF] flex items-center justify-center text-[#6A6864] transition-colors"
+                        title="폰트 크기 증가"
+                      >
+                        <ChevronUp className="w-2.5 h-2.5 stroke-[2px]" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = Math.max(8, sermonFontSize - 1);
+                          setSermonFontSize(next);
+                          setFontSizeInput(String(next));
+                          applyFormattingToSelection('size', next);
+                        }}
+                        className="h-3.5 px-1 hover:bg-[#E7E5DF] flex items-center justify-center border-t border-[#E7E5DF] text-[#6A6864] transition-colors"
+                        title="폰트 크기 감소"
+                      >
+                        <ChevronDown className="w-2.5 h-2.5 stroke-[2px]" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 구분선 */}
+                  <div className="w-[1px] h-4 bg-[#E7E5DF]" />
+
+                  {/* 3. 굵은A, 기울인A, 밑줄A */}
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); }}
+                      onClick={() => {
+                        applyFormattingToSelection('bold');
+                      }}
+                      className="w-7 h-7 flex items-center justify-center rounded-md text-xs font-bold transition-colors hover:bg-[#F5F3ED] active:bg-[#FAF0EB] active:text-[#C96442] text-[#2C2B29]"
+                      title="굵게 (Bold)"
+                    >
+                      <span className="font-extrabold text-[13px]">A</span>
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); }}
+                      onClick={() => {
+                        applyFormattingToSelection('italic');
+                      }}
+                      className="w-7 h-7 flex items-center justify-center rounded-md text-xs italic transition-colors hover:bg-[#F5F3ED] active:bg-[#FAF0EB] active:text-[#C96442] text-[#2C2B29]"
+                      title="기울임 (Italic)"
+                    >
+                      <span className="italic font-serif text-[13px]">A</span>
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); }}
+                      onClick={() => {
+                        applyFormattingToSelection('underline');
+                      }}
+                      className="w-7 h-7 flex items-center justify-center rounded-md text-xs underline transition-colors hover:bg-[#F5F3ED] active:bg-[#FAF0EB] active:text-[#C96442] text-[#2C2B29]"
+                      title="밑줄 (Underline)"
+                    >
+                      <span className="underline underline-offset-2 text-[13px]">A</span>
+                    </button>
+                  </div>
+
+                  {/* 구분선 */}
+                  <div className="w-[1px] h-4 bg-[#E7E5DF]" />
+
+                  {/* 4. 글자 색상 버튼 (아이콘 클릭 시 즉시 적용, 옆 화살표 클릭 시 색상 팔레트 열림) */}
+                  <div className="relative flex items-center bg-transparent rounded-md hover:bg-[#F5F3ED] transition-colors">
+                    {/* 색상 즉시 적용 버튼 */}
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); }}
+                      onClick={() => {
+                        applyFormattingToSelection('color', textColor);
+                      }}
+                      className="flex items-center justify-center h-7 px-1.5 rounded-l-md hover:bg-[#EAE8E3] active:bg-[#E2DFD9] transition-colors"
+                      title={`글자 색상 적용 (${textColor})`}
+                    >
+                      <div className="flex flex-col items-center justify-center leading-none">
+                        <span className="text-[12px] font-bold text-[#DC2626]">A</span>
+                        <div className="w-3.5 h-[2.5px] rounded-full mt-[1px]" style={{ backgroundColor: textColor }} />
+                      </div>
+                    </button>
+                    {/* 색상 선택 화살표 버튼 */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsColorDropdownOpen(!isColorDropdownOpen);
+                        setIsFontDropdownOpen(false);
+                        setIsHighlightDropdownOpen(false);
+                      }}
+                      className="flex items-center justify-center h-7 px-1 rounded-r-md hover:bg-[#EAE8E3] transition-colors border-l border-[#E7E5DF]/60"
+                      title="글자 색상 선택"
+                    >
+                      <ChevronDown className="w-2.5 h-2.5 text-[#6A6864]" />
+                    </button>
+                    {isColorDropdownOpen && (
+                      <>
+                        <div className="fixed inset-0 z-30" onClick={() => setIsColorDropdownOpen(false)} />
+                        <div className="absolute left-0 top-full mt-1 p-2 bg-white border border-[#E7E5DF] rounded-lg shadow-lg z-40 w-36">
+                          <div className="text-[10px] text-[#A3A19B] font-semibold mb-1.5 px-0.5">글자 색상</div>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {TEXT_COLORS.map(c => (
+                              <button
+                                key={c.value}
+                                type="button"
+                                onMouseDown={(e) => { e.preventDefault(); }}
+                                onClick={() => {
+                                  setTextColor(c.value);
+                                  applyFormattingToSelection('color', c.value);
+                                  setIsColorDropdownOpen(false);
+                                }}
+                                className={`w-6 h-6 rounded-md border flex items-center justify-center transition-transform hover:scale-110 ${textColor === c.value ? 'ring-2 ring-[#C96442] ring-offset-1' : 'border-[#E7E5DF]'}`}
+                                style={{ backgroundColor: c.value }}
+                                title={c.label}
+                              >
+                                {textColor === c.value && <span className="text-[9px] text-white contrast-200">✓</span>}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* 5. 형광펜 강조 버튼 (아이콘 클릭 시 즉시 적용, 옆 화살표 클릭 시 색상 팔레트 열림) */}
+                  <div className="relative flex items-center bg-transparent rounded-md hover:bg-[#F5F3ED] transition-colors">
+                    {/* 형광펜 즉시 적용 버튼 */}
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); }}
+                      onClick={() => {
+                        applyFormattingToSelection('highlight', highlightColor === 'transparent' ? '#FEF08A' : highlightColor);
+                      }}
+                      className="flex items-center justify-center h-7 px-1.5 rounded-l-md hover:bg-[#EAE8E3] active:bg-[#E2DFD9] transition-colors"
+                      title="형광펜 강조 즉시 적용"
+                    >
+                      <div className="flex items-center justify-center p-0.5 rounded" style={{ backgroundColor: highlightColor !== 'transparent' ? highlightColor : '#FEF08A' }}>
+                        <Highlighter className="w-3.5 h-3.5 text-[#2C2B29] stroke-[1.8px]" />
+                      </div>
+                    </button>
+                    {/* 형광펜 색상 선택 화살표 버튼 */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsHighlightDropdownOpen(!isHighlightDropdownOpen);
+                        setIsFontDropdownOpen(false);
+                        setIsColorDropdownOpen(false);
+                      }}
+                      className="flex items-center justify-center h-7 px-1 rounded-r-md hover:bg-[#EAE8E3] transition-colors border-l border-[#E7E5DF]/60"
+                      title="형광펜 색상 선택"
+                    >
+                      <ChevronDown className="w-2.5 h-2.5 text-[#6A6864]" />
+                    </button>
+                    {isHighlightDropdownOpen && (
+                      <>
+                        <div className="fixed inset-0 z-30" onClick={() => setIsHighlightDropdownOpen(false)} />
+                        <div className="absolute left-0 top-full mt-1 p-2 bg-white border border-[#E7E5DF] rounded-lg shadow-lg z-40 w-36">
+                          <div className="text-[10px] text-[#A3A19B] font-semibold mb-1.5 px-0.5">형광펜 색상</div>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {HIGHLIGHT_COLORS.map(h => (
+                              <button
+                                key={h.value}
+                                type="button"
+                                onMouseDown={(e) => { e.preventDefault(); }}
+                                onClick={() => {
+                                  setHighlightColor(h.value);
+                                  applyFormattingToSelection('highlight', h.value);
+                                  setIsHighlightDropdownOpen(false);
+                                }}
+                                className={`h-6 rounded-md border text-[10px] flex items-center justify-center transition-transform hover:scale-105 ${highlightColor === h.value ? 'ring-2 ring-[#C96442] ring-offset-1 font-bold' : 'border-[#E7E5DF]'}`}
+                                style={{ backgroundColor: h.value === 'transparent' ? '#F5F3ED' : h.value }}
+                                title={h.label}
+                              >
+                                {h.value === 'transparent' ? '없음' : (highlightColor === h.value ? '✓' : '')}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
                 </div>
-                <button 
-                  onClick={() => {
-                    if (editorContent) {
-                      navigator.clipboard.writeText(editorContent);
-                      alert('복사되었습니다.');
-                    }
-                  }}
-                  className="flex items-center gap-1 px-2.5 py-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] hover:text-[#2C2B29] transition-colors text-xs font-semibold"
-                >
-                  <Copy className="w-3.5 h-3.5 stroke-[1.5px]" /> 전체 복사
-                </button>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* 구절자동변환 토글 버튼 (카드 없이 심플한 디자인, 활성화 시 주황색, 비활성화 시 검은색) */}
+                  <button 
+                    type="button"
+                    onClick={handleToggleAutoVerse}
+                    className={`flex items-center gap-1 px-1.5 py-1 rounded transition-colors text-xs font-semibold shrink-0 cursor-pointer ${
+                      isAutoVerseEnabled 
+                        ? 'text-[#C96442] hover:bg-[#FAF0EB]' 
+                        : 'text-[#2C2B29] hover:bg-[#F5F3ED]'
+                    }`}
+                    title={isAutoVerseEnabled ? '구절자동변환 켜짐 (누르면 끄기)' : '구절자동변환 꺼짐 (누르면 켜기)'}
+                  >
+                    <BookOpen className={`w-3.5 h-3.5 stroke-[1.8px] ${isAutoVerseEnabled ? 'text-[#C96442]' : 'text-[#2C2B29]'}`} />
+                    <span>구절자동변환</span>
+                  </button>
+
+                  {/* 전체 복사 버튼 */}
+                  <button 
+                    onClick={async () => {
+                      if (!editorAreaRef.current) return;
+                      const { html, text } = buildClipboardPayload(editorAreaRef.current);
+                      try {
+                        if (navigator.clipboard && window.ClipboardItem) {
+                          const item = new ClipboardItem({
+                            'text/html': new Blob([html], { type: 'text/html' }),
+                            'text/plain': new Blob([text], { type: 'text/plain' })
+                          });
+                          await navigator.clipboard.write([item]);
+                        } else {
+                          await navigator.clipboard.writeText(text);
+                        }
+                        alert('서식이 포함되어 복사되었습니다.\n(애플 메모, 한글, 구글 독스 등에 바로 붙여넣기 하실 수 있습니다)');
+                      } catch {
+                        // fallback
+                        navigator.clipboard.writeText(text);
+                        alert('복사되었습니다.');
+                      }
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 hover:bg-[#F5F3ED] rounded-lg text-[#6A6864] hover:text-[#2C2B29] transition-colors text-xs font-semibold shrink-0 cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5 stroke-[1.5px]" /> 전체 복사
+                  </button>
+
+                  {/* 저장 모드 상태 배지 (클라우드 실시간 동기화 vs 기기 로컬 무제한 보관) */}
+                  <div 
+                    className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 border ${
+                      canSyncCloud 
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                        : 'bg-[#F5F3ED] text-[#6A6864] border-[#E8E3DA]'
+                    }`}
+                    title={canSyncCloud ? '서버 클라우드에 실시간 저장되어 다른 기기에서도 열람 가능합니다.' : '설교노트가 내 기기(브라우저)에 평생 안전하게 무제한 보관됩니다.'}
+                  >
+                    {canSyncCloud ? (
+                      <>
+                        <Cloud className="w-3 h-3 text-emerald-600" />
+                        <span>클라우드 동기화</span>
+                      </>
+                    ) : (
+                      <>
+                        <HardDrive className="w-3 h-3 text-[#8C877D]" />
+                        <span>기기 안전 보관</span>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
+
               <div className="relative flex-1 flex flex-col min-h-0 bg-[#FAF9F5]">
                 <input 
                   id="sermon-title-input"
                   type="text" 
-                  disabled={!googleUserId}
                   placeholder="설교 제목..." 
-                  className={`w-full text-base font-serif font-bold border-b border-[#E7E5DF] outline-none px-6 py-3.5 placeholder:text-[#A3A19B] shrink-0 ${!googleUserId ? 'text-[#A3A19B] bg-[#F5F3ED] opacity-80 cursor-not-allowed' : 'text-[#2C2B29] bg-white'}`}
+                  style={{ fontFamily: activeFontFamily }}
+                  className="w-full text-base font-bold border-b border-[#E7E5DF] outline-none px-6 py-3.5 placeholder:text-[#A3A19B] shrink-0 text-[#2C2B29] bg-white"
                   value={editorTitle}
-                  onChange={(e) => setEditorTitle(e.target.value)}
+                  onChange={(e) => {
+                    const newTitle = e.target.value;
+                    setEditorTitle(newTitle);
+                    notifyChange(newTitle, editorContent, {
+                      fontId: sermonFontId,
+                      fontSize: sermonFontSize,
+                      autoVerseConversion: isAutoVerseEnabled,
+                    });
+                  }}
                 />
-                <textarea 
-                  disabled={!googleUserId}
-                  style={{ fontSize: `${sermonFontSize}px` }}
-                  className={`flex-1 w-full p-6 leading-relaxed font-serif border-none outline-none resize-none placeholder:text-[#A3A19B] custom-scrollbar ${!googleUserId ? 'text-[#A3A19B] bg-[#F5F3ED] opacity-80 cursor-not-allowed' : 'text-[#2C2B29] bg-[#FAF9F5]'}`}
-                  placeholder="말씀을 이곳에 작성하세요..."
-                  value={editorContent}
-                  onChange={(e) => setEditorContent(e.target.value)}
+                <div
+                  ref={editorAreaRef}
+                  contentEditable={true}
+                  suppressContentEditableWarning
+                  onClick={handleEditorClick}
+                  onKeyDown={handleEditorKeyDown}
+                  onBlur={handleEditorBlur}
+                  onPaste={handleEditorPaste}
+                  onCopy={handleEditorCopy}
+                  onMouseUp={handleSelectionChange}
+                  onKeyUp={handleSelectionChange}
+                  onInput={(e) => {
+                    const newHtml = e.currentTarget.innerHTML;
+                    setEditorContent(newHtml);
+                    notifyChange(editorTitle, newHtml, {
+                      fontId: sermonFontId,
+                      fontSize: sermonFontSize,
+                      autoVerseConversion: isAutoVerseEnabled,
+                    });
+                    saveCurrentSelection();
+                  }}
+                  style={{ 
+                    fontFamily: activeFontFamily,
+                    fontSize: `${sermonFontSize}px`,
+                  }}
+                  className="flex-1 w-full p-6 leading-relaxed border-none outline-none overflow-y-auto custom-scrollbar select-text text-[#2C2B29] bg-[#FAF9F5]"
+                  data-placeholder="말씀을 이곳에 작성하세요..."
                 />
-                {!googleUserId && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#FAF9F5]/90 backdrop-blur-[1px] z-10 p-6 text-center">
-                    <div className="w-10 h-10 bg-[#F5F3ED] rounded-full flex items-center justify-center mb-3 text-[#C96442] shadow-2xs border border-[#E7E5DF]">
-                      <FileEdit className="w-5 h-5 stroke-[1.5px]" />
-                    </div>
-                    <h3 className="text-[#2C2B29] font-bold text-sm mb-1.5">로그인이 필요한 기능입니다</h3>
-                    <p className="text-xs text-[#6A6864] font-medium leading-relaxed">
-                      왼쪽 사이드바의 <strong>[로그인 / 간편가입]</strong> 버튼을 눌러<br/>가입 후 로그인하시면 편하게 사용하실 수 있습니다.
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
           )}

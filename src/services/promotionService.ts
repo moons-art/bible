@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../api/firebaseConfig';
 import { addCreditsToUser } from './userService';
+import { trackFirestoreRead, trackFirestoreWrite } from './systemMetricsService';
 
 // ── 1. 프로모션 설정 인터페이스 ─────────────────────────────────────────
 export interface PromotionSettings {
@@ -55,34 +56,69 @@ export interface ReferralRequest {
   note?: string;
 }
 
+// ── 인메모리(전역 상태) 캐시: 앱 실행 동안 유지되어 패널 열람 시 서버 호출 0회 보장 ──
+let inMemoryPromotion: PromotionSettings | null = null;
+let pendingPromotionPromise: Promise<PromotionSettings> | null = null;
+
+// 이전 로컬스토리지 잔재 캐시 자동 정리
+try {
+  localStorage.removeItem('nations_promotion_cache_v1');
+} catch (e) {}
+
 /**
- * 프로모션 설정 조회
+ * Firestore에서 최신 프로모션 설정 비동기 조회 (동시 요청 단일화)
  */
-export async function getPromotionSettings(): Promise<PromotionSettings> {
-  try {
-    const snap = await getDoc(doc(db, 'system_settings', 'promotion'));
-    if (snap.exists()) {
-      const data = snap.data();
-      const name = (data.name && !data.name.includes('10회') && !data.name.includes('크레딧')) 
-        ? data.name 
-        : '특별혜택기간';
-      const rawDesc = (data.description || '200크레딧 제공');
-      const description = rawDesc
-        .replace(/^(?:특별혜택기간|프로모션)\s*:\s*/, '')
-        .replace(/200\s*크[래레]딧\s*제공/, '200크레딧 제공')
-        .replace('크래딧', '크레딧')
-        .trim();
-      return { 
-        ...DEFAULT_PROMOTION_SETTINGS, 
-        ...data,
-        name,
-        description
-      } as PromotionSettings;
+export async function fetchRemotePromotionSettings(): Promise<PromotionSettings> {
+  if (pendingPromotionPromise) return pendingPromotionPromise;
+
+  pendingPromotionPromise = (async () => {
+    try {
+      const snap = await getDoc(doc(db, 'system_settings', 'promotion'));
+      trackFirestoreRead(1);
+      if (snap.exists()) {
+        const data = snap.data();
+        const name = (data.name && !data.name.includes('10회') && !data.name.includes('크레딧')) 
+          ? data.name 
+          : '특별혜택기간';
+        const rawDesc = (data.description || '200크레딧 제공');
+        const description = rawDesc
+          .replace(/^(?:특별혜택기간|프로모션)\s*:\s*/, '')
+          .replace(/200\s*크[래레]딧\s*제공/, '200크레딧 제공')
+          .replace('크래딧', '크레딧')
+          .trim();
+        const result = { 
+          ...DEFAULT_PROMOTION_SETTINGS, 
+          ...data,
+          name,
+          description
+        } as PromotionSettings;
+
+        inMemoryPromotion = result;
+        return result;
+      }
+    } catch (e) {
+      console.warn('[promotionService] fetchRemotePromotionSettings failed, using default:', e);
+    } finally {
+      pendingPromotionPromise = null;
     }
-  } catch (e) {
-    console.warn('[promotionService] getPromotionSettings failed, using default:', e);
+    inMemoryPromotion = DEFAULT_PROMOTION_SETTINGS;
+    return DEFAULT_PROMOTION_SETTINGS;
+  })();
+
+  return pendingPromotionPromise;
+}
+
+/**
+ * 프로모션 설정 조회 (인메모리 전역 캐시 적용)
+ * - 앱 진입(또는 F5 새로고침) 시 1회만 서버에서 불러와 메모리에 보관
+ * - AI 패널을 열고 닫을 때는 서버 호출 없이 메모리 데이터를 즉시 참조 (Firestore 읽기 0회)
+ * - 관리자가 내용을 수정한 경우, 유저가 새로고침(F5)하면 즉시 최신 프로모션이 반영됨
+ */
+export async function getPromotionSettings(forceRefresh: boolean = false): Promise<PromotionSettings> {
+  if (!forceRefresh && inMemoryPromotion) {
+    return inMemoryPromotion;
   }
-  return DEFAULT_PROMOTION_SETTINGS;
+  return await fetchRemotePromotionSettings();
 }
 
 /**
@@ -94,6 +130,10 @@ export async function savePromotionSettings(settings: PromotionSettings): Promis
     ...settings,
     updatedAt: Date.now()
   }, { merge: true });
+  trackFirestoreWrite(1);
+
+  // 인메모리 캐시 즉시 갱신
+  inMemoryPromotion = { ...settings };
 }
 
 /**
@@ -102,6 +142,7 @@ export async function savePromotionSettings(settings: PromotionSettings): Promis
 export async function getReferralSettings(): Promise<ReferralSettings> {
   try {
     const snap = await getDoc(doc(db, 'system_settings', 'referral'));
+    trackFirestoreRead(1);
     if (snap.exists()) {
       return { ...DEFAULT_REFERRAL_SETTINGS, ...snap.data() } as ReferralSettings;
     }
@@ -120,6 +161,7 @@ export async function saveReferralSettings(settings: ReferralSettings): Promise<
     ...settings,
     updatedAt: Date.now()
   }, { merge: true });
+  trackFirestoreWrite(1);
 }
 
 /**

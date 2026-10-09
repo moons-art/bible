@@ -95,17 +95,19 @@ export function useAiUsage() {
 
   const isLoggedIn = !!currentUid;
   const freeRemaining = isLoggedIn ? usageState.monthlyFreeRemaining : 0;
+  const monthlyQuotaRemaining = isLoggedIn ? (usageState.monthlyQuotaRemaining || 0) : 0;
+  const bonusRemaining = isLoggedIn ? (usageState.bonusRemaining || 0) : 0;
   const paidRemaining = isLoggedIn ? usageState.paidRemaining : 0;
   const totalUsed = isLoggedIn ? (usageState.totalUsed || 0) : 0;
-  const totalRemaining = freeRemaining + paidRemaining;
+  const totalRemaining = freeRemaining + monthlyQuotaRemaining + bonusRemaining + paidRemaining;
   const isAvailable = isLoggedIn && totalRemaining > 0;
 
-  // 총 한도 (무료 사용자: 10회, 유료 구독자: 총 충전 크레딧 수)
+  // 총 한도 (무료 사용자: 10회, 유료 구독자: 총 크레딧 수)
   const totalCapacity = useMemo(() => {
     if (!isLoggedIn) return 10;
-    if (paidRemaining <= 0) return 10;
-    return paidRemaining + totalUsed;
-  }, [isLoggedIn, paidRemaining, totalUsed]);
+    if (totalRemaining <= 0) return 10;
+    return totalRemaining + totalUsed;
+  }, [isLoggedIn, totalRemaining, totalUsed]);
 
   // 차감 로직 (로그인 시 Firestore 원자적 차감 + 로컬 스토리지 동시 업데이트)
   const consume = useCallback((reference: string) => {
@@ -137,6 +139,8 @@ export function useAiUsage() {
     totalCapacity,
     remainingDaysText,
     freeRemaining,
+    monthlyQuotaRemaining,
+    bonusRemaining,
     paidRemaining,
     totalUsed,
     cloudCommentaryLimit: usageState.cloudCommentaryLimit || 0,

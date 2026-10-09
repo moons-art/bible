@@ -29,8 +29,8 @@ import { AuthModal } from './components/AuthModal';
 import { ClaudeAuthPage } from './components/ClaudeAuthPage';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
 import { PolicyViewModal, type PolicyModalType } from './components/PolicyViewModal';
-import { getSitePolicy, subscribeSitePolicy, type SitePolicy, DEFAULT_SITE_POLICY } from './services/policyService';
-import { isAdminUser, syncUserProfile } from './services/userService';
+import { getCachedSitePolicy, subscribeSitePolicy, type SitePolicy, DEFAULT_SITE_POLICY } from './services/policyService';
+import { isAdminUser, syncUserProfile, getLocalUserResourceCounts } from './services/userService';
 import { auth } from './api/firebaseConfig';
 import { signOut } from 'firebase/auth';
 
@@ -420,15 +420,15 @@ const MainApp: React.FC = () => {
     totalCredits: number;
   } | null>(null);
 
-  // 서비스 정책, 사업자 정보 및 약관 모달 상태
-  const [policyData, setPolicyData] = useState<SitePolicy>(DEFAULT_SITE_POLICY);
+  // 서비스 정책, 사업자 정보 및 약관 모달 상태 (로컬 캐시로 즉시 초기화)
+  const [policyData, setPolicyData] = useState<SitePolicy>(getCachedSitePolicy);
   const [policyModal, setPolicyModal] = useState<{ isOpen: boolean; tab: PolicyModalType }>({
     isOpen: false,
     tab: 'terms'
   });
 
+  // 초기 마운트 시 딱 1회만 싱글톤 정책 리스너 구독 (의존성 배열 빈 배열 [])
   React.useEffect(() => {
-    getSitePolicy().then(setPolicyData).catch(() => {});
     const unsubPolicy = subscribeSitePolicy(setPolicyData);
     return () => unsubPolicy();
   }, []);
@@ -466,7 +466,7 @@ const MainApp: React.FC = () => {
         let retries = 3;
         while (retries > 0) {
           try {
-            const syncedProfile = await syncUserProfile(user);
+            const syncedProfile = await syncUserProfile(user, getLocalUserResourceCounts());
             console.log('[App] ✅ syncUserProfile 성공 uid:', user.uid);
 
             // 신규 가입자 환영 팝업 체크 (기존 가입자는 절대 중복 노출 안 됨)
@@ -488,8 +488,10 @@ const MainApp: React.FC = () => {
             }
 
             try {
-              const { logActivity } = await import('./utils/logger');
-              logActivity('로그인');
+              if (!sessionStorage.getItem('session_login_logged')) {
+                const { logActivity } = await import('./utils/logger');
+                logActivity('로그인');
+              }
             } catch (logErr) {
               console.warn('[App] logActivity error:', logErr);
             }
@@ -508,6 +510,7 @@ const MainApp: React.FC = () => {
         setUserProfile(null);
         try {
           localStorage.removeItem('cached_auth_user');
+          sessionStorage.removeItem('session_login_logged');
         } catch (e) {}
         setIsAuthChecking(false);
       }
@@ -530,14 +533,17 @@ const MainApp: React.FC = () => {
         const profile = await fetchUserProfile(token);
         if (profile) {
           setUserProfile(profile);
-          // Firestore users 컬렉션에도 프로필 즉각 동기화/저장
+          // Firestore users 컬렉션에도 프로필 즉각 동기화/저장 (Firebase Auth UID 일원화)
           try {
-            await syncUserProfile({
-              uid: profile.id,
-              email: profile.email,
-              displayName: profile.name,
-              photoURL: profile.picture
-            });
+            const currentFirebaseUid = auth.currentUser?.uid;
+            if (currentFirebaseUid) {
+              await syncUserProfile({
+                uid: currentFirebaseUid,
+                email: profile.email,
+                displayName: profile.name,
+                photoURL: profile.picture
+              });
+            }
           } catch (syncErr) {
             console.warn('[App] Google drive user profile sync non-fatal:', syncErr);
           }
@@ -2168,7 +2174,13 @@ const MainApp: React.FC = () => {
                   <SearchInput 
                     value={searchQuery}
                     onChange={setSearchQuery}
-                    placeholder={searchMode === 'standard' ? "검색어 입력 (예: 아브라함 이삭)" : "비슷한 표현 뉘앙스 검색"}
+                    placeholder={
+                      searchMode === 'standard'
+                        ? (logicMode === 'AND'
+                            ? "예: 아브라함 이삭 (두 단어가 포함된 구절 검색)"
+                            : "예: 아브라함 이삭 (한 단어라도 포함된 구절 검색)")
+                        : "비슷한 표현 뉘앙스 검색"
+                    }
                     className="w-full h-9 bg-white border border-[#E5E0D8] rounded-xl pl-3 pr-8 text-xs focus:outline-none focus:border-[#524E48] transition-all font-normal text-[#2B2927] placeholder:text-[#8C877D] shadow-2xs"
                   />
                   <Search className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-[#8C877D] stroke-[1.8px]" />

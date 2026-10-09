@@ -40,7 +40,7 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
 }) => {
   const { id, bookId, chapter, verse, panel, pos, size, zIndex, endVerse } = popup;
   const currentFontSize = fontSizes[panel] || 15;
-  const { versions } = useBible();
+  const { versions, flushVerseData } = useBible();
 
   // Firebase Auth 기반 로그인 상태 실시간 감지
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!auth.currentUser);
@@ -69,7 +69,7 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
     setLocalText(externalText);
   }, [verseKey, panel, externalText]);
 
-  // 상위 전역 상태 동기화 함수
+  // 상위 전역 상태 동기화 함수 (로컬 state에 즉시 반영)
   const syncToParent = (val: string) => {
     setVerseData((prev: any) => {
       const oldVal = prev[verseKey]?.[panel] || '';
@@ -92,7 +92,7 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
     });
   };
 
-  // 텍스트 변경 핸들러 (로컬 즉시 반영 + 250ms 디바운스 동기화)
+  // 텍스트 변경 핸들러 (로컬 즉시 반영 + 250ms 디바운스로 전역 state 동기화)
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setLocalText(val);
@@ -101,13 +101,13 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
       clearTimeout(saveTimerRef.current);
     }
 
-    // 타이핑 중 과도한 DB 쓰기 방지: 1.2초 디바운스로 안정화 (타이핑 완료 시 1회만 반영)
+    // 0.25초 후 전역 state에 즉시 보관 (30초 스로틀 서버 업로드 대기열에 자동 진입)
     saveTimerRef.current = setTimeout(() => {
       syncToParent(val);
-    }, 1200);
+    }, 250);
   };
 
-  // 포커스 벗어날 때(작성 완료 시) 즉시 동기화
+  // 포커스 벗어날 때(작성 완료 시) 전역 state 즉시 동기화
   const handleBlur = () => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -115,13 +115,28 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
     syncToParent(localTextRef.current);
   };
 
-  // 언마운트 시 미저장 텍스트 동기화
+  // [요구사항]: X 눌러 닫을 때 저장버튼으로 인식하고 즉시 전역 동기화 + Firestore 플러시(Flush)
+  const handleCloseWithFlush = async () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+    if (panel !== 'read') {
+      syncToParent(localTextRef.current);
+      await flushVerseData();
+    }
+    onClose(id);
+  };
+
+  // 언마운트 시 미저장 텍스트 전역 동기화 및 플러시
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
-      syncToParent(localTextRef.current);
+      if (panel !== 'read') {
+        syncToParent(localTextRef.current);
+        flushVerseData();
+      }
     };
   }, [verseKey, panel]);
 
@@ -301,9 +316,9 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
             </button>
           )}
           <button 
-            onClick={(e) => { e.stopPropagation(); onClose(id); }}
-            className="p-1.5 hover:bg-[#FAF0EB] rounded-lg transition-colors text-[#A3A19B] hover:text-[#2C2B29]"
-            title="닫기"
+            onClick={(e) => { e.stopPropagation(); handleCloseWithFlush(); }}
+            className="p-1.5 hover:bg-[#FAF0EB] rounded-lg transition-colors text-[#A3A19B] hover:text-[#2C2B29] cursor-pointer"
+            title="저장 및 닫기"
           >
             <X className="w-4 h-4 stroke-[1.5px]" />
           </button>

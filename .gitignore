@@ -33,3 +33,4 @@ scratch/
 *.bak
 credentials.json
 .firebase/
+project_code.txt

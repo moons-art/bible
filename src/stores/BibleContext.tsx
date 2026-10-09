@@ -29,6 +29,7 @@ export interface BibleContextType {
   setShowVersionInCopy: (show: boolean) => void;
   verseData: Record<string, { note?: string; crossRef?: string; sermon?: string }>;
   setVerseData: React.Dispatch<React.SetStateAction<Record<string, { note?: string; crossRef?: string; sermon?: string }>>>;
+  flushVerseData: () => Promise<void>;
   showAnnotations: boolean;
   setShowAnnotations: (show: boolean) => void;
 }
