@@ -34,3 +34,10 @@ scratch/
 credentials.json
 .firebase/
 project_code.txt
+
+# Functions build output & secrets
+functions/lib/
+functions/node_modules/
+functions/.env
+functions/.env.*
+functions/service-account.json

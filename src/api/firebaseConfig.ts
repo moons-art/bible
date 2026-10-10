@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { getFunctions } from 'firebase/functions';
 
 const firebaseConfig = {
   apiKey: "AIzaSyA6hBoSPjoeYbxrEYfRB-HmFjoDFT0vahQ",
@@ -27,3 +28,6 @@ setPersistence(auth, browserLocalPersistence).catch((err) => {
   console.warn('[firebaseConfig] Auth persistence set error:', err);
 });
 export const googleProvider = new GoogleAuthProvider();
+
+// Initialize Functions (서울 리전 또는 기본 리전)
+export const functions = getFunctions(app, 'asia-northeast3');
