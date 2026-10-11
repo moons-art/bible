@@ -127,9 +127,27 @@ export const BiblePopup: React.FC<BiblePopupProps> = ({
     onClose(id);
   };
 
-  // 언마운트 시 미저장 텍스트 전역 동기화 및 플러시
+  // 언마운트 및 폰 화면 꺼짐(백그라운드 전환) 시 미저장 텍스트 전역 동기화 및 즉시 저장
   useEffect(() => {
+    const handleLifeCycle = () => {
+      if (panel !== 'read') {
+        if (saveTimerRef.current) {
+          clearTimeout(saveTimerRef.current);
+        }
+        syncToParent(localTextRef.current);
+        flushVerseData();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleLifeCycle);
+    window.addEventListener('pagehide', handleLifeCycle);
+    window.addEventListener('beforeunload', handleLifeCycle);
+
     return () => {
+      document.removeEventListener('visibilitychange', handleLifeCycle);
+      window.removeEventListener('pagehide', handleLifeCycle);
+      window.removeEventListener('beforeunload', handleLifeCycle);
+
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }

@@ -27,6 +27,8 @@ export interface UseSermonSyncOptions {
   throttleMs?: number;
   /** 로컬 캐시 디바운스 주기 (기본 300ms) */
   localDraftDebounceMs?: number;
+  /** 저장 성공 시 콜백 (로컬 목록 동기화용) */
+  onSaveSuccess?: (savedDoc: SermonDocument) => void;
   /** 충돌 복사본 발생 시 콜백 */
   onConflictCreated?: (newDocId: string, copyTitle: string) => void;
   /** 원격 최신본으로 자동 동기화 시 콜백 */
@@ -71,6 +73,7 @@ export function useSermonSync({
   initialVersion = 1,
   throttleMs = 60000, // 1분(60초) 스로틀
   localDraftDebounceMs = 300, // 0.3초 로컬 드래프트
+  onSaveSuccess,
   onConflictCreated,
   onRemoteUpdated,
   onWarning,
@@ -114,6 +117,8 @@ export function useSermonSync({
   const isMountedRef = useRef(true);
 
   // 상위 콜백 ref 래핑 (리렌더링 시 불필요한 이펙트 트리거 차단)
+  const onSaveSuccessRef = useRef(onSaveSuccess);
+  onSaveSuccessRef.current = onSaveSuccess;
   const onConflictCreatedRef = useRef(onConflictCreated);
   onConflictCreatedRef.current = onConflictCreated;
   const onWarningRef = useRef(onWarning);
@@ -182,11 +187,38 @@ export function useSermonSync({
       return true;
     }
 
+    const titleToSave = currentDataRef.current.title.trim() || '제목 없음';
+    const contentToSave = currentDataRef.current.content;
+    const fontIdToSave = currentDataRef.current.fontId;
+    const fontSizeToSave = currentDataRef.current.fontSize;
+    const autoVerseConversionToSave = currentDataRef.current.autoVerseConversion;
+    const currentDate = new Date().toISOString().split('T')[0];
+
     // ✅ 클라우드 권한이 없는 회원은 로컬 기기 보관만으로 저장 완료 처리
     if (!canSyncCloud) {
+      lastCommittedDataRef.current = {
+        title: titleToSave,
+        content: contentToSave,
+        fontId: fontIdToSave,
+        fontSize: fontSizeToSave,
+        autoVerseConversion: autoVerseConversionToSave,
+        version: lastCommittedDataRef.current.version || 1,
+      };
       setSyncStatus('saved');
       setIsDirty(false);
       setLastSavedAt(Date.now());
+      clearLocalDraft(sermonId);
+      onSaveSuccessRef.current?.({
+        id: sermonId,
+        title: titleToSave,
+        content: contentToSave,
+        date: currentDate,
+        version: lastCommittedDataRef.current.version || 1,
+        updatedAt: Date.now(),
+        fontId: fontIdToSave,
+        fontSize: fontSizeToSave,
+        autoVerseConversion: autoVerseConversionToSave,
+      });
       return true;
     }
 
@@ -205,17 +237,11 @@ export function useSermonSync({
     isSavingMutexRef.current = true;
     setSyncStatus('saving');
 
-    const titleToSave = currentDataRef.current.title.trim() || '제목 없음';
-    const contentToSave = currentDataRef.current.content;
-    const fontIdToSave = currentDataRef.current.fontId;
-    const fontSizeToSave = currentDataRef.current.fontSize;
-    const autoVerseConversionToSave = currentDataRef.current.autoVerseConversion;
-
     const baseVersion = lastCommittedDataRef.current.version;
-    const currentDate = new Date().toISOString().split('T')[0];
 
     try {
       const docRef = doc(db, 'users', userId, 'sermons', sermonId);
+      let savedDocDate = currentDate;
 
       // Firestore 트랜잭션으로 낙관적 락(Optimistic Concurrency Control) 수행
       const transactionResult = await runTransaction(db, async (tx) => {
@@ -224,7 +250,6 @@ export function useSermonSync({
         const payloadToSave: any = {
           title: titleToSave,
           content: contentToSave,
-          date: currentDate,
           updatedAt: Date.now(),
         };
         if (fontIdToSave !== undefined) payloadToSave.fontId = fontIdToSave;
@@ -234,16 +259,21 @@ export function useSermonSync({
         if (!docSnap.exists()) {
           // 문서가 없는 최초 저장 시점: version 1로 신규 생성
           payloadToSave.version = 1;
+          payloadToSave.date = currentDate;
+          savedDocDate = currentDate;
           tx.set(docRef, payloadToSave);
-          return { status: 'created', newVersion: 1 };
+          return { status: 'created', newVersion: 1, docDate: currentDate };
         }
 
         const remoteData = docSnap.data();
         const serverVersion = typeof remoteData.version === 'number' ? remoteData.version : 1;
+        // 기존 작성일 보존 (매번 오늘 날짜로 덮어써지는 문제 해결)
+        savedDocDate = remoteData.date || currentDate;
+        payloadToSave.date = savedDocDate;
 
         // 충돌 검사: 서버 버전이 클라이언트 기준 버전보다 크면 다른 기기에서 저장한 것임!
         if (serverVersion > baseVersion) {
-          return { status: 'conflict', serverVersion, remoteData };
+          return { status: 'conflict', serverVersion, remoteData, docDate: savedDocDate };
         }
 
         // 버전 일치: 정상 업데이트 (version + 1)
@@ -251,7 +281,7 @@ export function useSermonSync({
         payloadToSave.version = nextVersion;
         tx.update(docRef, payloadToSave);
 
-        return { status: 'updated', newVersion: nextVersion };
+        return { status: 'updated', newVersion: nextVersion, docDate: savedDocDate };
       });
 
       // --- 충돌 발생 시 분기 처리 ---
@@ -298,6 +328,19 @@ export function useSermonSync({
       setLastSavedAt(Date.now());
       setSyncStatus('saved');
       setIsDirty(false);
+
+      onSaveSuccessRef.current?.({
+        id: sermonId,
+        title: titleToSave,
+        content: contentToSave,
+        date: savedDocDate,
+        version: resolvedVersion,
+        updatedAt: Date.now(),
+        fontId: fontIdToSave,
+        fontSize: fontSizeToSave,
+        autoVerseConversion: autoVerseConversionToSave,
+      });
+
       return true;
 
     } catch (error: any) {

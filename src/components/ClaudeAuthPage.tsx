@@ -408,12 +408,6 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
             더 빠르게 연구하세요
           </h1>
 
-          {/* 요청하신 서브카피 반영 */}
-          <p className="text-sm sm:text-base text-[#6E6A63] max-w-lg mb-8 leading-relaxed">
-            원어 분석부터 나만의 주석까지,<br className="sm:hidden" />
-            NATIONS BIBLE AI와 함께 말씀의 깊이를 경험하세요.
-          </p>
-
           {/* 로그인 카드 컨테이너 */}
           <div className="w-full max-w-md bg-white border border-[#E8E5DE] rounded-3xl p-6 sm:p-8 shadow-xs text-left">
             {currentUser ? (
@@ -466,6 +460,8 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
             ) : (
               /* 비로그인 시: Google 및 이메일 로그인 카드 */
               <div className="flex flex-col gap-4">
+                <div className="text-center font-bold text-sm text-[#2C2B29]">무료로 이용하기</div>
+
                 {/* 1. 구글로 계속하기 버튼 */}
                 <button
                   onClick={handleGoogleLogin}
@@ -747,22 +743,19 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
             <div className="p-4 sm:p-5 bg-white border border-[#E8E5DE] rounded-2xl text-left shadow-2xs mb-6">
               <div className="mb-2.5">
                 <h4 className="text-xs sm:text-sm font-bold text-[#2C2B29]">
-                  크레딧 이용 기준 안내 <span className="text-[#C46A40] font-semibold">(100 크레딧 기준)</span>
+                  크레딧 안내 <span className="text-[#C46A40] font-semibold">(100 크레딧 기준)</span>
                 </h4>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs text-[#524F4A]">
                 <div className="bg-white p-3 rounded-xl border border-[#EAE6DE]">
-                  <div className="font-bold text-[#2C2B29]">AI 구절 주석: 100회</div>
-                  <span className="text-[11px] text-[#7A756D] block mt-0.5">(1구절 당 1 크레딧)</span>
+                  <div className="font-bold text-[#2C2B29]">AI원어주석 100회</div>
+                  <span className="text-[11px] text-[#7A756D] block mt-0.5">(1구절 원어분석 당 1 크레딧 차감)</span>
                 </div>
                 <div className="bg-white p-3 rounded-xl border border-[#EAE6DE]">
-                  <div className="font-bold text-[#2C2B29]">AI 설교 자료 5종 set: 33회</div>
-                  <span className="text-[11px] text-[#7A756D] block mt-0.5">(설교 1편 5종 패키지당 3 크레딧)</span>
+                  <div className="font-bold text-[#2C2B29]">AI 설교자료 6종 패키지 33회</div>
+                  <span className="text-[11px] text-[#7A756D] block mt-0.5">(패키지 당 3 크레딧 차감)</span>
                 </div>
               </div>
-              <p className="text-[11px] text-[#7A756D] mt-2.5 pt-2 border-t border-[#EAE6DE] leading-relaxed">
-                설교자료 5종 set: 설교문 교정, 성경공부지, 5일 묵상지, 구절 PPT 대본, 설교 PPT 슬라이드 구성
-              </p>
             </div>
 
             {/* 탭 토글: [클라우드 멤버십 요금] / [AI 크레딧 충전 요금] - 글자 더 크게 */}
@@ -820,7 +813,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                         : 'text-[#6E6A63] hover:text-[#2C2B29]'
                     }`}
                   >
-                    연간 결제 (추천 · 혜택 극대화)
+                    연간 결제
                   </button>
                   <button
                     type="button"
@@ -843,11 +836,9 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   <div>
                     <Sparkles className="w-7 h-7 text-[#7A756D] mb-3 stroke-[1.8px]" />
                     <h3 className="text-xl font-bold text-[#1A1918]">기본 제공 (Free)</h3>
-                    <p className="text-xs font-medium text-[#C46A40] mt-1 mb-4">로컬 기기 무제한 보관</p>
 
-                    <div className="mb-6">
+                    <div className="mb-6 mt-3">
                       <div className="text-3xl font-serif font-bold text-[#1A1918]">₩0</div>
-                      <div className="text-xs text-[#8C877D] mt-0.5">이용 요금: 0원 (모두에게 무료)</div>
                     </div>
 
                     <button
@@ -855,7 +846,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                       onClick={() => handlePlanAction('Free 기본 제공', true)}
                       className="w-full py-2.5 px-4 bg-[#F5F3ED] hover:bg-[#EAE6DE] text-[#2C2B29] rounded-xl text-xs font-bold transition-all cursor-pointer mb-6"
                     >
-                      성경 무료로 사용해 보기
+                      무료로 이용하기
                     </button>
 
                     <div className="border-t border-[#EFECE6] pt-4">
@@ -863,19 +854,19 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                       <ul className="text-xs text-[#6E6A63] space-y-2.5">
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#8C877D] shrink-0 mt-0.5" />
-                          <span><strong>매월 AI 10 크레딧</strong> 무료 제공</span>
+                          <span>매월 AI 5 크레딧 무료 제공</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#8C877D] shrink-0 mt-0.5" />
-                          <span>AI 원어 심층연구 및 주석 체험 가능</span>
+                          <span>AI 원어 심층연구 및 주석 체험</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#8C877D] shrink-0 mt-0.5" />
-                          <span>설교노트, 나만의 구절 주석, 구절 메모 에디터 기본 제공</span>
+                          <span>설교노트, 나만의 구절 주석, 구절 메모 에디터 제공</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#8C877D] shrink-0 mt-0.5" />
-                          <span>작성된 모든 노트는 현재 사용하는 기기 로컬에 안전하게 저장</span>
+                          <span>작성된 모든 노트는 현재 사용하는 기기에 안전하게 저장</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#8C877D] shrink-0 mt-0.5" />
@@ -891,28 +882,28 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   <div>
                     <Database className="w-7 h-7 text-[#7A756D] mb-3 stroke-[1.8px]" />
                     <h3 className="text-xl font-bold text-[#1A1918]">클라우드 라이트</h3>
-                    <p className="text-[11px] text-[#7A756D] mt-1 mb-4 leading-relaxed">
-                      AI 주석보다 클라우드 서버 통해 나만의 설교노트와 구절별 메모 DB를 구축하려는 전도사님, 강도사님
+                    <div className="text-[11px] font-semibold text-[#C46A40] mt-1 mb-1">
+                      (전도사님, 강도사님 추천)
+                    </div>
+                    <p className="text-[11px] text-[#7A756D] mb-4 leading-relaxed">
+                      클라우드 서버 통해 나만의 설교노트와 구절별 메모 DB를 구축하려는 목회자
                     </p>
 
                     <div className="mb-6">
                       {billingCycle === 'yearly' ? (
                         <>
                           <div className="flex items-baseline gap-1.5">
-                            <span className="text-3xl font-serif font-bold text-[#C46A40]">₩33,000</span>
+                            <span className="text-3xl font-serif font-bold text-[#1A1918]">₩33,000</span>
                             <span className="text-xs text-[#8C877D]">/ 연 (월 2,750원 상당)</span>
                           </div>
-                          <div className="text-xs text-[#C46A40] font-bold mt-1">
-                            AI 250 크레딧 즉시 지급 (유효기간 1년)
-                          </div>
-                          <p className="text-[10px] text-[#8C877D] mt-1">
+                          <p className="text-[10px] text-[#1A1918] font-medium mt-1">
                             *2년 차부터 서버유지 11,000원(월 900원) 연장 가능
                           </p>
                         </>
                       ) : (
                         <>
                           <div className="flex items-baseline gap-1.5">
-                            <span className="text-3xl font-serif font-bold text-[#C46A40]">₩3,900</span>
+                            <span className="text-3xl font-serif font-bold text-[#1A1918]">₩3,900</span>
                             <span className="text-xs text-[#8C877D]">/ 월</span>
                           </div>
                           <div className="text-xs text-[#C46A40] font-bold mt-1">
@@ -935,17 +926,15 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                       <ul className="text-xs text-[#6E6A63] space-y-2.5">
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
-                          <span><strong>클라우드 모든 혜택</strong> (전 기기 연동, 설교노트/메모 클라우드 무제한 동기화)</span>
+                          <span>클라우드 모든 혜택 (설교노트/구절메모 클라우드 무제한 동기화, 모든 기기 연동)</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
-                          <span>생성된 AI 주석 <strong>최대 200구절 클라우드 보관</strong></span>
+                          <span>AI 250 크레딧 즉시 지급 (유효기간 1년)</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
-                          <span>
-                            {billingCycle === 'yearly' ? 'AI 250 크레딧 1년 여유 제공' : '매월 20 크레딧 정기 충전'}
-                          </span>
+                          <span>생성된 AI 주석 최대 200구절 클라우드 보관</span>
                         </li>
                       </ul>
                     </div>
@@ -960,28 +949,28 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   <div>
                     <Database className="w-7 h-7 text-[#C46A40] mb-3 stroke-[1.8px]" />
                     <h3 className="text-xl font-bold text-[#1A1918]">클라우드 프로</h3>
-                    <p className="text-[11px] text-[#7A756D] mt-1 mb-4 leading-relaxed">
-                      나만의 클라우드 서버와 함께 AI 주석과 설교자료도 어느 정도 필요한 강도사님, 부목사님
+                    <div className="text-[11px] font-semibold text-[#C46A40] mt-1 mb-1">
+                      (강도사님 부목사님 추천)
+                    </div>
+                    <p className="text-[11px] text-[#7A756D] mb-4 leading-relaxed">
+                      나만의 클라우드 서버와 함께 AI 주석과 설교자료도 필요하신 목회자
                     </p>
 
                     <div className="mb-6">
                       {billingCycle === 'yearly' ? (
                         <>
                           <div className="flex items-baseline gap-1.5">
-                            <span className="text-3xl font-serif font-bold text-[#C46A40]">₩55,000</span>
+                            <span className="text-3xl font-serif font-bold text-[#1A1918]">₩55,000</span>
                             <span className="text-xs text-[#8C877D]">/ 연 (월 4,590원 상당)</span>
                           </div>
-                          <div className="text-xs text-[#C46A40] font-bold mt-1">
-                            AI 500 크레딧 즉시 지급 (유효기간 1년)
-                          </div>
-                          <p className="text-[10px] text-[#8C877D] mt-1">
+                          <p className="text-[10px] text-[#1A1918] font-medium mt-1">
                             *2년 차부터 서버유지 11,000원(월 900원) 연장 가능
                           </p>
                         </>
                       ) : (
                         <>
                           <div className="flex items-baseline gap-1.5">
-                            <span className="text-3xl font-serif font-bold text-[#C46A40]">₩5,900</span>
+                            <span className="text-3xl font-serif font-bold text-[#1A1918]">₩5,900</span>
                             <span className="text-xs text-[#8C877D]">/ 월</span>
                           </div>
                           <div className="text-xs text-[#C46A40] font-bold mt-1">
@@ -1004,17 +993,15 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                       <ul className="text-xs text-[#524F4A] space-y-2.5">
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
-                          <span><strong>클라우드 모든 혜택</strong> (전 기기 연동, 설교노트/메모 클라우드 무제한 동기화)</span>
+                          <span>클라우드 모든 혜택 (설교노트/구절메모 클라우드 무제한 동기화, 모든 기기 연동)</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
-                          <span>생성된 AI 주석 <strong>최대 500구절 클라우드 보관</strong></span>
+                          <span>생성된 AI 주석 최대 500구절 클라우드 보관</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
-                          <span>
-                            {billingCycle === 'yearly' ? 'AI 500 크레딧 1년 여유 제공' : '매월 40 크레딧 정기 충전'}
-                          </span>
+                          <span>AI 500 크레딧 즉시 지급 (유효기간 1년)</span>
                         </li>
                       </ul>
                     </div>
@@ -1026,8 +1013,11 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   <div>
                     <Database className="w-7 h-7 text-[#2C2B29] mb-3 stroke-[1.8px]" />
                     <h3 className="text-xl font-bold text-[#1A1918]">클라우드 마스터</h3>
-                    <p className="text-[11px] text-[#7A756D] mt-1 mb-4 leading-relaxed">
-                      성경 66권 AI 주석 서재를 완성하려는 목회자, 설교자료가 필요한 담임 목사님
+                    <div className="text-[11px] font-semibold text-[#C46A40] mt-1 mb-1">
+                      (담임 목사님 추천)
+                    </div>
+                    <p className="text-[11px] text-[#7A756D] mb-4 leading-relaxed">
+                      성경 66권 AI 주석 서재를 완성하려는 목회자, 설교자료가 필요한 목회자
                     </p>
 
                     <div className="mb-6">
@@ -1037,10 +1027,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                             <span className="text-3xl font-serif font-bold text-[#2C2B29]">₩88,000</span>
                             <span className="text-xs text-[#8C877D]">/ 연 (월 7,340원 상당)</span>
                           </div>
-                          <div className="text-xs text-[#C46A40] font-bold mt-1">
-                            AI 1,000 크레딧 즉시 지급 (크레딧 유효기간 2년)
-                          </div>
-                          <p className="text-[10px] text-[#8C877D] mt-1">
+                          <p className="text-[10px] text-[#1A1918] font-medium mt-1">
                             *2년 차부터 서버유지 11,000원(월 900원) 연장 가능
                           </p>
                         </>
@@ -1070,17 +1057,15 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                       <ul className="text-xs text-[#6E6A63] space-y-2.5">
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#2C2B29] shrink-0 mt-0.5" />
-                          <span><strong>클라우드 모든 혜택</strong> (전 기기 연동, 설교노트/메모 클라우드 무제한 동기화)</span>
+                          <span>클라우드 모든 혜택 (설교노트/구절메모 클라우드 무제한 동기화, 모든 기기 연동)</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#2C2B29] shrink-0 mt-0.5" />
-                          <span>생성된 AI 주석 <strong>성경 66권 전체 클라우드 영구 보관</strong></span>
+                          <span>생성된 AI 주석 성경 66권 전체 클라우드 영구 보관</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#2C2B29] shrink-0 mt-0.5" />
-                          <span>
-                            {billingCycle === 'yearly' ? 'AI 1,000 크레딧 넉넉한 2년 유효기간 제공' : '매월 80 크레딧 정기 충전'}
-                          </span>
+                          <span>AI 1,000 크레딧 즉시 지급 (크레딧 유효기간 2년)</span>
                         </li>
                       </ul>
                     </div>
@@ -1105,7 +1090,9 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                         </span>
                       </div>
                       <p className="text-xs text-[#6E6A63] mt-1 leading-relaxed">
-                        2년 차부터 적용되는 서버 유지 및 보관 연장권 (월 900원 상당) · 기존 구축된 설교 데이터 및 영구 보관 주석 동기화 유지
+                        2년 차부터 적용되는 서버 유지 및 보관 연장권 (월 900원 상당)
+                        <br className="hidden sm:inline" />
+                        {' '}· 기존 구축된 설교 데이터 및 영구 보관 주석 동기화 유지
                       </p>
                       <p className="text-xs font-semibold text-[#C46A40] mt-1">
                         갱신 감사 혜택: AI 200 크레딧 즉시 지급 (유효기간 1년)
