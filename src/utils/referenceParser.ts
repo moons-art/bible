@@ -245,3 +245,82 @@ export function getBibleReferenceMatchScore(query: string, verseKey: string, tex
   return 0;
 }
 
+/**
+ * 설교 제목 등 텍스트에서 첫 번째로 나타나는 성경 구절(첫 구절)을 스마트 추출
+ * 예:
+ * - "창 1:1-10" -> { bookId: 'GEN', chapter: 1, verse: 1, verseKey: 'GEN_1_1' }
+ * - "창 1:1~10" -> { bookId: 'GEN', chapter: 1, verse: 1, verseKey: 'GEN_1_1' }
+ * - "창세기 1:1-10 태초의 신비" -> { bookId: 'GEN', chapter: 1, verse: 1, verseKey: 'GEN_1_1' }
+ * - "[주일설교] 창 1:1-10" -> { bookId: 'GEN', chapter: 1, verse: 1, verseKey: 'GEN_1_1' }
+ * - "창 1장 1절-10절" -> { bookId: 'GEN', chapter: 1, verse: 1, verseKey: 'GEN_1_1' }
+ * - "창1:1-10" -> { bookId: 'GEN', chapter: 1, verse: 1, verseKey: 'GEN_1_1' }
+ * - "요 3:16 하나님이 세상을 사랑하사" -> { bookId: 'JHN', chapter: 3, verse: 16, verseKey: 'JHN_3_16' }
+ */
+export function extractFirstVerseFromTitle(title: string): {
+  bookId: string;
+  bookName: string;
+  chapter: number;
+  verse: number;
+  verseKey: string;
+} | null {
+  if (!title || !title.trim()) return null;
+  const cleanTitle = title.trim();
+
+  // 1. 콜론(:) 또는 '장' 기반 매칭 (창 1:1-10, 창 1장 1절-10절, 창1:1, 창 1:1~10 등)
+  const prefix = '(?:^|[^가-힣a-zA-Z0-9])';
+
+  for (const bookKey of SORTED_BOOK_KEYS) {
+    const escaped = bookKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(
+      prefix + escaped + '\\s*([0-9]+)\\s*(?:[:]|장\\s*)(?:제)?([0-9]+)(?:절)?',
+      'i'
+    );
+
+    const match = cleanTitle.match(regex);
+    if (match) {
+      const chapter = parseInt(match[1], 10);
+      const verse = parseInt(match[2], 10);
+      if (!isNaN(chapter) && chapter > 0 && !isNaN(verse) && verse > 0) {
+        const bookId = BIBLE_BOOKS[bookKey];
+        const bookInfo = BIBLE_LIST.find(b => b.id === bookId);
+        return {
+          bookId,
+          bookName: bookInfo ? bookInfo.name : bookKey,
+          chapter,
+          verse,
+          verseKey: `${bookId}_${chapter}_${verse}`,
+        };
+      }
+    }
+  }
+
+  // 2. 공백 기반 보조 매칭 (창세기 1 1-10 등 - 2글자 이상 책명에만 적용하여 1글자 약어 오탐 방지)
+  for (const bookKey of SORTED_BOOK_KEYS) {
+    if (bookKey.length < 2) continue;
+    const escaped = bookKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(
+      prefix + escaped + '\\s+([0-9]+)\\s+([0-9]+)(?:절)?',
+      'i'
+    );
+
+    const match = cleanTitle.match(regex);
+    if (match) {
+      const chapter = parseInt(match[1], 10);
+      const verse = parseInt(match[2], 10);
+      if (!isNaN(chapter) && chapter > 0 && !isNaN(verse) && verse > 0) {
+        const bookId = BIBLE_BOOKS[bookKey];
+        const bookInfo = BIBLE_LIST.find(b => b.id === bookId);
+        return {
+          bookId,
+          bookName: bookInfo ? bookInfo.name : bookKey,
+          chapter,
+          verse,
+          verseKey: `${bookId}_${chapter}_${verse}`,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+

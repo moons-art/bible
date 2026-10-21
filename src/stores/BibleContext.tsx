@@ -32,6 +32,10 @@ export interface BibleContextType {
   flushVerseData: () => Promise<void>;
   showAnnotations: boolean;
   setShowAnnotations: (show: boolean) => void;
+  annotationFilters: Set<'commentary' | 'crossRef' | 'note' | 'sermon' | 'ai'>;
+  toggleAnnotationFilter: (filter: 'commentary' | 'crossRef' | 'note' | 'sermon' | 'ai') => void;
+  sermonVerseMap: Record<string, { id: string; title: string }>;
+  savedAiVerseKeys: Set<string>;
 }
 
 export const BibleContext = createContext<BibleContextType | undefined>(undefined);

@@ -402,18 +402,33 @@ export function useSermonSync({
     }
   }, [sermonId, checkIsDirty, saveLocalDraft, localDraftDebounceMs, throttleMs, commitToFirestore]);
 
+  // 대기 중인 로컬 드래프트 타이머를 즉시 동기 플러시하는 헬퍼
+  const flushLocalDraftSync = useCallback(() => {
+    if (localDraftTimerRef.current) {
+      clearTimeout(localDraftTimerRef.current);
+      localDraftTimerRef.current = null;
+    }
+    if (sermonId && checkIsDirty()) {
+      saveLocalDraft(sermonId, currentDataRef.current.title, currentDataRef.current.content, {
+        fontId: currentDataRef.current.fontId,
+        fontSize: currentDataRef.current.fontSize,
+        autoVerseConversion: currentDataRef.current.autoVerseConversion,
+      });
+    }
+  }, [sermonId, checkIsDirty, saveLocalDraft]);
+
+  const flushLocalDraftSyncRef = useRef(flushLocalDraftSync);
+  flushLocalDraftSyncRef.current = flushLocalDraftSync;
+
   // 6) 플러시(Flush) - 즉각 저장
   const flushSave = useCallback(async (): Promise<boolean> => {
     if (throttleTimerRef.current) {
       clearTimeout(throttleTimerRef.current);
       throttleTimerRef.current = null;
     }
-    if (localDraftTimerRef.current) {
-      clearTimeout(localDraftTimerRef.current);
-      localDraftTimerRef.current = null;
-    }
+    flushLocalDraftSync();
     return await commitToFirestore();
-  }, [commitToFirestore]);
+  }, [flushLocalDraftSync, commitToFirestore]);
 
   // commitToFirestore 및 checkIsDirty 최신 참조 보관 (리렌더링 시 이펙트 클린업 오작동 원천 차단)
   const commitToFirestoreRef = useRef(commitToFirestore);
@@ -450,24 +465,32 @@ export function useSermonSync({
     setIsDirty(false);
     setSyncStatus('saved');
     nextScheduledSaveTimeRef.current = 0;
-    if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current);
-    if (localDraftTimerRef.current) clearTimeout(localDraftTimerRef.current);
+    if (throttleTimerRef.current) {
+      clearTimeout(throttleTimerRef.current);
+      throttleTimerRef.current = null;
+    }
+    if (localDraftTimerRef.current) {
+      clearTimeout(localDraftTimerRef.current);
+      localDraftTimerRef.current = null;
+    }
   }, []);
 
   // 8) 생명주기 플러시 (창 전환, 탭 닫기, 노트북 덮개 닫기)
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        // 백그라운드 전환 시 즉시 플러시
+        // 백그라운드 전환 시 로컬 드래프트 즉시 동기 저장 후 서버 플러시
         if (checkIsDirtyRef.current()) {
+          flushLocalDraftSyncRef.current();
           commitToFirestoreRef.current();
         }
       }
     };
 
     const handlePageHide = () => {
-      // 브라우저 닫기/새로고침 시 플러시
+      // 브라우저 닫기/새로고침 시 로컬 드래프트 즉시 동기 저장 후 서버 플러시
       if (checkIsDirtyRef.current()) {
+        flushLocalDraftSyncRef.current();
         commitToFirestoreRef.current();
       }
     };
@@ -502,13 +525,22 @@ export function useSermonSync({
           const currentlyDirty = checkIsDirtyRef.current();
 
           if (!currentlyDirty) {
+            const remoteContent = remote.content || '';
+            const localContent = currentDataRef.current.content || '';
+            // 로컬에 유효한 본문이 있는데 서버 본문이 비어있는 경우 덮어쓰기 방지
+            if (localContent.trim().length > 0 && remoteContent.trim().length === 0) {
+              return;
+            }
             // 현재 기기에 미저장된 타이핑 분량이 없다면: 최신 내용으로 조용히 자동 갱신
             const updatedDoc: SermonDocument = {
               id: sermonId,
               title: remote.title || '',
-              content: remote.content || '',
+              content: remoteContent,
               date: remote.date || '',
               version: serverVersion,
+              fontId: remote.fontId,
+              fontSize: remote.fontSize,
+              autoVerseConversion: remote.autoVerseConversion,
             };
             resetSyncState(updatedDoc);
             onRemoteUpdatedRef.current?.(updatedDoc);
@@ -526,7 +558,7 @@ export function useSermonSync({
     return () => {
       window.removeEventListener('focus', handleFocus);
     };
-  }, [userId, sermonId, resetSyncState]);
+  }, [userId, sermonId, canSyncCloud, resetSyncState]);
 
   // 10) 언마운트 시 클린업 및 최종 플러시 (설교문 변경 시 또는 사이드바 닫힐 때만 1회 실행)
   useEffect(() => {
@@ -534,10 +566,17 @@ export function useSermonSync({
     return () => {
       isMountedRef.current = false;
       if (checkIsDirtyRef.current()) {
+        flushLocalDraftSyncRef.current();
         commitToFirestoreRef.current();
       }
-      if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current);
-      if (localDraftTimerRef.current) clearTimeout(localDraftTimerRef.current);
+      if (throttleTimerRef.current) {
+        clearTimeout(throttleTimerRef.current);
+        throttleTimerRef.current = null;
+      }
+      if (localDraftTimerRef.current) {
+        clearTimeout(localDraftTimerRef.current);
+        localDraftTimerRef.current = null;
+      }
     };
   }, [sermonId]);
 

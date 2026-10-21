@@ -1,5 +1,7 @@
 // NATIONS BIBLE AI 주석 30일간 로컬 기기 보관 서비스
 import type { AiCommentaryData } from './geminiCommentaryService';
+import { BIBLE_BOOKS } from '../constants/bibleMeta';
+import { parseBibleReference, extractFirstVerseFromTitle } from '../utils/referenceParser';
 
 export interface CommentaryHistoryItem {
   id: string; // reference 기반 고유 ID (예: '창세기 1:1')
@@ -52,6 +54,103 @@ export function getCommentaryHistory(): CommentaryHistoryItem[] {
     console.error('Failed to load AI commentary history:', err);
     return [];
   }
+}
+
+/**
+ * 임의의 reference 문자열 ('창세기 1:1', '창 1:1', '창세기_1_1', 'GEN_1_1' 등)에서
+ * 표준 구절 키 ('GEN_1_1')를 안전하게 추출
+ */
+export function extractVerseKeyFromAnyRef(refStr: string): string | null {
+  if (!refStr || typeof refStr !== 'string') return null;
+  const clean = refStr.trim();
+
+  // 1. 'GEN_1_1' 직접 형식
+  const underscoreParts = clean.split('_');
+  if (underscoreParts.length === 3) {
+    const rawBook = underscoreParts[0];
+    const bId = BIBLE_BOOKS[rawBook] || rawBook;
+    const ch = parseInt(underscoreParts[1], 10);
+    const vs = parseInt(underscoreParts[2], 10);
+    if (!isNaN(ch) && ch > 0 && !isNaN(vs) && vs > 0) {
+      return `${bId}_${ch}_${vs}`;
+    }
+  }
+
+  // 2. 언더스코어 치환 ('창세기_1:1' -> '창세기 1:1')
+  const spaced = clean.replace(/_/g, ' ');
+
+  // 3. parseBibleReference 시도
+  const parsed = parseBibleReference(spaced);
+  if (parsed && parsed.bookId && parsed.chapter && parsed.verse) {
+    return `${parsed.bookId}_${parsed.chapter}_${parsed.verse}`;
+  }
+
+  // 4. extractFirstVerseFromTitle 시도 (수식어 붙은 구절 인식)
+  const extracted = extractFirstVerseFromTitle(spaced);
+  if (extracted && extracted.bookId && extracted.chapter && extracted.verse) {
+    return `${extracted.bookId}_${extracted.chapter}_${extracted.verse}`;
+  }
+
+  return null;
+}
+
+// 저장된 모든 AI 분석(구절 주석, 구절 신학 연구, 단어 심층 연구 등) 구절의 키 Set 반환
+export function getSavedCommentaryVerseKeys(): Set<string> {
+  const set = new Set<string>();
+
+  // 1. 순수 AI 주석 저장소 (nations_ai_commentary_history_v1)
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const items: any[] = JSON.parse(raw);
+      if (Array.isArray(items)) {
+        for (const item of items) {
+          if (item.bookName && item.chapter && item.verse) {
+            const bId = BIBLE_BOOKS[item.bookName] || BIBLE_BOOKS[String(item.bookName).trim()];
+            if (bId) {
+              set.add(`${bId}_${item.chapter}_${item.verse}`);
+              continue;
+            }
+          }
+          const ref = item.reference || item.id;
+          const key = extractVerseKeyFromAnyRef(ref);
+          if (key) set.add(key);
+        }
+      }
+    }
+  } catch {}
+
+  // 2. 구절 신학 심층 연구 저장소 (nations_passage_theology_studies_v1)
+  try {
+    const raw = localStorage.getItem('nations_passage_theology_studies_v1');
+    if (raw) {
+      const items: any[] = JSON.parse(raw);
+      if (Array.isArray(items)) {
+        for (const item of items) {
+          const ref = item.reference || item.id?.replace('_passage_theology', '');
+          const key = extractVerseKeyFromAnyRef(ref);
+          if (key) set.add(key);
+        }
+      }
+    }
+  } catch {}
+
+  // 3. 단어 심층 연구 저장소 (nations_word_deep_studies_v2)
+  try {
+    const raw = localStorage.getItem('nations_word_deep_studies_v2');
+    if (raw) {
+      const items: any[] = JSON.parse(raw);
+      if (Array.isArray(items)) {
+        for (const item of items) {
+          const ref = item.reference || (item.id ? item.id.split('_')[0] : '');
+          const key = extractVerseKeyFromAnyRef(ref);
+          if (key) set.add(key);
+        }
+      }
+    }
+  } catch {}
+
+  return set;
 }
 
 // 특정 구절이 30일 내 기록에 존재하는지 확인 및 반환

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, FileEdit, Plus, Calendar, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers, BookOpen, Folder, FolderOpen, ArrowLeft, Bold, Italic, Underline, Highlighter, HardDrive, Cloud, CloudOff } from 'lucide-react';
@@ -47,6 +47,7 @@ interface SermonSidebarProps {
 export interface SermonSidebarRef {
   resetToRightAndOpen: () => void;
   isFullyOpenOnRight: () => boolean;
+  openSermonById: (id: string) => void;
 }
 
 /**
@@ -104,6 +105,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   const saveSermonsToLocal = (data: Sermon[]) => {
     try {
       localStorage.setItem('bible-local-sermons', JSON.stringify(data));
+      window.dispatchEvent(new CustomEvent('bible-sermons-updated', { detail: data }));
     } catch (e) {
       console.warn('[SermonSidebar] 로컬 기기 저장 경고:', e);
     }
@@ -153,14 +155,21 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
             console.warn('[SermonSidebar] 로컬 설교 서버 동기화 실패:', loc.id, err);
           });
         } else {
-          // 둘 다 있는 경우: 더 최근 수정본(updatedAt) 기준 채택
+          // 둘 다 있는 경우: 더 최근 수정본(updatedAt) 기준 채택하되,
+          // 로컬에 유효한 본문이 있고 서버 본문이 비어있는 비정상 상태라면 로컬 본문을 보호
           const srv = serverMap.get(loc.id)!;
           const locUpdatedAt = loc.updatedAt || 0;
           const srvUpdatedAt = srv.updatedAt || 0;
-          if (locUpdatedAt > srvUpdatedAt) {
-            mergedMap.set(loc.id, loc);
+          const locHasContent = stripHtml(loc.content).length > 0;
+          const srvHasContent = stripHtml(srv.content).length > 0;
+
+          if (locUpdatedAt > srvUpdatedAt || (locHasContent && !srvHasContent)) {
+            const preserved: Sermon = locUpdatedAt > srvUpdatedAt
+              ? loc
+              : { ...srv, content: loc.content, updatedAt: Math.max(locUpdatedAt, srvUpdatedAt) };
+            mergedMap.set(loc.id, preserved);
             const docRef = doc(db, 'users', uid, 'sermons', loc.id);
-            setDoc(docRef, loc, { merge: true }).catch(err => {
+            setDoc(docRef, preserved, { merge: true }).catch(err => {
               console.warn('[SermonSidebar] 최신 로컬 설교 서버 갱신 실패:', loc.id, err);
             });
           }
@@ -248,6 +257,16 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
       } catch {}
 
       if (activeSermonId === id) {
+        hasUserEditedRef.current = false;
+        isEditorHydratedRef.current = false;
+        latestEditorRef.current = {
+          id: null,
+          title: '',
+          content: '',
+          fontId: 'noto-serif',
+          fontSize: 16,
+          autoVerseConversion: true,
+        };
         setView('list');
         setActiveSermonId(null);
         setEditorContent('');
@@ -255,31 +274,6 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     }
   };
 
-  const handleCreateNewSermon = () => {
-    const newId = 'sermon-' + Date.now();
-    // [최적화]: 기기에서 ID 발급 후 즉시 에디터 오픈 (오프라인/로컬/클라우드 공통 지원)
-    setActiveSermonId(newId);
-    setEditorTitle('');
-    setEditorContent('');
-    setSermonFontId('noto-serif');
-    setSermonFontSize(16);
-    setIsAutoVerseEnabled(true);
-    resetSyncState({ 
-      id: newId, 
-      title: '', 
-      content: '', 
-      version: 1,
-      fontId: 'noto-serif',
-      fontSize: 16,
-      autoVerseConversion: true,
-    });
-    setView('editor');
-    setTimeout(() => {
-      if (editorAreaRef.current) {
-        editorAreaRef.current.innerHTML = '';
-      }
-    }, 50);
-  };
   const [searchQuery, setSearchQuery] = useState('');
   
   const [view, setView] = useState<'list' | 'editor'>('list');
@@ -287,6 +281,25 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   const [editorTitle, setEditorTitle] = useState('');
   const [editorContent, setEditorContent] = useState('');
   const [syncToastMessage, setSyncToastMessage] = useState<string | null>(null);
+
+  // 에디터 최신 데이터의 단일 진실 공급원(Single Source of Truth) 및 실제 수정 여부 추적 Ref
+  const latestEditorRef = useRef<{
+    id: string | null;
+    title: string;
+    content: string;
+    fontId: string;
+    fontSize: number;
+    autoVerseConversion: boolean;
+  }>({
+    id: null,
+    title: '',
+    content: '',
+    fontId: 'noto-serif',
+    fontSize: 16,
+    autoVerseConversion: true,
+  });
+  const hasUserEditedRef = useRef<boolean>(false);
+  const isEditorHydratedRef = useRef<boolean>(false);
 
   const activeSermonObj = useMemo(() => {
     return sermons.find(s => s.id === activeSermonId) || null;
@@ -297,7 +310,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     syncStatus,
     isDirty,
     flushSave,
-    notifyChange,
+    notifyChange: rawNotifyChange,
     resetSyncState,
   } = useSermonSync({
     userId: googleUserId,
@@ -325,6 +338,16 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     },
     onRemoteUpdated: (updatedDoc: SermonDocument) => {
       // 다른 기기에서 수정한 최신본으로 조용한 자동 갱신
+      latestEditorRef.current = {
+        id: updatedDoc.id,
+        title: updatedDoc.title,
+        content: updatedDoc.content,
+        fontId: updatedDoc.fontId || latestEditorRef.current.fontId,
+        fontSize: typeof updatedDoc.fontSize === 'number' ? updatedDoc.fontSize : latestEditorRef.current.fontSize,
+        autoVerseConversion: updatedDoc.autoVerseConversion !== undefined ? updatedDoc.autoVerseConversion : latestEditorRef.current.autoVerseConversion,
+      };
+      hasUserEditedRef.current = false;
+
       setEditorTitle(updatedDoc.title);
       setEditorContent(updatedDoc.content);
       if (updatedDoc.fontId) setSermonFontId(updatedDoc.fontId);
@@ -333,13 +356,62 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
 
       if (editorAreaRef.current) {
         editorAreaRef.current.innerHTML = updatedDoc.content;
+        isEditorHydratedRef.current = true;
       }
+      setSermons(prev => {
+        const exists = prev.some(s => s.id === updatedDoc.id);
+        const next = exists
+          ? prev.map(s => s.id === updatedDoc.id ? { ...s, ...updatedDoc } : s)
+          : [{ ...updatedDoc }, ...prev];
+        saveSermonsToLocal(next);
+        return next;
+      });
       setSyncToastMessage('다른 기기에서 수정한 최신 설교 내용으로 자동 갱신되었습니다.');
     },
     onWarning: (msg: string) => {
       setSyncToastMessage(msg);
     },
   });
+
+  // 타이핑 및 편집 중 로컬 목록 자동 보관 디바운스 (1초)
+  const localListSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncCurrentEditorToLocalSermonsRef = useRef<(forceSave?: boolean) => void>(() => {});
+
+  const triggerDebouncedLocalSync = () => {
+    if (localListSyncTimerRef.current) clearTimeout(localListSyncTimerRef.current);
+    localListSyncTimerRef.current = setTimeout(() => {
+      localListSyncTimerRef.current = null;
+      syncCurrentEditorToLocalSermonsRef.current();
+    }, 1000);
+  };
+
+  // 에디터의 모든 변경(타이핑, 제목, 서식, 구절칩, 붙여넣기 등 14곳)이 통과하는 단일 관문
+  const notifyChange = (
+    title: string,
+    content: string,
+    extra?: { fontId?: string; fontSize?: number; autoVerseConversion?: boolean }
+  ) => {
+    const resolvedFontId = extra?.fontId !== undefined ? extra.fontId : latestEditorRef.current.fontId;
+    const resolvedFontSize = extra?.fontSize !== undefined ? extra.fontSize : latestEditorRef.current.fontSize;
+    const resolvedAutoVerse = extra?.autoVerseConversion !== undefined ? extra.autoVerseConversion : latestEditorRef.current.autoVerseConversion;
+
+    latestEditorRef.current = {
+      id: latestEditorRef.current.id,
+      title,
+      content,
+      fontId: resolvedFontId,
+      fontSize: resolvedFontSize,
+      autoVerseConversion: resolvedAutoVerse,
+    };
+    hasUserEditedRef.current = true;
+
+    rawNotifyChange(title, content, {
+      fontId: resolvedFontId,
+      fontSize: resolvedFontSize,
+      autoVerseConversion: resolvedAutoVerse,
+    });
+    triggerDebouncedLocalSync();
+  };
 
   const SERMON_FONTS = [
     { id: 'noto-serif', name: '본명조 (Noto Serif)', family: "'Noto Serif KR', Georgia, serif" },
@@ -993,6 +1065,10 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     },
     isFullyOpenOnRight: () => {
       return dockPosition === 'right' && !isCollapsed;
+    },
+    openSermonById: (id: string) => {
+      openEditor(id);
+      onCollapseChange(false);
     }
   }));
 
@@ -1150,30 +1226,63 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
   }, [filteredSermons]);
 
   const openEditor = (id: string) => {
-    setActiveSermonId(id);
-    setView('editor');
-    const sermon = sermons.find(s => s.id === id);
-    let title = sermon?.title || '';
-    let content = sermon?.content || '';
-    let fontId = sermon?.fontId || 'noto-serif';
-    let fontSize = typeof sermon?.fontSize === 'number' ? sermon.fontSize : 16;
-    let autoVerse = sermon?.autoVerseConversion !== undefined ? sermon.autoVerseConversion : true;
+    // 이전에 다른 노트를 편집 중이었다면 로컬 목록에 먼저 안전하게 동기화
+    if (view === 'editor' && latestEditorRef.current.id && latestEditorRef.current.id !== id) {
+      syncCurrentEditorToLocalSermons();
+    }
 
-    // 만약 미저장된 로컬 드래프트가 남아있다면 안전하게 복원
+    const sermon = sermons.find(s => s.id === id);
+    const baseTitle = sermon?.title || '';
+    const baseContent = sermon?.content || '';
+    const baseFontId = sermon?.fontId || 'noto-serif';
+    const baseFontSize = typeof sermon?.fontSize === 'number' ? sermon.fontSize : 16;
+    const baseAutoVerse = sermon?.autoVerseConversion !== undefined ? sermon.autoVerseConversion : true;
+
+    let title = baseTitle;
+    let content = baseContent;
+    let fontId = baseFontId;
+    let fontSize = baseFontSize;
+    let autoVerse = baseAutoVerse;
+    let wasRestoredFromDraft = false;
+
+    // 만약 미저장된 로컬 드래프트가 남아있다면 안전하게 복원 (단, 빈 드래프트가 기존 유효 본문을 덮어쓰지 않도록 보호)
     try {
       const rawDraft = localStorage.getItem(`sermon_draft_${id}`);
       if (rawDraft) {
         const draft = JSON.parse(rawDraft);
         if (draft && (!sermon?.updatedAt || draft.timestamp > sermon.updatedAt)) {
-          if (draft.title !== undefined) title = draft.title;
-          if (draft.content !== undefined) content = draft.content;
-          if (draft.fontId) fontId = draft.fontId;
-          if (typeof draft.fontSize === 'number') fontSize = draft.fontSize;
-          if (draft.autoVerseConversion !== undefined) autoVerse = draft.autoVerseConversion;
+          const baseHasContent = stripHtml(baseContent).length > 0;
+          const draftHasContent = stripHtml(draft.content).length > 0;
+          if (!baseHasContent || draftHasContent) {
+            if (draft.title !== undefined && draft.title !== baseTitle) {
+              title = draft.title;
+              wasRestoredFromDraft = true;
+            }
+            if (draft.content !== undefined && draft.content !== baseContent) {
+              content = draft.content;
+              wasRestoredFromDraft = true;
+            }
+            if (draft.fontId) fontId = draft.fontId;
+            if (typeof draft.fontSize === 'number') fontSize = draft.fontSize;
+            if (draft.autoVerseConversion !== undefined) autoVerse = draft.autoVerseConversion;
+          }
         }
       }
     } catch {}
 
+    latestEditorRef.current = {
+      id,
+      title,
+      content,
+      fontId,
+      fontSize,
+      autoVerseConversion: autoVerse,
+    };
+    hasUserEditedRef.current = wasRestoredFromDraft;
+    isEditorHydratedRef.current = false;
+
+    setActiveSermonId(id);
+    setView('editor');
     setEditorTitle(title);
     setEditorContent(content);
     setSermonFontId(fontId);
@@ -1182,19 +1291,27 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
 
     resetSyncState({ 
       id, 
-      title, 
-      content, 
+      title: baseTitle, 
+      content: baseContent, 
       version: sermon?.version || 1,
-      fontId,
-      fontSize,
-      autoVerseConversion: autoVerse,
+      fontId: baseFontId,
+      fontSize: baseFontSize,
+      autoVerseConversion: baseAutoVerse,
     });
 
-    setTimeout(() => {
-      if (editorAreaRef.current) {
-        editorAreaRef.current.innerHTML = content;
-      }
-    }, 50);
+    if (editorAreaRef.current) {
+      editorAreaRef.current.innerHTML = content;
+      isEditorHydratedRef.current = true;
+    }
+
+    if (wasRestoredFromDraft) {
+      rawNotifyChange(title, content, {
+        fontId,
+        fontSize,
+        autoVerseConversion: autoVerse,
+      });
+      syncCurrentEditorToLocalSermons(true);
+    }
   };
 
   const createNewEditor = () => {
@@ -1204,6 +1321,17 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     }
 
     const newId = `sermon-${Date.now()}`;
+    latestEditorRef.current = {
+      id: newId,
+      title: '',
+      content: '',
+      fontId: 'noto-serif',
+      fontSize: 16,
+      autoVerseConversion: true,
+    };
+    hasUserEditedRef.current = false;
+    isEditorHydratedRef.current = false;
+
     setActiveSermonId(newId);
     setView('editor');
     setEditorTitle('');
@@ -1221,63 +1349,113 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
       fontSize: 16,
       autoVerseConversion: true,
     });
-    setTimeout(() => {
-      if (editorAreaRef.current) {
-        editorAreaRef.current.innerHTML = '';
-      }
-    }, 50);
+
+    if (editorAreaRef.current) {
+      editorAreaRef.current.innerHTML = '';
+      isEditorHydratedRef.current = true;
+    }
   };
+
+  // 에디터 화면 진입 및 설교문 전환 시 0ms 동기적으로 DOM에 본문 주입 (50ms 지연 타이머 레이스 컨디션 원천 제거)
+  useLayoutEffect(() => {
+    if (isOpen && view === 'editor' && activeSermonId && editorAreaRef.current) {
+      const targetHtml = latestEditorRef.current.id === activeSermonId
+        ? latestEditorRef.current.content
+        : editorContent;
+      if (editorAreaRef.current.innerHTML !== targetHtml) {
+        editorAreaRef.current.innerHTML = targetHtml;
+      }
+      isEditorHydratedRef.current = true;
+    } else if (view !== 'editor' || !isOpen) {
+      isEditorHydratedRef.current = false;
+    }
+  }, [isOpen, view, activeSermonId]);
 
   useEffect(() => {
     if (clipboardText) {
-      if (view === 'list') {
+      if (view === 'list' || !activeSermonId) {
         openEditor(`new-${Date.now()}`);
       }
-      setEditorContent(prev => {
-        const next = prev ? prev + '<br><br>' + clipboardText : clipboardText;
-        if (editorAreaRef.current) {
-          editorAreaRef.current.innerHTML = next;
-        }
-        notifyChange(editorTitle, next);
-        triggerDebouncedLocalSync();
-        return next;
+      const prevContent = latestEditorRef.current.content;
+      const next = prevContent ? prevContent + '<br><br>' + clipboardText : clipboardText;
+      latestEditorRef.current.content = next;
+      hasUserEditedRef.current = true;
+      setEditorContent(next);
+      if (editorAreaRef.current) {
+        editorAreaRef.current.innerHTML = next;
+        isEditorHydratedRef.current = true;
+      }
+      notifyChange(latestEditorRef.current.title, next, {
+        fontId: latestEditorRef.current.fontId,
+        fontSize: latestEditorRef.current.fontSize,
+        autoVerseConversion: latestEditorRef.current.autoVerseConversion,
       });
+      syncCurrentEditorToLocalSermons(true);
       onCollapseChange(false);
       onClipboardTextProcessed?.();
     }
-  }, [clipboardText, view, onClipboardTextProcessed, onCollapseChange]);
+  }, [clipboardText, view, activeSermonId, onClipboardTextProcessed, onCollapseChange]);
 
   // 작성 중인 에디터 내용을 로컬 설교 목록에 즉시 동기화 (기기 무제한 보관)
-  const syncCurrentEditorToLocalSermons = () => {
-    if (!activeSermonId) return;
-    const titleToSave = editorTitle.trim() || '제목 없음';
-    // 에디터 DOM이 살아있으면 최신 innerHTML 우선 참조 (React 상태 비동기 누락 방지)
-    const contentToSave = editorAreaRef.current ? editorAreaRef.current.innerHTML : editorContent;
+  const syncCurrentEditorToLocalSermons = (forceSave: boolean = false) => {
+    const currentId = latestEditorRef.current.id || activeSermonId;
+    if (!currentId) return;
+
+    // 사용자가 노트를 연 후 아무런 수정도 하지 않았고(Read-Only 열람) 강제 저장도 아니라면 기존 데이터를 덮어쓰지 않고 즉시 종료
+    if (!hasUserEditedRef.current && !isDirty && !forceSave) {
+      return;
+    }
+
+    if (localListSyncTimerRef.current) {
+      clearTimeout(localListSyncTimerRef.current);
+      localListSyncTimerRef.current = null;
+    }
+
+    const titleToSave = latestEditorRef.current.title.trim() || '제목 없음';
+    // 에디터 DOM이 정상 초기화된 상태라면 최신 innerHTML을 참조하되, 비정상 빈 값일 경우 latestEditorRef로 보호
+    let contentToSave = latestEditorRef.current.content;
+    if (isEditorHydratedRef.current && editorAreaRef.current) {
+      const domHtml = editorAreaRef.current.innerHTML;
+      if (domHtml.trim().length > 0 || hasUserEditedRef.current) {
+        contentToSave = domHtml;
+        latestEditorRef.current.content = domHtml;
+      }
+    }
+
+    const fontIdToSave = latestEditorRef.current.fontId;
+    const fontSizeToSave = latestEditorRef.current.fontSize;
+    const autoVerseToSave = latestEditorRef.current.autoVerseConversion;
     const currentDate = new Date().toISOString().split('T')[0];
+
     setSermons(prev => {
-      const exists = prev.some(s => s.id === activeSermonId);
+      const existingSermon = prev.find(s => s.id === currentId);
+      // 추가 방어: 수정한 적이 없는데 기존 본문이 있고 저장하려는 본문이 비어있다면 덮어쓰지 않음
+      if (!hasUserEditedRef.current && existingSermon?.content && stripHtml(existingSermon.content).length > 0 && stripHtml(contentToSave).length === 0) {
+        return prev;
+      }
+
       let next: Sermon[];
-      if (exists) {
-        next = prev.map(s => s.id === activeSermonId ? {
+      if (existingSermon) {
+        next = prev.map(s => s.id === currentId ? {
           ...s,
           title: titleToSave,
           content: contentToSave,
           date: s.date || currentDate,
           updatedAt: Date.now(),
-          fontId: sermonFontId,
-          fontSize: sermonFontSize,
-          autoVerseConversion: isAutoVerseEnabled,
+          fontId: fontIdToSave,
+          fontSize: fontSizeToSave,
+          autoVerseConversion: autoVerseToSave,
         } : s);
       } else {
         next = [{
-          id: activeSermonId,
+          id: currentId,
           title: titleToSave,
           content: contentToSave,
           date: currentDate,
           updatedAt: Date.now(),
-          fontId: sermonFontId,
-          fontSize: sermonFontSize,
-          autoVerseConversion: isAutoVerseEnabled,
+          fontId: fontIdToSave,
+          fontSize: fontSizeToSave,
+          autoVerseConversion: autoVerseToSave,
         }, ...prev];
       }
       saveSermonsToLocal(next);
@@ -1287,41 +1465,61 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
       return next;
     });
   };
+  syncCurrentEditorToLocalSermonsRef.current = syncCurrentEditorToLocalSermons;
 
-  // 타이핑 중 로컬 목록 자동 보관 디바운스 (1초)
-  const localListSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const triggerDebouncedLocalSync = () => {
-    if (localListSyncTimerRef.current) clearTimeout(localListSyncTimerRef.current);
-    localListSyncTimerRef.current = setTimeout(() => {
-      syncCurrentEditorToLocalSermons();
-    }, 1000);
-  };
+  const flushSaveRef = useRef(flushSave);
+  flushSaveRef.current = flushSave;
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
+  // 외부 버튼(상단바 설교 아이콘 등)으로 사이드바가 닫힐 때 로컬 즉시 저장 및 서버 플러시
+  const prevIsOpenRef = useRef(isOpen);
+  useEffect(() => {
+    if (prevIsOpenRef.current && !isOpen) {
+      if (view === 'editor' && latestEditorRef.current.id) {
+        syncCurrentEditorToLocalSermonsRef.current();
+        flushSaveRef.current();
+      }
+    }
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen, view]);
 
   // 생명주기 이벤트(창 전환 / 닫기 / 폰 화면 꺼짐 / 백그라운드) 시 로컬 및 클라우드 즉시 동기화
+  // 의존성 배열을 []로 고정하여 타이핑 중 리렌더링 시 1초 로컬 자동저장 타이머가 취소되지 않도록 보장
   useEffect(() => {
-    const handleLifeCycle = () => {
-      if (view === 'editor' && activeSermonId) {
-        syncCurrentEditorToLocalSermons();
-        flushSave();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && viewRef.current === 'editor' && latestEditorRef.current.id) {
+        syncCurrentEditorToLocalSermonsRef.current();
+        flushSaveRef.current();
       }
     };
-    document.addEventListener('visibilitychange', handleLifeCycle);
-    window.addEventListener('pagehide', handleLifeCycle);
-    window.addEventListener('beforeunload', handleLifeCycle);
-    return () => {
-      document.removeEventListener('visibilitychange', handleLifeCycle);
-      window.removeEventListener('pagehide', handleLifeCycle);
-      window.removeEventListener('beforeunload', handleLifeCycle);
-      if (localListSyncTimerRef.current) clearTimeout(localListSyncTimerRef.current);
+    const handlePageHide = () => {
+      if (viewRef.current === 'editor' && latestEditorRef.current.id) {
+        syncCurrentEditorToLocalSermonsRef.current();
+        flushSaveRef.current();
+      }
     };
-  }, [view, activeSermonId, editorTitle, editorContent, sermonFontId, sermonFontSize, isAutoVerseEnabled, flushSave]);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handlePageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handlePageHide);
+      if (localListSyncTimerRef.current) {
+        clearTimeout(localListSyncTimerRef.current);
+        localListSyncTimerRef.current = null;
+        syncCurrentEditorToLocalSermonsRef.current();
+      }
+    };
+  }, []);
 
   const handleClose = async () => {
     if (view === 'editor') {
-      await flushSave();
       syncCurrentEditorToLocalSermons();
       onClose();
       onCollapseChange(false);
+      await flushSave();
     } else {
       onClose();
       onCollapseChange(false);
@@ -1330,10 +1528,12 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
 
   const handleBackToList = async () => {
     if (view === 'editor') {
-      await flushSave();
       syncCurrentEditorToLocalSermons();
+      setView('list');
+      await flushSave();
+    } else {
+      setView('list');
     }
-    setView('list');
   };
 
   const getContainerClasses = () => {
@@ -1644,7 +1844,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                     <button 
                       onClick={async () => {
                         if (activeSermonId) {
-                          syncCurrentEditorToLocalSermons();
+                          syncCurrentEditorToLocalSermons(true);
                           const ok = await flushSave();
                           if (ok) {
                             setSyncToastMessage(canSyncCloud ? '설교가 클라우드 서버에 안전하게 동기화되었습니다.' : '설교가 기기(로컬)에 안전하게 저장되었습니다.');
@@ -2262,15 +2462,15 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                   onChange={(e) => {
                     const newTitle = e.target.value;
                     setEditorTitle(newTitle);
-                    notifyChange(newTitle, editorContent, {
+                    notifyChange(newTitle, latestEditorRef.current.content, {
                       fontId: sermonFontId,
                       fontSize: sermonFontSize,
                       autoVerseConversion: isAutoVerseEnabled,
                     });
-                    triggerDebouncedLocalSync();
                   }}
                 />
                 <div
+                  key={activeSermonId || 'empty'}
                   ref={editorAreaRef}
                   contentEditable={true}
                   suppressContentEditableWarning
@@ -2284,12 +2484,11 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                   onInput={(e) => {
                     const newHtml = e.currentTarget.innerHTML;
                     setEditorContent(newHtml);
-                    notifyChange(editorTitle, newHtml, {
+                    notifyChange(latestEditorRef.current.title, newHtml, {
                       fontId: sermonFontId,
                       fontSize: sermonFontSize,
                       autoVerseConversion: isAutoVerseEnabled,
                     });
-                    triggerDebouncedLocalSync();
                     saveCurrentSelection();
                   }}
                   style={{ 

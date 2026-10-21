@@ -29,9 +29,11 @@ import { AuthModal } from './components/AuthModal';
 import { ClaudeAuthPage } from './components/ClaudeAuthPage';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
 import { PolicyViewModal, type PolicyModalType } from './components/PolicyViewModal';
+import { InviteBonusModal } from './components/InviteBonusModal';
 import { getCachedSitePolicy, subscribeSitePolicy, type SitePolicy, DEFAULT_SITE_POLICY } from './services/policyService';
 import { isAdminUser, syncUserProfile, getLocalUserResourceCounts } from './services/userService';
 import { auth } from './api/firebaseConfig';
+import { processOAuthCallback, syncUserWithHub, getSocialUserMeta } from './utils/socialAuth';
 import { signOut } from 'firebase/auth';
 
 const AdminModal = React.lazy(() => import('./components/AdminModal').then(m => ({ default: m.AdminModal })));
@@ -262,7 +264,7 @@ const SidebarVersionItem: React.FC<SidebarVersionItemProps> = ({
       try {
         dragControls.start(e);
       } catch (_) {}
-    }, 400);
+    }, 200);
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
@@ -299,8 +301,16 @@ const SidebarVersionItem: React.FC<SidebarVersionItemProps> = ({
       value={v}
       dragListener={!isMobile}
       dragControls={dragControls}
+      dragElastic={0.05}
+      whileDrag={{
+        scale: 1.04,
+        boxShadow: '0 10px 25px -5px rgba(44, 43, 41, 0.18)',
+        backgroundColor: '#FFFFFF',
+        zIndex: 50,
+        cursor: 'grabbing'
+      }}
       className={`
-        group relative flex items-center gap-1.5 px-2 py-2 rounded-xl select-none transition-all duration-150 cursor-pointer
+        group relative flex items-center gap-1.5 px-2 py-2 rounded-xl select-none cursor-pointer transition-colors
         ${!isMobile ? 'cursor-grab active:cursor-grabbing hover:bg-[#F3EFE9]' : ''}
         ${isPressing ? 'scale-[1.02] bg-[#EBE5DC] shadow-md z-30' : ''}
         ${isSelected 
@@ -313,18 +323,20 @@ const SidebarVersionItem: React.FC<SidebarVersionItemProps> = ({
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchEnd}
     >
-      {/* 드래그 힌트 그립 아이콘 */}
+      {/* 드래그 힌트 그립 아이콘 (마우스 및 터치 즉시 드래그 발동) */}
       <div 
-        className="text-[#A3A19B] opacity-30 group-hover:opacity-100 transition-opacity shrink-0 cursor-grab active:cursor-grabbing touch-none p-0.5"
+        className="text-[#8C877D] hover:text-[#2B2927] p-1 -ml-1 rounded hover:bg-[#EAE4DA]/60 transition-colors shrink-0 cursor-grab active:cursor-grabbing touch-none"
         title="잡고 드래그하여 순서 변경"
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          dragControls.start(e);
+        }}
         onTouchStart={(e) => {
-          if (isMobile) {
-            e.stopPropagation();
-            dragControls.start(e);
-          }
+          e.stopPropagation();
+          dragControls.start(e);
         }}
       >
-        <GripVertical className="w-3.5 h-3.5 stroke-[1.8px]" />
+        <GripVertical className="w-3.5 h-3.5 stroke-[2px]" />
       </div>
 
       {/* 원형 체크 동그라미 */}
@@ -413,6 +425,7 @@ const MainApp: React.FC = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authPageSection, setAuthPageSection] = useState<'login' | 'pricing'>('login');
   const [showAdminDashboardModal, setShowAdminDashboardModal] = useState(false);
+  const [showInviteBonusModal, setShowInviteBonusModal] = useState(false);
   const [promoSettings, setPromoSettings] = useState<{ enabled: boolean; bonusCredits: number; name: string; description?: string } | null>(null);
   const [welcomeModalInfo, setWelcomeModalInfo] = useState<{
     isOpen: boolean;
@@ -442,16 +455,43 @@ const MainApp: React.FC = () => {
     }
   }, []);
 
-  // Firebase Auth 통합 리스너 (구글 + 일반 이메일 간편가입 지원)
+  // 카카오 / 네이버 OAuth 리다이렉트 콜백 처리
+  React.useEffect(() => {
+    const isCb = typeof window !== 'undefined' && (
+      window.location.pathname.startsWith('/auth/') ||
+      new URLSearchParams(window.location.search).has('code')
+    );
+    if (isCb) setIsAuthChecking(true);
+    processOAuthCallback(auth).then((res) => {
+      if (res && res.success) {
+        setIsAuthenticated(true);
+        setShowAuthModal(false);
+      } else if (res && !res.success && res.error) {
+        alert(res.error);
+      }
+    }).catch((err) => {
+      console.warn('[App] processOAuthCallback warning:', err);
+    }).finally(() => {
+      if (isCb) setIsAuthChecking(false);
+    });
+  }, []);
+
+  // Firebase Auth 통합 리스너 (구글 + 카카오 + 네이버 + 일반 이메일 간편가입 지원)
   React.useEffect(() => {
     const unsubAuth = auth.onAuthStateChanged(async (user) => {
       if (user) {
         setIsAuthenticated(true);
+        const socialMeta = getSocialUserMeta(user);
+        const resolvedEmail = user.email || socialMeta?.email || '';
+        const resolvedName = user.displayName || socialMeta?.displayName || resolvedEmail.split('@')[0] || '사용자';
+        const resolvedPhoto = user.photoURL || socialMeta?.photoURL || '';
         const profile = {
-          name: user.displayName || user.email?.split('@')[0] || '사용자',
-          email: user.email || '',
-          picture: user.photoURL || '',
+          name: resolvedName,
+          email: resolvedEmail,
+          picture: resolvedPhoto,
         };
+        // 중앙 인증 허브(sermon-ym)에 바이블 앱 접속 이력 동기화
+        syncUserWithHub(user, 'bible').catch(() => {});
         setUserProfile(profile);
         try {
           localStorage.setItem('cached_auth_user', JSON.stringify(profile));
@@ -466,7 +506,7 @@ const MainApp: React.FC = () => {
         let retries = 3;
         while (retries > 0) {
           try {
-            const syncedProfile = await syncUserProfile(user, getLocalUserResourceCounts());
+            const syncedProfile = await syncUserProfile({ uid: user.uid, email: resolvedEmail, displayName: resolvedName, photoURL: resolvedPhoto }, getLocalUserResourceCounts());
             console.log('[App] ✅ syncUserProfile 성공 uid:', user.uid);
 
             // 신규 가입자 환영 팝업 체크 (기존 가입자는 절대 중복 노출 안 됨)
@@ -813,6 +853,20 @@ const MainApp: React.FC = () => {
       }, 50);
     }
   };
+
+  const handleOpenSermonNote = React.useCallback((sermonId: string) => {
+    setIsSermonSidebarOpen(true);
+    setIsSermonCollapsed(false);
+    if (sermonSidebarRef.current) {
+      sermonSidebarRef.current.resetToRightAndOpen();
+      sermonSidebarRef.current.openSermonById(sermonId);
+    } else {
+      requestAnimationFrame(() => {
+        sermonSidebarRef.current?.resetToRightAndOpen();
+        sermonSidebarRef.current?.openSermonById(sermonId);
+      });
+    }
+  }, []);
   
   // Search popovers (주석 검색 및 구절노트 메모 검색)
   const [showNoteSearch, setShowNoteSearch] = useState(false);
@@ -893,7 +947,7 @@ const MainApp: React.FC = () => {
   const [isResizing, setIsResizing] = useState(false);
 
   // AI 주석 상태
-  const { totalRemaining, totalCapacity, remainingDaysText, cloudCommentaryLimit, usedCloudCommentaryCount } = useAiUsage();
+  const { totalRemaining, totalCapacity, remainingDaysText, cloudCommentaryLimit, usedCloudCommentaryCount, subscribedPlan } = useAiUsage();
   const [isAiCommentaryOpen, setIsAiCommentaryOpen] = useState(false);
   const [aiPanelTab, setAiPanelTab] = useState<AiTabType>('all');
   const [aiRechargeTrigger, setAiRechargeTrigger] = useState(0);
@@ -1417,124 +1471,44 @@ const MainApp: React.FC = () => {
                 {/* 번역본 목록 아래 구분선 */}
                 <div className="my-2.5 border-t border-[#EAE4DA]" />
 
-                {/* AI 주석 메뉴 섹션 */}
-                <div className="space-y-0.5">
-                  {/* 1. AI 주석 (활성화 되어도 색상 변경 없이 그대로 유지) */}
-                  <button
-                    onClick={() => {
-                      setAiRechargeTrigger(0);
-                      setAiPanelTab('all');
-                      setIsAiCommentaryOpen(true);
-                      setIsSidebarOpen(false);
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap"
-                  >
-                    <ClaudeSparkleIcon className="w-4 h-4 text-[#6E6A63] shrink-0" />
-                    <span>AI 주석</span>
-                  </button>
-
-                  {/* 2. 충전 남은횟수 (아래에 남은 일수 명시) */}
-                  <button
-                    onClick={() => {
-                      if (!isAuthenticated) {
-                        setAuthPageSection('login');
-                        setShowAuthModal(true);
-                        return;
-                      }
-                      setAuthPageSection('pricing');
-                      setShowAuthModal(true);
-                      setIsSidebarOpen(false);
-                    }}
-                    className="w-full flex flex-col gap-1 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap"
-                    title="AI 주석 잔여 횟수 확인 및 충전"
-                  >
-                    <div className="w-full flex items-center justify-between gap-1.5">
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <CreditCard className="w-3.5 h-3.5 text-[#6E6A63] stroke-[1.5px] shrink-0" />
-                        <span className="whitespace-nowrap">충전</span>
-                      </div>
-                      <span className="text-xs font-medium text-[#6E6A63] whitespace-nowrap">
-                        <span className="text-[#8C877D] font-normal mr-1">보유 크레딧:</span>
-                        <strong className="font-bold text-[#2B2927]">{totalRemaining}</strong>
-                      </span>
-                    </div>
-                    {/* 충전 아래 유효기간 정보: 크레딧 수치 아래로 단정하게 우측 정렬 */}
-                    <div className="w-full flex items-center justify-end gap-1.5 text-[11px] text-[#8C877D] whitespace-nowrap">
-                      <span>유효기간</span>
-                      <span className={`font-medium ${remainingDaysText === '-' ? 'text-[#2B2927]' : 'text-[#C46A40]'}`}>
-                        {remainingDaysText}
-                      </span>
-                    </div>
-                  </button>
-
-                  {/* 비로그인 시 충전 남은횟수 및 유효기간 아래: 가입 혜택 안내 (위아래 충전/저장과 여백/아이콘 완전 정렬) */}
-                  {!isAuthenticated && promoSettings?.enabled && (
-                    <div
+                {/* 구독상태 및 플랜 업그레이드 / 친구 초대 */}
+                <div className="space-y-2">
+                  {/* 플랜 정보 & 플랜 업그레이드 헤더 */}
+                  <div className="flex items-center justify-between px-2 pt-1">
+                    <span className="text-xs font-bold text-[#2B2927]">
+                      {subscribedPlan 
+                        ? subscribedPlan.split('(')[0].trim() 
+                        : '무료 플랜'}
+                    </span>
+                    <button
                       onClick={() => {
-                        setAuthPageSection('login');
+                        if (!isAuthenticated) {
+                          setAuthPageSection('login');
+                          setShowAuthModal(true);
+                          return;
+                        }
+                        setAuthPageSection('pricing');
                         setShowAuthModal(true);
+                        setIsSidebarOpen(false);
                       }}
-                      className="w-full flex flex-col gap-1 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap group"
+                      className="text-xs font-semibold text-[#C46A40] hover:text-[#A8532B] hover:underline transition-colors cursor-pointer"
                     >
-                      <div className="w-full flex items-center justify-between gap-1.5">
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <Gift className="w-3.5 h-3.5 text-[#6E6A63] stroke-[1.5px] shrink-0" />
-                          <span className="whitespace-nowrap text-[#4A4741]">
-                            {(promoSettings.name && !promoSettings.name.includes('10회') && !promoSettings.name.includes('크레딧') && !promoSettings.name.includes('가입')) ? promoSettings.name : '특별혜택기간'}
-                          </span>
-                        </div>
-                        <span className="text-xs font-medium text-[#2B2927] whitespace-nowrap">
-                          {(promoSettings.description || '200크레딧 제공').replace(/^(?:특별혜택기간|프로모션)\s*:\s*/, '').replace(/200\s*크[래레]딧\s*제공/, '200크레딧 제공').replace('크래딧', '크레딧').trim()}
-                        </span>
-                      </div>
-                      <div className="w-full flex items-center justify-end">
-                        <span className="text-[11px] font-medium text-[#C46A40] group-hover:underline cursor-pointer">
-                          혜택 받기 →
-                        </span>
-                      </div>
-                    </div>
-                  )}
+                      플랜 업그레이드
+                    </button>
+                  </div>
 
-                  {/* 3. 주석기록 30일 보관 / 클라우드 평생 보관 */}
+                  {/* 친구 초대 1+1 보너스 카드 */}
                   <button
                     onClick={() => {
-                      if (!isAuthenticated) {
-                        setAuthPageSection('login');
-                        setShowAuthModal(true);
-                        return;
-                      }
-                      setAiPanelTab('history');
-                      setIsAiCommentaryOpen(true);
+                      setShowInviteBonusModal(true);
                       setIsSidebarOpen(false);
                     }}
-                    className="w-full flex flex-col gap-1 px-2.5 py-2 rounded-xl text-xs font-normal text-[#4A4741] hover:bg-[#F3EFE9] transition-all cursor-pointer whitespace-nowrap"
-                    title="저장된 주석 목록 및 보관 상태 확인"
+                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs bg-[#FAF3EC] border border-[#ECD9CC] hover:bg-[#F5EAE0] transition-all cursor-pointer group text-left"
+                    title="친구 초대 1+1 보너스 확인"
                   >
-                    <div className="w-full flex items-center justify-between gap-1.5">
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <Database className="w-3.5 h-3.5 text-[#6E6A63] stroke-[1.5px] shrink-0" />
-                        <span className="whitespace-nowrap">저장</span>
-                      </div>
-                      <span className="text-xs font-medium text-[#2B2927] whitespace-nowrap">
-                        {cloudCommentaryLimit > 0 
-                          ? (cloudCommentaryLimit >= 30000 ? '주석 클라우드 무제한' : `주석 클라우드 ${cloudCommentaryLimit}`) 
-                          : '30일 기본 보관'}
-                      </span>
-                    </div>
-                    {/* 저장 아래 보관 상태 및 목록 수: 충전 유효기간과 완벽 정렬 */}
-                    <div className="w-full flex items-center justify-end gap-1.5 text-[11px] text-[#8C877D] whitespace-nowrap">
-                      <span>{cloudCommentaryLimit > 0 ? '서버보관 중' : '기기보관 중'}</span>
-                      {(() => {
-                        const effectiveCount = Math.max(savedHistoryCount, cloudCommentaryLimit > 0 ? (usedCloudCommentaryCount || 0) : 0);
-                        return (
-                          <span 
-                            className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-transparent border border-[#2B2927]/40 text-[#2B2927] shrink-0"
-                            title={`현재 저장된 주석 목록: ${effectiveCount}개`}
-                          >
-                            {effectiveCount}
-                          </span>
-                        );
-                      })()}
+                    <div className="flex items-center gap-2">
+                      <Gift className="w-4 h-4 text-[#C46A40] stroke-[1.8px] shrink-0" />
+                      <span className="font-bold text-[#C46A40]">친구 초대 1+1 보너스</span>
                     </div>
                   </button>
                 </div>
@@ -1854,6 +1828,10 @@ const MainApp: React.FC = () => {
                   searchFontSize={searchFontSize}
                   setSearchFontSize={setSearchFontSize}
                   onOpenAdminModal={() => setShowAdminModal(true)}
+                  onOpenPricing={() => {
+                    setAuthPageSection('pricing');
+                    setShowAuthModal(true);
+                  }}
                 />
               ) : versions.length === 0 ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center p-8 bg-white">
@@ -1934,6 +1912,7 @@ const MainApp: React.FC = () => {
                             setAiSelectedVerse({ verse, text });
                             setIsAiCommentaryOpen(true);
                           }}
+                          onOpenSermonNote={handleOpenSermonNote}
                         />
                       </div>
                     </div>
@@ -2020,6 +1999,7 @@ const MainApp: React.FC = () => {
                               setAiSelectedVerse({ verse, text });
                               setIsAiCommentaryOpen(true);
                             }}
+                            onOpenSermonNote={handleOpenSermonNote}
                           />
                         </div>
                       </div>
@@ -2823,6 +2803,17 @@ const MainApp: React.FC = () => {
         remainingDaysText={remainingDaysText}
         cloudCommentaryLimit={cloudCommentaryLimit}
         promoSettings={promoSettings}
+      />
+
+      {/* 친구 초대 1+1 보너스 모달 */}
+      <InviteBonusModal
+        isOpen={showInviteBonusModal}
+        onClose={() => setShowInviteBonusModal(false)}
+        currentUser={auth.currentUser}
+        onRequireLogin={() => {
+          setAuthPageSection('login');
+          setShowAuthModal(true);
+        }}
       />
 
       {/* 서비스 이용약관, 개인정보 처리방침, 사업자 정보 모달 */}

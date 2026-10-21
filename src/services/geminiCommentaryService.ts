@@ -230,6 +230,7 @@ export async function generateBibleAiCommentary(params: {
 
     const response = await callGenerateBible({
       actionType: 'verse_commentary',
+      uid: auth.currentUser?.uid || null,
       payload: {
         bookName,
         bookId,
@@ -404,6 +405,7 @@ export async function generateWordDeepStudy(params: {
 
     const response = await callGenerateBible({
       actionType: 'word_deep_study',
+      uid: auth.currentUser?.uid || null,
       payload: {
         reference,
         scriptureText,
@@ -538,6 +540,7 @@ export async function generatePassageTheologicalStudy(params: {
 
     const response = await callGenerateBible({
       actionType: 'passage_theology',
+      uid: auth.currentUser?.uid || null,
       payload: {
         reference,
         scriptureText,

@@ -121,5 +121,23 @@ export const bibleDB = {
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
+  },
+
+  /**
+   * 브라우저에 영구 저장소(Persistent Storage) 권한 요청
+   * 캐시 정리 또는 디스크 부족 시 브라우저가 임의로 IndexedDB를 삭제하는 것을 방지
+   */
+  async requestPersistentStorage(): Promise<boolean> {
+    if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+      try {
+        const isPersisted = await navigator.storage.persist();
+        console.log(`[indexedDB] Persistent storage status: ${isPersisted ? '영구 보존 설정 완료' : '기본 보존 모드'}`);
+        return isPersisted;
+      } catch (e) {
+        console.warn('[indexedDB] Persistent storage request failed:', e);
+      }
+    }
+    return false;
   }
 };
+

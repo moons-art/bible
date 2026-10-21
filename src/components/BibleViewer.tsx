@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom';
 import type { BibleVersion, Verse } from '../types/bible';
 import { useBible } from '../stores/BibleContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, X, MessageSquare, Link2, FileEdit, Trash2, Send, Type, Plus, Minus, Sparkles } from 'lucide-react';
+import { Copy, X, BookOpen, Link2, MessageSquare, FileEdit, Sparkles, Eye, EyeOff, Trash2, Send, Type, Plus, Minus } from 'lucide-react';
 import { BIBLE_LIST } from '../constants/bibleMeta';
 import { BiblePopup } from './BiblePopup';
 import type { PopupState } from './BiblePopup';
+
+export type AnnotationFilterType = 'commentary' | 'crossRef' | 'note' | 'sermon' | 'ai';
 
 interface BibleViewerProps {
   selectedVersions: BibleVersion[];
@@ -22,6 +24,7 @@ interface BibleViewerProps {
   onNavigateToDualView?: (bookId: string, chapter: number, verse: number) => void;
   onVerseSelect?: (verse: number, text: string) => void;
   onOpenAiCommentary?: (verse: number, text: string) => void;
+  onOpenSermonNote?: (sermonId: string) => void;
   topNavNode?: React.ReactNode;
   isMobileScroll?: boolean;
 }
@@ -30,16 +33,41 @@ const VerseItem = React.memo<{
   verse: Verse;
   isSelected: boolean;
   isHighlighted: boolean;
-  hasNote: boolean;
+  hasCommentary: boolean;
   hasCrossRef: boolean;
+  hasNote: boolean;
   hasSermon: boolean;
+  sermonInfo?: { id: string; title: string };
+  hasAi: boolean;
   showAnnotations: boolean;
+  activeFilters: Set<AnnotationFilterType>;
   fontSize: number;
   lineHeight: number;
   verseSpacing?: number;
   onClick: (v: number) => void;
-  onIconClick: (v: number, type: 'note' | 'crossRef' | 'sermon', e: React.MouseEvent) => void;
-}>(({ verse, isSelected, isHighlighted, hasNote, hasCrossRef, hasSermon, showAnnotations, fontSize, lineHeight, verseSpacing = 6, onClick, onIconClick }) => {
+  onIconClick: (v: number, type: 'note' | 'crossRef' | 'sermon' | 'read', e: React.MouseEvent) => void;
+  onSermonIconClick?: (sermonId: string, e: React.MouseEvent) => void;
+  onAiClick?: (v: number, text: string, e: React.MouseEvent) => void;
+}>(({ 
+  verse, 
+  isSelected, 
+  isHighlighted, 
+  hasCommentary, 
+  hasCrossRef, 
+  hasNote, 
+  hasSermon, 
+  sermonInfo,
+  hasAi, 
+  showAnnotations, 
+  activeFilters, 
+  fontSize, 
+  lineHeight, 
+  verseSpacing = 6, 
+  onClick, 
+  onIconClick,
+  onSermonIconClick,
+  onAiClick
+}) => {
   const itemStyles = isSelected 
     ? 'bg-[#FAF0EB] border-l-[#C96442] shadow-xs' 
     : isHighlighted 
@@ -57,6 +85,16 @@ const VerseItem = React.memo<{
     : isHighlighted 
       ? 'text-[#1F1E1D] font-medium' 
       : 'text-[#2C2B29]';
+
+  // 각 아이콘 표시 조건: 주석 보기가 활성화되어 있고, 해당 필터가 켜져 있으며, 데이터가 존재할 때
+  const safeFilters = activeFilters || new Set<AnnotationFilterType>(['commentary', 'crossRef', 'note', 'sermon', 'ai']);
+  const showCommentaryIcon = showAnnotations && safeFilters.has('commentary') && hasCommentary;
+  const showCrossRefIcon = showAnnotations && safeFilters.has('crossRef') && hasCrossRef;
+  const showNoteIcon = showAnnotations && safeFilters.has('note') && hasNote;
+  const showSermonIcon = showAnnotations && safeFilters.has('sermon') && hasSermon;
+  const showAiIcon = showAnnotations && safeFilters.has('ai') && hasAi;
+
+  const hasAnyVisibleIcon = showCommentaryIcon || showCrossRefIcon || showNoteIcon || showSermonIcon || showAiIcon;
 
   return (
     <div
@@ -95,33 +133,63 @@ const VerseItem = React.memo<{
             {verse.content}
           </p>
           
-          {showAnnotations && (hasNote || hasCrossRef || hasSermon) && (
+          {hasAnyVisibleIcon && (
             <span className="inline-flex items-center gap-1.5 ml-2 align-middle relative -top-px">
-              {hasNote && (
+              {showCommentaryIcon && (
                 <button 
-                  onClick={(e) => {e.stopPropagation(); onIconClick(verse.verse, 'note', e)}} 
+                  onClick={(e) => { e.stopPropagation(); onIconClick(verse.verse, 'note', e); }} 
                   className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#FEF3C7] text-[#78350F] hover:scale-125 transition-transform" 
                   title="주석 보기"
                 >
-                  <MessageSquare className="w-2.5 h-2.5 stroke-[2px]" />
+                  <BookOpen className="w-2.5 h-2.5 stroke-[2px]" />
                 </button>
               )}
-              {hasCrossRef && (
+              {showCrossRefIcon && (
                 <button 
-                  onClick={(e) => {e.stopPropagation(); onIconClick(verse.verse, 'crossRef', e)}} 
+                  onClick={(e) => { e.stopPropagation(); onIconClick(verse.verse, 'crossRef', e); }} 
                   className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#E0F2FE] text-[#0369A1] hover:scale-125 transition-transform" 
                   title="관주 보기"
                 >
                   <Link2 className="w-2.5 h-2.5 stroke-[2px]" />
                 </button>
               )}
-              {hasSermon && (
+              {showNoteIcon && (
                 <button 
-                  onClick={(e) => {e.stopPropagation(); onIconClick(verse.verse, 'sermon', e)}} 
+                  onClick={(e) => { e.stopPropagation(); onIconClick(verse.verse, 'note', e); }} 
+                  className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#FEF3C7] text-[#78350F] hover:scale-125 transition-transform" 
+                  title="노트 보기"
+                >
+                  <MessageSquare className="w-2.5 h-2.5 stroke-[2px]" />
+                </button>
+              )}
+              {showSermonIcon && (
+                <button 
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if (onSermonIconClick && sermonInfo?.id) {
+                      onSermonIconClick(sermonInfo.id, e);
+                    } else {
+                      onIconClick(verse.verse, 'sermon', e);
+                    }
+                  }} 
                   className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#FAF0EB] text-[#C96442] hover:scale-125 transition-transform" 
-                  title="설교 메모 보기"
+                  title={sermonInfo?.title ? `설교노트 열기: ${sermonInfo.title}` : "설교노트 열기"}
                 >
                   <FileEdit className="w-2.5 h-2.5 stroke-[2px]" />
+                </button>
+              )}
+              {showAiIcon && (
+                <button 
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if (onAiClick) {
+                      onAiClick(verse.verse, verse.content, e);
+                    }
+                  }} 
+                  className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#FAF0EB] text-[#C96442] hover:scale-125 transition-transform" 
+                  title="AI 주석 보기"
+                >
+                  <Sparkles className="w-2.5 h-2.5 stroke-[2px]" />
                 </button>
               )}
             </span>
@@ -133,7 +201,7 @@ const VerseItem = React.memo<{
 });
 
 export const BibleViewer = React.memo<BibleViewerProps>(({ 
-  selectedVersions, currentBookId, currentChapter = 1, highlightVerse, fontSize = 16, lineHeight, verseSpacing = 3, isMainPane = true, headerRightNode, onCopyToSermon, onNavigateToDualView, onVerseSelect, onOpenAiCommentary, topNavNode, isMobileScroll
+  selectedVersions, currentBookId, currentChapter = 1, highlightVerse, fontSize = 16, lineHeight, verseSpacing = 3, isMainPane = true, headerRightNode, onCopyToSermon, onNavigateToDualView, onVerseSelect, onOpenAiCommentary, onOpenSermonNote, topNavNode, isMobileScroll
 }) => {
   const scrollContainerRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [selectedVerses, setSelectedVerses] = useState<Set<number>>(new Set());
@@ -149,7 +217,11 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
     setVerseData, 
     flushVerseData,
     showAnnotations, 
-    setShowAnnotations 
+    setShowAnnotations,
+    annotationFilters,
+    toggleAnnotationFilter,
+    sermonVerseMap,
+    savedAiVerseKeys
   } = useBible();
 
   const [popups, setPopups] = useState<PopupState[]>([]);
@@ -258,6 +330,18 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
     e.stopPropagation();
     openSpecificPopup(currentBookId, currentChapter, v, type);
   }, [currentBookId, currentChapter, openSpecificPopup]);
+
+  const handleSermonIconClick = React.useCallback((sermonId: string) => {
+    if (onOpenSermonNote) {
+      onOpenSermonNote(sermonId);
+    }
+  }, [onOpenSermonNote]);
+
+  const handleAiClick = React.useCallback((verseNum: number, text: string) => {
+    if (onOpenAiCommentary) {
+      onOpenAiCommentary(verseNum, text);
+    }
+  }, [onOpenAiCommentary]);
 
   const closePopup = React.useCallback((id: string) => {
     flushVerseData();
@@ -426,12 +510,104 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
           className="flex-1 min-w-0 flex flex-col border-r border-[#E7E5DF] last:border-r-0 relative bg-[#FAF9F5]"
         >
           {/* Version Header (모든 번역본에 헤더가 정상 표시됨) */}
-          <div className={`h-9 flex items-center px-3 sm:px-4 bg-[#F5F3ED] border-b border-[#E7E5DF] shrink-0 ${isMobileScroll ? 'relative' : 'sticky top-0 z-10'}`}>
-            <span className="text-[10px] font-bold text-[#C96442] tracking-wider uppercase mr-2 bg-[#FAF0EB] px-1.5 py-0.5 rounded-md shrink-0">VER</span>
-            {headerRightNode ? (
-              headerRightNode
-            ) : (
-              <span className="text-xs font-semibold text-[#6A6864] truncate">{data.name}</span>
+          <div className={`h-9 flex items-center justify-between px-3 sm:px-4 bg-[#F5F3ED] border-b border-[#E7E5DF] shrink-0 ${isMobileScroll ? 'relative' : 'sticky top-0 z-10'}`}>
+            <div className="flex items-center min-w-0 mr-2">
+              <span className="text-[10px] font-bold text-[#C96442] tracking-wider uppercase mr-2 bg-[#FAF0EB] px-1.5 py-0.5 rounded-md shrink-0">VER</span>
+              {headerRightNode ? (
+                headerRightNode
+              ) : (
+                <span className="text-xs font-semibold text-[#6A6864] truncate">{data.name}</span>
+              )}
+            </div>
+
+            {/* 어노테이션 툴바: 주석, 관주, 노트, 설교노트, AI, 주석숨기기 */}
+            {/* 본문 듀얼뷰(우측 참고번역)에는 상단 아이콘들을 표시하지 않고, 좌측 메인 페이지(isMainPane)에만 표시 */}
+            {isMainPane && (
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => toggleAnnotationFilter('commentary')}
+                  className={`p-1 rounded-md transition-all ${
+                    showAnnotations && annotationFilters.has('commentary')
+                      ? 'text-black opacity-100 scale-105'
+                      : 'text-black/35 hover:text-black/70'
+                  }`}
+                  title="주석 필터 (클릭 시 주석만 보기 / 복수 선택 가능)"
+                >
+                  <BookOpen className="w-3.5 h-3.5 stroke-[1.8px]" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => toggleAnnotationFilter('crossRef')}
+                  className={`p-1 rounded-md transition-all ${
+                    showAnnotations && annotationFilters.has('crossRef')
+                      ? 'text-black opacity-100 scale-105'
+                      : 'text-black/35 hover:text-black/70'
+                  }`}
+                  title="관주 필터 (클릭 시 관주만 보기 / 복수 선택 가능)"
+                >
+                  <Link2 className="w-3.5 h-3.5 stroke-[1.8px]" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => toggleAnnotationFilter('note')}
+                  className={`p-1 rounded-md transition-all ${
+                    showAnnotations && annotationFilters.has('note')
+                      ? 'text-black opacity-100 scale-105'
+                      : 'text-black/35 hover:text-black/70'
+                  }`}
+                  title="노트 필터 (클릭 시 노트만 보기 / 복수 선택 가능)"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 stroke-[1.8px]" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => toggleAnnotationFilter('sermon')}
+                  className={`p-1 rounded-md transition-all ${
+                    showAnnotations && annotationFilters.has('sermon')
+                      ? 'text-black opacity-100 scale-105'
+                      : 'text-black/35 hover:text-black/70'
+                  }`}
+                  title="설교노트 필터 (클릭 시 설교노트만 보기 / 복수 선택 가능)"
+                >
+                  <FileEdit className="w-3.5 h-3.5 stroke-[1.8px]" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => toggleAnnotationFilter('ai')}
+                  className={`p-1 rounded-md transition-all ${
+                    showAnnotations && annotationFilters.has('ai')
+                      ? 'text-black opacity-100 scale-105'
+                      : 'text-black/35 hover:text-black/70'
+                  }`}
+                  title="AI 주석 필터 (클릭 시 AI 주석만 보기 / 복수 선택 가능)"
+                >
+                  <Sparkles className="w-3.5 h-3.5 stroke-[1.8px]" />
+                </button>
+
+                <div className="w-px h-3 bg-black/15 mx-0.5" />
+
+                <button
+                  type="button"
+                  onClick={() => setShowAnnotations(!showAnnotations)}
+                  className={`p-1 rounded-md transition-all ${
+                    showAnnotations
+                      ? 'text-black opacity-100'
+                      : 'text-black/35 hover:text-black/70'
+                  }`}
+                  title={showAnnotations ? "주석 숨기기" : "주석 보이기"}
+                >
+                  {showAnnotations ? (
+                    <Eye className="w-3.5 h-3.5 stroke-[1.8px]" />
+                  ) : (
+                    <EyeOff className="w-3.5 h-3.5 stroke-[1.8px]" />
+                  )}
+                </button>
+              </div>
             )}
           </div>
   
@@ -458,23 +634,41 @@ export const BibleViewer = React.memo<BibleViewerProps>(({
                   </div>
                 )}
 
-                {data.verses.map((v: Verse) => (
-                  <VerseItem
-                    key={`${v.bookId}-${v.chapter}-${v.verse}`}
-                    verse={v}
-                    isSelected={selectedVerses.has(v.verse)}
-                    isHighlighted={v.verse === highlightVerse}
-                    hasNote={!!verseData[`${currentBookId}_${currentChapter}_${v.verse}`]?.note}
-                    hasCrossRef={!!verseData[`${currentBookId}_${currentChapter}_${v.verse}`]?.crossRef}
-                    hasSermon={!!verseData[`${currentBookId}_${currentChapter}_${v.verse}`]?.sermon}
-                    showAnnotations={showAnnotations}
-                    fontSize={fontSize}
-                    lineHeight={lineHeight}
-                    verseSpacing={verseSpacing}
-                    onClick={toggleVerse}
-                    onIconClick={handleIconClick}
-                  />
-                ))}
+                {data.verses.map((v: Verse) => {
+                  const bId = currentBookId || v.bookId;
+                  const key = `${bId}_${currentChapter}_${v.verse}`;
+                  const altKey = v.bookId && v.bookId !== bId ? `${v.bookId}_${currentChapter}_${v.verse}` : '';
+
+                  const hasNoteData = !!verseData[key]?.note || (altKey ? !!verseData[altKey]?.note : false);
+                  const hasCrossRefData = !!verseData[key]?.crossRef || (altKey ? !!verseData[altKey]?.crossRef : false);
+                  const sermonInfo = sermonVerseMap[key] || (altKey ? sermonVerseMap[altKey] : undefined);
+                  const hasSermon = Boolean(sermonInfo);
+                  const hasAi = savedAiVerseKeys.has(key) || (altKey ? savedAiVerseKeys.has(altKey) : false);
+                  
+                  return (
+                    <VerseItem
+                      key={`${v.bookId}-${v.chapter}-${v.verse}`}
+                      verse={v}
+                      isSelected={selectedVerses.has(v.verse)}
+                      isHighlighted={v.verse === highlightVerse}
+                      hasCommentary={hasNoteData}
+                      hasCrossRef={hasCrossRefData}
+                      hasNote={hasNoteData}
+                      hasSermon={hasSermon}
+                      sermonInfo={sermonInfo}
+                      hasAi={hasAi}
+                      showAnnotations={showAnnotations}
+                      activeFilters={annotationFilters}
+                      fontSize={fontSize}
+                      lineHeight={lineHeight}
+                      verseSpacing={verseSpacing}
+                      onClick={toggleVerse}
+                      onIconClick={handleIconClick}
+                      onSermonIconClick={handleSermonIconClick}
+                      onAiClick={handleAiClick}
+                    />
+                  );
+                })}
               </>
             )}
           </div>

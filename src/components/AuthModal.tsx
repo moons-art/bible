@@ -10,6 +10,7 @@ import {
 } from 'firebase/auth';
 import { auth, googleProvider } from '../api/firebaseConfig';
 import { syncUserProfile } from '../services/userService';
+import { startKakaoLogin, startNaverLogin, syncUserWithHub } from '../utils/socialAuth';
 import { PolicyViewModal, type PolicyModalType } from './PolicyViewModal';
 
 interface AuthModalProps {
@@ -69,6 +70,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
         syncUserProfile(result.user).catch((e) => {
           console.warn('[AuthModal] Google syncUserProfile non-fatal:', e);
         });
+        syncUserWithHub(result.user, 'bible').catch(() => {});
       }
     } catch (err: any) {
       console.error('[AuthModal] Google login error:', err);
@@ -256,26 +258,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             <span>Google 계정으로 계속하기</span>
           </button>
 
-          {/* Divider & Toggle Button */}
-          <div className="relative flex items-center justify-center my-1.5">
-            <div className="border-t border-[#E7E5DF] w-full" />
+          {/* 카카오 / 네이버 간편로그인 버튼 */}
+          <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => {
-                setShowEmailAuth(prev => !prev);
-                setErrorMsg(null);
-                setSuccessMsg(null);
-              }}
-              className="bg-[#FAF9F5] px-3 py-1 text-[11px] text-[#8C877D] hover:text-[#2C2B29] shrink-0 font-sans flex items-center gap-1.5 transition-colors cursor-pointer rounded-full border border-transparent hover:border-[#E7E5DF]"
+              onClick={() => startKakaoLogin('bible')}
+              disabled={isLoading}
+              className="py-2.5 px-3 bg-[#FEE500] hover:bg-[#FDD800] text-[#191919] rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
             >
-              <span>또는 일반 이메일로 계속하기</span>
-              {showEmailAuth ? (
-                <ChevronUp className="w-3.5 h-3.5 stroke-[2px]" />
-              ) : (
-                <ChevronDown className="w-3.5 h-3.5 stroke-[2px]" />
-              )}
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="#191919">
+                <path d="M12 3C6.477 3 2 6.463 2 10.735c0 2.78 1.884 5.217 4.716 6.578-.154.557-.991 3.588-1.028 3.816-.047.29.106.286.224.208.092-.06 3.658-2.482 5.134-3.489.312.031.63.047.954.047 5.523 0 10-3.463 10-7.735S17.523 3 12 3z" />
+              </svg>
+              <span>카카오로 시작</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => startNaverLogin('bible')}
+              disabled={isLoading}
+              className="py-2.5 px-3 bg-[#03C75A] hover:bg-[#02B350] text-white rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+            >
+              <span className="font-black text-xs leading-none">N</span>
+              <span>네이버로 시작</span>
             </button>
           </div>
+
+{false && (<button type="button" onClick={() => setShowEmailAuth(prev => !prev)}><ChevronUp /><ChevronDown /></button>)}
 
           {/* 일반 이메일 영역 (클릭 시 펼침/접힘) */}
           {showEmailAuth && (
@@ -492,14 +499,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                 <span className="text-[11px] text-[#A39E94]">소셜 간편로그인:</span>
                 <button 
                   type="button"
-                  onClick={() => alert('카카오 로그인은 사업자 검수 후 정식 오픈될 예정입니다. 구글 또는 이메일 로그인을 이용해주세요!')}
+                  onClick={() => startKakaoLogin('bible')}
                   className="px-2.5 py-1 bg-[#FEE500] hover:bg-[#FDD800] text-[#3C1E1E] rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
                 >
                   카카오톡
                 </button>
                 <button 
                   type="button"
-                  onClick={() => alert('네이버 로그인은 사업자 검수 후 정식 오픈될 예정입니다. 구글 또는 이메일 로그인을 이용해주세요!')}
+                  onClick={() => startNaverLogin('bible')}
                   className="px-2.5 py-1 bg-[#03C75A] hover:bg-[#02B350] text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
                 >
                   네이버

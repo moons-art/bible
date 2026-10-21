@@ -35,7 +35,10 @@ export function useAiUsage() {
         setUsageState(prev => {
           const updated = {
             ...prev,
+            monthKey: firestoreCredits.lastResetMonth || prev.monthKey,
             monthlyFreeRemaining: firestoreCredits.freeRemaining,
+            monthlyQuotaRemaining: firestoreCredits.monthlyRemaining || 0,
+            bonusRemaining: firestoreCredits.bonusRemaining || 0,
             paidRemaining: firestoreCredits.paidRemaining,
             paidExpiresAt: firestoreCredits.paidExpiresAt,
             totalUsed: firestoreCredits.totalUsed || 0,

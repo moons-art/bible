@@ -7,8 +7,10 @@ import { bibleDB } from '../utils/indexedDB';
 import { db, auth } from '../api/firebaseConfig';
 import { doc, collection, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
 import { fetchUserProfile } from '../api/gdriveWebService';
-import { subscribeUserProfile, updateUserResourceCounts } from '../services/userService';
+import { subscribeUserProfile, updateUserResourceCounts, saveUserPreferences, type UserPreferences } from '../services/userService';
 import { getPlanSettings, canUserSyncCloudNotes, type SubscriptionPlansSettings } from '../services/planConfigService';
+import { extractFirstVerseFromTitle, parseBibleReference } from '../utils/referenceParser';
+import { getSavedCommentaryVerseKeys, fetchCloudCommentaryHistory, extractVerseKeyFromAnyRef } from '../services/aiHistoryService';
 
 export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const DEFAULT_KOR: BibleVersion = {
@@ -32,7 +34,13 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [versions, setVersions] = useState<BibleVersion[]>([DEFAULT_KOR, DEFAULT_ENG]);
   const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>(['built-in-kor-revised', 'built-in-eng-kjv']);
   const [lineHeight, setLineHeight] = useState<number>(1.6);
-  const [copyMode, setCopyMode] = useState<CopyMode>('default');
+  const [copyMode, setCopyMode] = useState<CopyMode>(() => {
+    try {
+      const saved = localStorage.getItem('bible-copy-mode');
+      if (saved === 'default' || saved === 'niv+krv' || saved === 'all') return saved;
+    } catch {}
+    return 'default';
+  });
   const [showVersionInCopy, setShowVersionInCopy] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('bible-copy-show-version');
@@ -57,6 +65,24 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch { return ''; }
   });
 
+  const [googleUserId, setGoogleUserId] = useState<string | null>(null);
+  const syncPreferencesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ✅ 클라우드 환경설정 자동 동기화 (기기 간 최종 상태 항상 일치)
+  const syncPreferencesToCloud = useCallback((updates: Partial<UserPreferences>) => {
+    if (!googleUserId) return;
+    if (syncPreferencesTimerRef.current) {
+      clearTimeout(syncPreferencesTimerRef.current);
+    }
+    syncPreferencesTimerRef.current = setTimeout(() => {
+      saveUserPreferences(googleUserId, updates).catch(() => {});
+    }, 400);
+  }, [googleUserId]);
+
+  useEffect(() => {
+    try { localStorage.setItem('bible-copy-mode', copyMode); } catch {}
+  }, [copyMode]);
+
   useEffect(() => {
     try { localStorage.setItem('bible-copy-show-version', JSON.stringify(showVersionInCopy)); } catch {}
   }, [showVersionInCopy]);
@@ -77,6 +103,50 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [mainEnVersionId]);
 
+  // ✅ [최우선 순위 보장 규칙]
+  // 한글: 1순위 개역개정(built-in-krv) -> 없으면 개역한글(built-in-kor-revised) 기본
+  // 영어: 1순위 NIV(built-in-niv) -> 없으면 KJV(built-in-eng-kjv) 기본
+  useEffect(() => {
+    if (versions.length === 0) return;
+
+    const hasKrv = versions.some(v => v.id === 'built-in-krv' || v.name === '개역개정');
+    const hasNiv = versions.some(v => v.id === 'built-in-niv' || v.name === 'NIV');
+
+    // 한글 최우선 처리
+    setMainKrVersionId(current => {
+      // 개역개정이 활성화되어 사용 가능한데 미설정이거나 기본 개역한글인 경우 -> 개역개정으로 자동 최우선 설정
+      if (hasKrv && (!current || current === 'built-in-kor-revised')) {
+        return 'built-in-krv';
+      }
+      // 미설정 시 기본값
+      if (!current) {
+        return hasKrv ? 'built-in-krv' : 'built-in-kor-revised';
+      }
+      // 현재 선택된 번역본이 목록에 없으면 자동 복구
+      if (!versions.some(v => v.id === current)) {
+        return hasKrv ? 'built-in-krv' : 'built-in-kor-revised';
+      }
+      return current;
+    });
+
+    // 영어 최우선 처리
+    setMainEnVersionId(current => {
+      // NIV가 활성화되어 사용 가능한데 미설정이거나 기본 KJV인 경우 -> NIV로 자동 최우선 설정
+      if (hasNiv && (!current || current === 'built-in-eng-kjv')) {
+        return 'built-in-niv';
+      }
+      // 미설정 시 기본값
+      if (!current) {
+        return hasNiv ? 'built-in-niv' : 'built-in-eng-kjv';
+      }
+      // 현재 선택된 번역본이 목록에 없으면 자동 복구
+      if (!versions.some(v => v.id === current)) {
+        return hasNiv ? 'built-in-niv' : 'built-in-eng-kjv';
+      }
+      return current;
+    });
+  }, [versions]);
+
   // ✅ 구절 노트: 기본적으로 기기(localStorage)에 무제한 영구 보관
   const [verseData, setVerseData] = useState<Record<string, { note?: string; crossRef?: string; sermon?: string }>>(() => {
     try {
@@ -86,7 +156,176 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return {};
   });
   const [showAnnotations, setShowAnnotations] = useState<boolean>(true);
-  const [googleUserId, setGoogleUserId] = useState<string | null>(null);
+  const ALL_ANNOTATION_FILTERS: Array<'commentary' | 'crossRef' | 'note' | 'sermon' | 'ai'> = ['commentary', 'crossRef', 'note', 'sermon', 'ai'];
+  const [annotationFilters, setAnnotationFilters] = useState<Set<'commentary' | 'crossRef' | 'note' | 'sermon' | 'ai'>>(() => {
+    try {
+      const saved = localStorage.getItem('bible-annotation-filters');
+      if (saved) {
+        const arr = JSON.parse(saved);
+        if (Array.isArray(arr) && arr.length > 0) {
+          const s = new Set<'commentary' | 'crossRef' | 'note' | 'sermon' | 'ai'>(arr);
+          // 과거 저장된 필터 배열에 'ai'가 누락되어 있다면 기본 활성화 (구버전 캐시 호환)
+          if (!s.has('ai')) {
+            s.add('ai');
+            try {
+              localStorage.setItem('bible-annotation-filters', JSON.stringify(Array.from(s)));
+            } catch {}
+          }
+          return s;
+        }
+      }
+    } catch {}
+    return new Set(['commentary', 'crossRef', 'note', 'sermon', 'ai']);
+  });
+
+  const toggleAnnotationFilter = (filter: 'commentary' | 'crossRef' | 'note' | 'sermon' | 'ai') => {
+    if (!showAnnotations) {
+      setShowAnnotations(true);
+    }
+    setAnnotationFilters(prev => {
+      let next: Set<'commentary' | 'crossRef' | 'note' | 'sermon' | 'ai'>;
+      if (prev.size === ALL_ANNOTATION_FILTERS.length) {
+        next = new Set([filter]);
+      } else {
+        next = new Set(prev);
+        if (next.has(filter)) {
+          next.delete(filter);
+          if (next.size === 0) {
+            next = new Set(ALL_ANNOTATION_FILTERS);
+          }
+        } else {
+          next.add(filter);
+        }
+      }
+      try {
+        localStorage.setItem('bible-annotation-filters', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+  };
+
+  // ── 설교노트 구절 매핑 상태 (제목의 첫 구절 인식하여 verseKey에 매핑) ───
+  const computeSermonVerseMap = (): Record<string, { id: string; title: string }> => {
+    try {
+      const raw = localStorage.getItem('bible-local-sermons');
+      if (!raw) return {};
+      const sermons: Array<{ id: string; title: string }> = JSON.parse(raw);
+      const map: Record<string, { id: string; title: string }> = {};
+      for (const sermon of sermons) {
+        if (!sermon.title) continue;
+        const parsed = extractFirstVerseFromTitle(sermon.title);
+        if (parsed && !map[parsed.verseKey]) {
+          map[parsed.verseKey] = { id: sermon.id, title: sermon.title };
+        }
+      }
+      return map;
+    } catch {
+      return {};
+    }
+  };
+
+  const [sermonVerseMap, setSermonVerseMap] = useState<Record<string, { id: string; title: string }>>(() => computeSermonVerseMap());
+
+  useEffect(() => {
+    const refreshSermons = () => {
+      setSermonVerseMap(computeSermonVerseMap());
+    };
+    const handleStorage = (e: StorageEvent) => {
+      if (!e.key || e.key === 'bible-local-sermons') {
+        refreshSermons();
+      }
+    };
+    window.addEventListener('bible-sermons-updated', refreshSermons);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('bible-sermons-updated', refreshSermons);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  // ── AI 주석 분석 생성되어 저장된 구절 키 목록 (로컬 3종 저장소 및 Firestore 클라우드 실시간 연동) ───
+  const [savedAiVerseKeys, setSavedAiVerseKeys] = useState<Set<string>>(() => getSavedCommentaryVerseKeys());
+
+  useEffect(() => {
+    let isCancelled = false;
+    let unsubCloud: (() => void) | null = null;
+
+    const refreshAiKeys = async (uid?: string | null) => {
+      const keys = getSavedCommentaryVerseKeys();
+      const currentUid = uid ?? auth.currentUser?.uid;
+
+      if (currentUid) {
+        try {
+          const cloudItems = await fetchCloudCommentaryHistory(currentUid);
+          for (const item of cloudItems) {
+            const ref = item.reference || item.id;
+            const parsedKey = extractVerseKeyFromAnyRef(ref);
+            if (parsedKey) {
+              keys.add(parsedKey);
+            }
+          }
+        } catch {}
+      }
+
+      if (!isCancelled) {
+        setSavedAiVerseKeys(new Set(keys));
+      }
+    };
+
+    // 초기 로드
+    refreshAiKeys();
+
+    // Firebase Auth 상태 변경 시(로그인 완료 시) 클라우드 주석 즉시 로드 및 실시간 스냅샷 구독
+    const unsubAuth = auth.onAuthStateChanged((user) => {
+      if (unsubCloud) {
+        unsubCloud();
+        unsubCloud = null;
+      }
+
+      refreshAiKeys(user ? user.uid : null);
+
+      if (user) {
+        try {
+          const colRef = collection(db, 'users', user.uid, 'cloudCommentaries');
+          unsubCloud = onSnapshot(colRef, (snap) => {
+            const keys = getSavedCommentaryVerseKeys();
+            snap.forEach(d => {
+              const data = d.data();
+              if (data.type && data.type !== 'commentary') return;
+              if (d.id.includes('_etymology') || d.id.includes('_passage')) return;
+              const ref = data.reference || d.id;
+              const parsedKey = extractVerseKeyFromAnyRef(ref);
+              if (parsedKey) keys.add(parsedKey);
+            });
+            if (!isCancelled) {
+              setSavedAiVerseKeys(new Set(keys));
+            }
+          }, () => {});
+        } catch {}
+      }
+    });
+
+    const handleAiUpdate = () => {
+      refreshAiKeys();
+    };
+
+    const handleStorage = (e: StorageEvent) => {
+      if (!e.key || e.key.includes('ai') || e.key.includes('commentary') || e.key.includes('study')) {
+        refreshAiKeys();
+      }
+    };
+
+    window.addEventListener('ai-history-updated', handleAiUpdate);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      isCancelled = true;
+      unsubAuth();
+      if (unsubCloud) unsubCloud();
+      window.removeEventListener('ai-history-updated', handleAiUpdate);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
 
   // 클라우드 노트 동기화 권한 여부 Ref (기본값: false - 기기 저장 전용)
   const canSyncCloudNotesRef = useRef<boolean>(false);
@@ -150,7 +389,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     unsubscribeVerseDataRef.current = unsubscribe;
   };
 
-  // ── 관리자가 원격으로 허용한 번역본(개역개정, NIV 등) 자동 활성화 및 회수 ────────────
+  // ── 관리자가 원격으로 허용한 번역본(개역개정, NIV 등) 자동 활성화 및 기기 복구 ────────────
   const checkAndHydrateAllowedVersions = async (allowedVersions: string[]) => {
     const allowed = allowedVersions || [];
 
@@ -160,13 +399,15 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (prev.some(v => v.id === 'built-in-krv' || v.name === '개역개정')) return prev;
         (async () => {
           try {
-            // ✅ IndexedDB 캐시 먼저 확인하여 4.7MB 다운로드 및 재파싱 생략
+            // ✅ 1단계: 기기(IndexedDB) 캐시 먼저 확인하여 0초 만에 즉시 로드
             const cached = await bibleDB.getVersion('built-in-krv');
             let krvVersion: BibleVersion | null = null;
             if (cached && cached.verses && cached.verses.length > 0) {
               krvVersion = cached;
               savedVersionIdsRef.current.add('built-in-krv');
             } else {
+              // ✅ 2단계: 기기 데이터가 삭제/유실되었거나 새 기기인 경우 서버에서 자동 1회 다운로드 및 재저장 (Auto-Healing)
+              console.log('[BibleProvider] 🔄 개역개정 기기 데이터 유실 감지 -> 서버 원본에서 자동 복구 다운로드 시작');
               const res = await fetch('/data/krv.txt');
               if (res.ok) {
                 const buf = await res.arrayBuffer();
@@ -183,6 +424,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 };
                 await bibleDB.saveVersion(krvVersion);
                 savedVersionIdsRef.current.add('built-in-krv');
+                console.log('[BibleProvider] 💾 개역개정 기기 IndexedDB 영구 복구 저장 완료!');
               }
             }
 
@@ -191,7 +433,6 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               setVersions(curr => {
                 if (curr.some(v => v.id === 'built-in-krv')) return curr;
                 const next = [...curr, finalKrv];
-                // 저장된 순서에 맞게 위치 복원
                 try {
                   const savedOrderStr = localStorage.getItem('bible-version-order');
                   if (savedOrderStr) {
@@ -208,7 +449,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 } catch (e) {}
                 return next;
               });
-              // 이전에 선택됐던 경우 선택 상태 복원
+
+              // ✅ 이전에 사용자가 선택해둔 상태가 있으면 100% 자동 복원
               try {
                 const savedSelectedStr = localStorage.getItem('bible-selected-versions');
                 if (savedSelectedStr) {
@@ -218,20 +460,18 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   }
                 }
               } catch (e) {}
-              console.log('[BibleProvider] 관리자 권한으로 개역개정이 자동 활성화되었습니다.');
+              console.log('[BibleProvider] ✅ 개역개정이 화면에 활성화되었습니다.');
             }
           } catch (e) {
-            console.error('[BibleProvider] 원격 개역개정 로드 실패:', e);
+            console.error('[BibleProvider] 개역개정 로드/복구 실패:', e);
           }
         })();
         return prev;
       });
-    } else {
-      // 권한 회수 시 제거
+    } else if (auth.currentUser) {
+      // 명시적 권한 회수 시 화면 목록에서만 제거 (기기 원본 파일은 지우지 않고 안전 보존)
       setVersions(prev => {
         if (prev.some(v => v.id === 'built-in-krv')) {
-          bibleDB.deleteVersion('built-in-krv').catch(() => {});
-          savedVersionIdsRef.current.delete('built-in-krv');
           setSelectedVersionIds(sel => sel.filter(id => id !== 'built-in-krv'));
           return prev.filter(v => v.id !== 'built-in-krv');
         }
@@ -245,13 +485,15 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (prev.some(v => v.id === 'built-in-niv' || v.name === 'NIV')) return prev;
         (async () => {
           try {
-            // ✅ IndexedDB 캐시 먼저 확인하여 3.7MB 다운로드 및 재파싱 생략
+            // ✅ 1단계: 기기(IndexedDB) 캐시 먼저 확인하여 0초 만에 즉시 로드
             const cached = await bibleDB.getVersion('built-in-niv');
             let nivVersion: BibleVersion | null = null;
             if (cached && cached.verses && cached.verses.length > 0) {
               nivVersion = cached;
               savedVersionIdsRef.current.add('built-in-niv');
             } else {
+              // ✅ 2단계: 기기 데이터가 삭제/유실되었거나 새 기기인 경우 서버에서 자동 1회 다운로드 및 재저장 (Auto-Healing)
+              console.log('[BibleProvider] 🔄 NIV 기기 데이터 유실 감지 -> 서버 원본에서 자동 복구 다운로드 시작');
               const res = await fetch('/data/NIV_UTF8_LF.txt');
               if (res.ok) {
                 const text = await res.text();
@@ -265,26 +507,54 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 };
                 await bibleDB.saveVersion(nivVersion);
                 savedVersionIdsRef.current.add('built-in-niv');
+                console.log('[BibleProvider] 💾 NIV 기기 IndexedDB 영구 복구 저장 완료!');
               }
             }
 
             if (nivVersion) {
               const finalNiv = nivVersion;
-              setVersions(curr => curr.some(v => v.id === 'built-in-niv') ? curr : [...curr, finalNiv]);
-              console.log('[BibleProvider] 관리자 권한으로 NIV가 자동 활성화되었습니다.');
+              setVersions(curr => {
+                if (curr.some(v => v.id === 'built-in-niv')) return curr;
+                const next = [...curr, finalNiv];
+                try {
+                  const savedOrderStr = localStorage.getItem('bible-version-order');
+                  if (savedOrderStr) {
+                    const savedOrder: string[] = JSON.parse(savedOrderStr);
+                    next.sort((a, b) => {
+                      const ia = savedOrder.indexOf(a.id);
+                      const ib = savedOrder.indexOf(b.id);
+                      if (ia !== -1 && ib !== -1) return ia - ib;
+                      if (ia !== -1) return -1;
+                      if (ib !== -1) return 1;
+                      return 0;
+                    });
+                  }
+                } catch (e) {}
+                return next;
+              });
+
+              // ✅ 이전에 사용자가 선택해둔 상태가 있으면 100% 자동 복원
+              try {
+                const savedSelectedStr = localStorage.getItem('bible-selected-versions');
+                if (savedSelectedStr) {
+                  const savedSelected: string[] = JSON.parse(savedSelectedStr);
+                  if (Array.isArray(savedSelected) && savedSelected.includes('built-in-niv')) {
+                    setSelectedVersionIds(sel => sel.includes('built-in-niv') ? sel : [...sel, 'built-in-niv']);
+                  }
+                }
+              } catch (e) {}
+              console.log('[BibleProvider] ✅ NIV가 화면에 활성화되었습니다.');
             }
           } catch (e) {
-            console.error('[BibleProvider] 원격 NIV 로드 실패:', e);
+            console.error('[BibleProvider] NIV 로드/복구 실패:', e);
           }
         })();
         return prev;
       });
-    } else {
-      // 권한 회수 시 제거
+    } else if (auth.currentUser) {
+      // 명시적 권한 회수 시 화면 목록에서만 제거 (기기 원본 파일은 지우지 않고 안전 보존)
       setVersions(prev => {
         if (prev.some(v => v.id === 'built-in-niv')) {
-          bibleDB.deleteVersion('built-in-niv').catch(() => {});
-          savedVersionIdsRef.current.delete('built-in-niv');
           setSelectedVersionIds(sel => sel.filter(id => id !== 'built-in-niv'));
           return prev.filter(v => v.id !== 'built-in-niv');
         }
@@ -307,6 +577,55 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         unsubProfile = subscribeUserProfile(user.uid, (profile) => {
           if (profile) {
             checkAndHydrateAllowedVersions(profile.allowedVersions || []);
+
+            // ✅ 다른 기기에서 저장된 최신 환경설정(번역본 선택 상태, 순서, 복사 설정) 실시간 동기화
+            if (profile.preferences) {
+              const pref = profile.preferences;
+              if (Array.isArray(pref.selectedVersionIds) && pref.selectedVersionIds.length > 0) {
+                setSelectedVersionIds(pref.selectedVersionIds);
+                try { localStorage.setItem('bible-selected-versions', JSON.stringify(pref.selectedVersionIds)); } catch {}
+              }
+              if (Array.isArray(pref.versionOrder) && pref.versionOrder.length > 0) {
+                const order = pref.versionOrder;
+                setVersions(curr => {
+                  const sorted = [...curr];
+                  sorted.sort((a, b) => {
+                    const ia = order.indexOf(a.id);
+                    const ib = order.indexOf(b.id);
+                    if (ia !== -1 && ib !== -1) return ia - ib;
+                    if (ia !== -1) return -1;
+                    if (ib !== -1) return 1;
+                    return 0;
+                  });
+                  return sorted;
+                });
+                try { localStorage.setItem('bible-version-order', JSON.stringify(pref.versionOrder)); } catch {}
+              }
+              if (pref.copyMode && (pref.copyMode === 'default' || pref.copyMode === 'niv+krv' || pref.copyMode === 'all')) {
+                setCopyMode(pref.copyMode as CopyMode);
+                try { localStorage.setItem('bible-copy-mode', pref.copyMode); } catch {}
+              }
+              if (pref.showVersionInCopy !== undefined) {
+                setShowVersionInCopy(pref.showVersionInCopy);
+                try { localStorage.setItem('bible-copy-show-version', JSON.stringify(pref.showVersionInCopy)); } catch {}
+              }
+              if (pref.copyMultiOption) {
+                setCopyMultiOption(pref.copyMultiOption);
+                try { localStorage.setItem('bible-copy-multi-option', pref.copyMultiOption); } catch {}
+              }
+              if (pref.mainKrVersionId) {
+                setMainKrVersionId(pref.mainKrVersionId);
+                try { localStorage.setItem('bible-copy-main-kr', pref.mainKrVersionId); } catch {}
+              }
+              if (pref.mainEnVersionId) {
+                setMainEnVersionId(pref.mainEnVersionId);
+                try { localStorage.setItem('bible-copy-main-en', pref.mainEnVersionId); } catch {}
+              }
+              if (pref.lineHeight) {
+                setLineHeight(pref.lineHeight);
+                try { localStorage.setItem('bible-line-height', pref.lineHeight.toString()); } catch {}
+              }
+            }
 
             // 클라우드 노트 서버 동기화 권한 판별
             const canSync = canUserSyncCloudNotes(profile, planSettingsRef.current);
@@ -490,9 +809,12 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   };
 
-  // 1. 초기 데이터 로드 및 Hydration
+  // 1. 초기 데이터 로드 및 Hydration (기기 우선 0초 로드 & 영구 보존)
   useEffect(() => {
     const init = async () => {
+      // ✅ 브라우저에 영구 저장소(Persistent Storage) 등록 요청
+      bibleDB.requestPersistentStorage().catch(() => {});
+
       let loaded: BibleVersion[] = [];
       const saved = localStorage.getItem('bible-versions');
       const savedShowVersion = localStorage.getItem('bible-show-version-copy');
@@ -519,8 +841,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       } catch (e) { console.error("DB Load failed", e); }
 
-      // 0) 개역개정 초기 목록 제외 (로그인 후 관리자 원격 권한 확인 시 자동 활성화)
-      loaded = loaded.filter(v => v.id !== 'built-in-krv');
+      // ✅ [개선] 기기(IndexedDB)에 개역개정이나 NIV가 이미 보관되어 있다면 필터링으로 날리지 않고 그대로 화면에 즉시 로드 (0초 로드 보장)
 
       // 1) 개역한글 (저작권 만료 퍼블릭 도메인) 빌트인 보장
       let korEntry = loaded.find(v => v.name === '개역한글' || v.id === 'built-in-kor-revised');
@@ -618,7 +939,8 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       setVersions(hydratedVersions);
-      // 저장값 있으면 그대로 복원, 없으면(최초 접속) 개역한글 1개만
+
+      // ✅ 저장값 있으면 그대로 복원 (특수 번역본 built-in-krv, built-in-niv가 비동기 로딩 중이라도 선택 ID를 보존하여 개역한글 1개로 초기화되는 현상 원천 차단)
       const savedSelectedStr = localStorage.getItem('bible-selected-versions');
       if (savedSelectedStr) {
         try {
@@ -626,7 +948,11 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (Array.isArray(parsed) && parsed.length > 0) {
             // nrsv 구버전 ID를 kjv로 자동 치환
             parsed = parsed.map(id => id === 'built-in-eng-nrsv' ? 'built-in-eng-kjv' : id);
-            const valid = parsed.filter(id => hydratedVersions.some(v => v.id === id));
+            const valid = parsed.filter(id => 
+              hydratedVersions.some(v => v.id === id) || 
+              id === 'built-in-krv' || 
+              id === 'built-in-niv'
+            );
             setSelectedVersionIds(valid.length > 0 ? valid : ['built-in-kor-revised']);
           } else {
             setSelectedVersionIds(['built-in-kor-revised']);
@@ -777,75 +1103,115 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const next = [...prev];
       const [item] = next.splice(index, 1);
       next.splice(targetIndex, 0, item);
+      const order = next.map(v => v.id);
       try {
-        localStorage.setItem('bible-version-order', JSON.stringify(next.map(v => v.id)));
+        localStorage.setItem('bible-version-order', JSON.stringify(order));
       } catch (e) {
         console.error(e);
       }
+      syncPreferencesToCloud({ versionOrder: order });
       return next;
     });
   };
 
   const reorderVersions = (newVersions: BibleVersion[]) => {
     setVersions(newVersions);
+    const order = newVersions.map(v => v.id);
     try {
-      localStorage.setItem('bible-version-order', JSON.stringify(newVersions.map(v => v.id)));
+      localStorage.setItem('bible-version-order', JSON.stringify(order));
     } catch (e) {
       console.error(e);
     }
+    syncPreferencesToCloud({ versionOrder: order });
   };
 
-  return (
-    <BibleContext.Provider value={{ 
-      versions, selectedVersionIds, copyMode, showVersionInCopy,
-      addVersion, removeVersion, 
-      renameVersion: (id, name) => setVersions(prev => prev.map(v => v.id === id ? { ...v, name } : v)),
-      reorderVersions,
-      moveVersion,
-      clearAllVersions: async () => {
-        const builtIns = versions.filter(v => v.isBuiltIn);
-        setVersions(builtIns);
-        setSelectedVersionIds(builtIns.map(v => v.id));
-        indexedVersionIds.current.clear();
-        savedVersionIdsRef.current.clear();
-        
-        // 구글 드라이브에서 모든 번역본 파일 삭제
-        import('../api/gdriveWebService').then(async ({ gdriveWebService }) => {
-          try {
-            const files = await gdriveWebService.listBibleFiles();
-            for (const f of files) {
-              await gdriveWebService.deleteBibleFile(f.id).catch(console.error);
-            }
-          } catch (e) { console.error('Failed to clear cloud bibles', e); }
-        });
-
-        const all = await bibleDB.getAllVersions();
-        for (const v of all) {
-          if (!v.isBuiltIn) await bibleDB.deleteVersion(v.id);
-        }
-      },
-      toggleVersion: (id) => setSelectedVersionIds(prev => {
-        let next: string[];
-        if (prev.includes(id)) {
-          if (prev.length <= 1) return prev; // 최소 1개 번역본 활성화 유지
-          next = prev.filter(vid => vid !== id);
-        } else {
-          next = prev.length >= 5 ? prev : [...prev, id];
-        }
+  const contextValue = React.useMemo(() => ({
+    versions, selectedVersionIds, copyMode, showVersionInCopy,
+    addVersion, removeVersion, 
+    renameVersion: (id: string, name: string) => setVersions(prev => prev.map(v => v.id === id ? { ...v, name } : v)),
+    reorderVersions,
+    moveVersion,
+    clearAllVersions: async () => {
+      const builtIns = versions.filter(v => v.isBuiltIn);
+      setVersions(builtIns);
+      setSelectedVersionIds(builtIns.map(v => v.id));
+      indexedVersionIds.current.clear();
+      savedVersionIdsRef.current.clear();
+      
+      // 구글 드라이브에서 모든 번역본 파일 삭제
+      import('../api/gdriveWebService').then(async ({ gdriveWebService }) => {
         try {
-          localStorage.setItem('bible-selected-versions', JSON.stringify(next));
-        } catch (e) {}
-        return next;
-      }),
-      setCopyMode, setShowVersionInCopy,
-      copyMultiOption, setCopyMultiOption,
-      mainKrVersionId, setMainKrVersionId,
-      mainEnVersionId, setMainEnVersionId,
-      lineHeight, setLineHeight: (val) => setLineHeight(Math.max(1.3, val)),
-      verseData, setVerseData: syncVerseData,
-      flushVerseData,
-      showAnnotations, setShowAnnotations
-    }}>
+          const files = await gdriveWebService.listBibleFiles();
+          for (const f of files) {
+            await gdriveWebService.deleteBibleFile(f.id).catch(console.error);
+          }
+        } catch (e) { console.error('Failed to clear cloud bibles', e); }
+      });
+
+      const all = await bibleDB.getAllVersions();
+      for (const v of all) {
+        if (!v.isBuiltIn) await bibleDB.deleteVersion(v.id);
+      }
+    },
+    toggleVersion: (id: string) => setSelectedVersionIds(prev => {
+      let next: string[];
+      if (prev.includes(id)) {
+        if (prev.length <= 1) return prev; // 최소 1개 번역본 활성화 유지
+        next = prev.filter(vid => vid !== id);
+      } else {
+        next = prev.length >= 5 ? prev : [...prev, id];
+      }
+      try {
+        localStorage.setItem('bible-selected-versions', JSON.stringify(next));
+      } catch (e) {}
+      syncPreferencesToCloud({ selectedVersionIds: next });
+      return next;
+    }),
+    setCopyMode: (mode: CopyMode) => {
+      setCopyMode(mode);
+      syncPreferencesToCloud({ copyMode: mode });
+    },
+    setShowVersionInCopy: (val: boolean) => {
+      setShowVersionInCopy(val);
+      syncPreferencesToCloud({ showVersionInCopy: val });
+    },
+    copyMultiOption,
+    setCopyMultiOption: (option: any) => {
+      setCopyMultiOption(option);
+      syncPreferencesToCloud({ copyMultiOption: option });
+    },
+    mainKrVersionId,
+    setMainKrVersionId: (id: string) => {
+      setMainKrVersionId(id);
+      syncPreferencesToCloud({ mainKrVersionId: id });
+    },
+    mainEnVersionId,
+    setMainEnVersionId: (id: string) => {
+      setMainEnVersionId(id);
+      syncPreferencesToCloud({ mainEnVersionId: id });
+    },
+    lineHeight,
+    setLineHeight: (val: number) => {
+      const clamped = Math.max(1.3, val);
+      setLineHeight(clamped);
+      syncPreferencesToCloud({ lineHeight: clamped });
+    },
+    verseData, setVerseData: syncVerseData,
+    flushVerseData,
+    showAnnotations, setShowAnnotations,
+    annotationFilters, toggleAnnotationFilter,
+    sermonVerseMap,
+    savedAiVerseKeys
+  }), [
+    versions, selectedVersionIds, copyMode, showVersionInCopy,
+    copyMultiOption, mainKrVersionId, mainEnVersionId, lineHeight,
+    verseData, showAnnotations, annotationFilters, sermonVerseMap,
+    savedAiVerseKeys, syncVerseData, flushVerseData, toggleAnnotationFilter,
+    addVersion, removeVersion, moveVersion
+  ]);
+
+  return (
+    <BibleContext.Provider value={contextValue}>
       {children}
     </BibleContext.Provider>
   );

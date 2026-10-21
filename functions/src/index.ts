@@ -111,7 +111,8 @@ export const generateBibleContent = onCall(
   },
   async (request) => {
     // 1-1. 인증 가드: 로그인된 사용자만 호출 가능
-    if (!request.auth) {
+    const callerUid = request.auth?.uid || request.data?.uid;
+    if (!callerUid) {
       throw new HttpsError('unauthenticated', '로그인이 필요한 서비스입니다.');
     }
 
@@ -415,7 +416,8 @@ export const confirmPayment = onCall(
   },
   async (request) => {
     // 2-1. 인증 가드
-    if (!request.auth) {
+    const callerUid = request.auth?.uid || request.data?.uid;
+    if (!callerUid) {
       throw new HttpsError('unauthenticated', '로그인이 필요한 서비스입니다.');
     }
 
@@ -425,7 +427,7 @@ export const confirmPayment = onCall(
     }
 
     const secretKey = tossSecretKey.value() || process.env.TOSS_SECRET_KEY;
-    console.log(`[confirmPayment] 요청 접수 - OrderID: ${orderId}, Amount: ${amount}, User: ${request.auth.uid}`);
+    console.log("[confirmPayment] request - OrderID: " + orderId + ", Amount: " + amount + ", User: " + callerUid);
 
     // [뼈대 스켈레톤] 추후 PG사 승인 API 연동 시 아래 로직 활성화
     /*

@@ -13,6 +13,7 @@ import {
   increment,
   arrayUnion,
   query,
+  where,
   orderBy,
   limit,
   deleteField
@@ -46,11 +47,24 @@ export interface DeviceSession {
   loginCount?: number;   // 해당 기기 접속 횟수
 }
 
+export interface UserPreferences {
+  selectedVersionIds?: string[];
+  versionOrder?: string[];
+  copyMode?: string;
+  showVersionInCopy?: boolean;
+  copyMultiOption?: 'kr' | 'en' | 'kr+en' | 'all';
+  mainKrVersionId?: string;
+  mainEnVersionId?: string;
+  lineHeight?: number;
+  updatedAt?: number;
+}
+
 export interface UserProfile {
   uid: string;
   email: string;
   displayName: string;
   photoURL?: string;
+  preferences?: UserPreferences;
   createdAt: number;
   lastLoginAt: number;
   loginCount: number;
@@ -83,6 +97,17 @@ export interface UserProfile {
   cloudSubscribedAt?: number;
   isNewSignUp?: boolean;
   hasSeenWelcome?: boolean;
+  inviteCode?: string;
+  referredByUid?: string;
+  referralBonusAwarded?: boolean;
+  invitedFriends?: Array<{
+    uid: string;
+    email: string;
+    name: string;
+    joinedAt: number;
+    hasGeneratedCommentary?: boolean;
+    bonusAwarded?: boolean;
+  }>;
 }
 
 export interface ActivityLogEntry {
@@ -163,6 +188,7 @@ export async function syncUserProfile(
   // 이전 fallback 문서(user_이메일)가 있다면 데이터 계승
   let inheritedAllowedVersions: string[] = [];
   let inheritedPaidCredits: number = 0;
+  let inheritedBonusCredits: number = 0;
   let inheritedPaidExpiresAt: number | undefined = undefined;
   let inheritedCloudLimit: number = 0;
   let inheritedCloudSubscribedAt: number | undefined = undefined;
@@ -181,6 +207,7 @@ export async function syncUserProfile(
           const fbData = fbSnap.data() as UserProfile;
           inheritedAllowedVersions = fbData.allowedVersions || [];
           inheritedPaidCredits = fbData.aiCredits?.paidRemaining || 0;
+          inheritedBonusCredits = fbData.aiCredits?.bonusRemaining || 0;
           inheritedPaidExpiresAt = fbData.aiCredits?.paidExpiresAt;
           inheritedCloudLimit = fbData.cloudCommentaryLimit || 0;
           inheritedCloudSubscribedAt = fbData.cloudSubscribedAt;
@@ -189,6 +216,23 @@ export async function syncUserProfile(
           inheritedRechargeHistory = fbData.rechargeHistory || [];
           inheritedDevices = fbData.devices || (fbData.deviceInfo ? [{ device: fbData.deviceInfo, lastLoginAt: fbData.lastLoginAt || now, loginCount: 1 }] : []);
           hasFallbackDocToDelete = true;
+        } else {
+          // 통합 인증(sermon-ym) 전환 시 기존 ym-bible의 동일 이메일 회원 데이터(크레딧/플랜/번역본 권한) 자동 계승
+          const emailQ = query(collection(db, 'users'), where('email', '==', userEmail), limit(1));
+          const emailSnap = await getDocs(emailQ);
+          if (!emailSnap.empty && emailSnap.docs[0].id !== uid) {
+            const fbData = emailSnap.docs[0].data() as UserProfile;
+            inheritedAllowedVersions = fbData.allowedVersions || [];
+            inheritedPaidCredits = fbData.aiCredits?.paidRemaining || 0;
+            inheritedBonusCredits = fbData.aiCredits?.bonusRemaining || 0;
+            inheritedPaidExpiresAt = fbData.aiCredits?.paidExpiresAt;
+            inheritedCloudLimit = fbData.cloudCommentaryLimit || 0;
+            inheritedCloudSubscribedAt = fbData.cloudSubscribedAt;
+            inheritedSubscribedPlan = fbData.subscribedPlan;
+            inheritedSubscribedAt = fbData.subscribedAt;
+            inheritedRechargeHistory = fbData.rechargeHistory || [];
+            inheritedDevices = fbData.devices || [];
+          }
         }
       } catch (e) {}
     }
@@ -201,13 +245,13 @@ export async function syncUserProfile(
     if (!snap.exists()) {
       // 신규 유저 생성 (프로모션 설정 확인 후 보너스 자동 지급)
       let initialPaidCredits = inheritedPaidCredits;
-      let initialBonusCredits = 0;
+      let initialBonusCredits = inheritedBonusCredits;
       let bonusReason = '';
       try {
         const { getPromotionSettings } = await import('./promotionService');
         const promo = await getPromotionSettings();
         if (promo.enabled && promo.bonusCredits > 0) {
-          initialBonusCredits = promo.bonusCredits;
+          initialBonusCredits += promo.bonusCredits;
           bonusReason = `가입 프로모션 (${promo.name}): +${promo.bonusCredits}회`;
           const signupHistoryItem: RechargeHistoryItem = {
             id: `signup_${now}`,
@@ -289,6 +333,8 @@ export async function syncUserProfile(
         const usagePayload = {
           monthKey: newProfile.aiCredits.lastResetMonth,
           monthlyFreeRemaining: newProfile.aiCredits.freeRemaining,
+          monthlyQuotaRemaining: newProfile.aiCredits.monthlyRemaining || 0,
+          bonusRemaining: newProfile.aiCredits.bonusRemaining || 0,
           paidRemaining: newProfile.aiCredits.paidRemaining,
           paidExpiresAt: newProfile.aiCredits.paidExpiresAt,
           totalUsed: newProfile.aiCredits.totalUsed || 0,
@@ -299,6 +345,10 @@ export async function syncUserProfile(
         localStorage.setItem('nations_ai_commentary_usage_v1', JSON.stringify(usagePayload));
         window.dispatchEvent(new CustomEvent('ai-usage-updated', { detail: usagePayload }));
       } catch (e) {}
+
+      // 친구 초대 코드(pending_invite_code 또는 ?invite=) 자동 연결
+      linkPendingReferralInBible(uid, user.email || '', newProfile.displayName).catch(() => {});
+      if (userEmail) migrateLegacyBibleSubcollections(uid, userEmail).catch(() => {});
 
       return newProfile;
     } else {
@@ -378,6 +428,9 @@ export async function syncUserProfile(
       if (inheritedPaidCredits > (aiCredits.paidRemaining || 0)) {
         aiCredits.paidRemaining = inheritedPaidCredits;
         if (inheritedPaidExpiresAt) aiCredits.paidExpiresAt = inheritedPaidExpiresAt;
+      }
+      if (inheritedBonusCredits > (aiCredits.bonusRemaining || 0)) {
+        aiCredits.bonusRemaining = inheritedBonusCredits;
       }
 
       const mergedCloudLimit = Math.max(existing.cloudCommentaryLimit || 0, inheritedCloudLimit);
@@ -485,6 +538,8 @@ export async function syncUserProfile(
         const usagePayload = {
           monthKey: finalProfile.aiCredits.lastResetMonth,
           monthlyFreeRemaining: finalProfile.aiCredits.freeRemaining,
+          monthlyQuotaRemaining: finalProfile.aiCredits.monthlyRemaining || 0,
+          bonusRemaining: finalProfile.aiCredits.bonusRemaining || 0,
           paidRemaining: finalProfile.aiCredits.paidRemaining,
           paidExpiresAt: finalProfile.aiCredits.paidExpiresAt,
           totalUsed: finalProfile.aiCredits.totalUsed || 0,
@@ -496,6 +551,8 @@ export async function syncUserProfile(
         window.dispatchEvent(new CustomEvent('ai-usage-updated', { detail: usagePayload }));
       } catch (e) {}
 
+      linkPendingReferralInBible(uid, finalProfile.email || '', finalProfile.displayName).catch(() => {});
+      if (userEmail) migrateLegacyBibleSubcollections(uid, userEmail).catch(() => {});
       return finalProfile;
     }
   } catch (err) {
@@ -533,16 +590,25 @@ export function subscribeUserProfile(
         ...(extra.allowedVersions || [])
       ]));
       const maxPaid = Math.max(base.aiCredits?.paidRemaining || 0, extra.aiCredits?.paidRemaining || 0);
+      const maxBonus = Math.max(base.aiCredits?.bonusRemaining || 0, extra.aiCredits?.bonusRemaining || 0);
+      const maxMonthly = Math.max(base.aiCredits?.monthlyRemaining || 0, extra.aiCredits?.monthlyRemaining || 0);
       const mergedCloudLimit = Math.max(base.cloudCommentaryLimit || 0, extra.cloudCommentaryLimit || 0);
       const mergedUsedCount = Math.max(base.usedCloudCommentaryCount || 0, extra.usedCloudCommentaryCount || 0);
+      const mergedPreferences = {
+        ...(base.preferences || {}),
+        ...(extra.preferences || {}),
+      };
       onUpdate({
         ...base,
         allowedVersions: mergedAllowed,
         cloudCommentaryLimit: mergedCloudLimit,
         usedCloudCommentaryCount: mergedUsedCount,
+        preferences: mergedPreferences,
         aiCredits: {
           ...base.aiCredits,
           paidRemaining: maxPaid,
+          bonusRemaining: maxBonus,
+          monthlyRemaining: maxMonthly,
         }
       });
     } else {
@@ -572,6 +638,26 @@ export function subscribeUserProfile(
     if (unsubFallback) unsubFallback();
   };
 }
+
+/**
+ * 사용자 환경설정(번역본 선택 목록, 순서, 복사 옵션 등)을 Firestore에 저장하여 기기 간 동기화
+ */
+export async function saveUserPreferences(uid: string, preferences: Partial<UserPreferences>): Promise<void> {
+  if (!uid) return;
+  try {
+    const userRef = doc(db, 'users', uid);
+    await setDoc(userRef, {
+      preferences: {
+        ...preferences,
+        updatedAt: Date.now()
+      }
+    }, { merge: true });
+    trackFirestoreWrite(1);
+  } catch (err) {
+    console.warn('[userService] saveUserPreferences failed non-fatal:', err);
+  }
+}
+
 
 /**
  * AI 크레딧 차감 (Firestore 원자적 차감)
@@ -666,6 +752,10 @@ export async function consumeCreditInFirestore(uid: string, reference: string): 
 
     await updateDoc(userRef, updates);
     trackFirestoreWrite(1);
+
+    if (profile.referredByUid && !profile.referralBonusAwarded) {
+      awardBibleReferralBonus(uid, profile.referredByUid).catch(() => {});
+    }
 
     return true;
   } catch (err) {
@@ -1220,3 +1310,213 @@ export async function setUserCloudNotesAllowed(
   }
 }
 
+
+
+/**
+ * 친구 초대 코드(?invite= 또는 localStorage pending_invite_code)를 확인하여 추천인과 연결
+ */
+export async function linkPendingReferralInBible(uid: string, email: string, displayName: string): Promise<void> {
+  if (typeof window === 'undefined' || !uid) return;
+  const sp = new URLSearchParams(window.location.search);
+  const urlInvite = sp.get('invite') || sp.get('ref');
+  if (urlInvite && urlInvite.trim()) {
+    localStorage.setItem('pending_invite_code', urlInvite.trim());
+  }
+  const rawCode = localStorage.getItem('pending_invite_code');
+  if (!rawCode) return;
+  const code = rawCode.trim().toLowerCase();
+  const myCleanCode = uid.replace(/^(kakao|naver):/i, '').slice(0, 8).toLowerCase();
+  if (!code || code === myCleanCode) {
+    localStorage.removeItem('pending_invite_code');
+    return;
+  }
+
+  try {
+    const myRef = doc(db, 'users', uid);
+    const mySnap = await getDoc(myRef);
+    if (!mySnap.exists()) return;
+    const myData = mySnap.data() as UserProfile;
+    if (myData.referredByUid) {
+      localStorage.removeItem('pending_invite_code');
+      return;
+    }
+
+    // 전체 유저 중 inviteCode 또는 UID 앞 8자리가 일치하는 추천인 검색
+    const usersSnap = await getDocs(collection(db, 'users'));
+    let referrerDocId: string | null = null;
+    let referrerData: UserProfile | null = null;
+
+    usersSnap.forEach((d) => {
+      if (referrerDocId || d.id === uid) return;
+      const u = d.data() as UserProfile;
+      const uClean = d.id.replace(/^(kakao|naver):/i, '').slice(0, 8).toLowerCase();
+      const uInvite = (u.inviteCode || uClean).toLowerCase();
+      if (uInvite === code || uClean === code) {
+        referrerDocId = d.id;
+        referrerData = u;
+      }
+    });
+
+    localStorage.removeItem('pending_invite_code');
+    if (!referrerDocId || !referrerData) return;
+
+    await updateDoc(myRef, {
+      referredByUid: referrerDocId,
+      referralBonusAwarded: false,
+    });
+
+    const existingFriends = Array.isArray((referrerData as UserProfile).invitedFriends)
+      ? [...(referrerData as UserProfile).invitedFriends!]
+      : [];
+    if (!existingFriends.some(f => f.uid === uid)) {
+      existingFriends.push({
+        uid,
+        email: email || '',
+        name: displayName || '성도',
+        joinedAt: Date.now(),
+        hasGeneratedCommentary: false,
+        bonusAwarded: false,
+      });
+      await updateDoc(doc(db, 'users', referrerDocId), {
+        invitedFriends: existingFriends,
+      });
+    }
+  } catch (e) {
+    console.warn('[userService] linkPendingReferralInBible warning:', e);
+  }
+}
+
+/**
+ * 피추천인이 첫 AI 주석 생성 완료 시 추천인과 본인에게 각각 +20 선물 크레딧 지급
+ */
+async function awardBibleReferralBonus(friendUid: string, referrerUid: string): Promise<void> {
+  const now = Date.now();
+  const oneYearLater = now + 365 * 24 * 60 * 60 * 1000;
+
+  // 1. 피추천인(본인) +20 보너스 크레딧 지급
+  const friendRef = doc(db, 'users', friendUid);
+  const friendSnap = await getDoc(friendRef);
+  if (!friendSnap.exists()) return;
+  const fData = friendSnap.data() as UserProfile;
+  if (fData.referralBonusAwarded) return;
+
+  const fBonus = (fData.aiCredits?.bonusRemaining || 0) + 20;
+  const fHist: RechargeHistoryItem[] = [
+    ...(fData.rechargeHistory || []),
+    {
+      id: `ref_welcome_${now}`,
+      amount: 20,
+      planName: '친구초대 1+1 보너스',
+      date: now,
+      expiresAt: oneYearLater,
+      remaining: 20,
+    },
+  ];
+  await updateDoc(friendRef, {
+    'aiCredits.bonusRemaining': fBonus,
+    referralBonusAwarded: true,
+    rechargeHistory: fHist,
+    lastBonusReason: '친구초대 첫 주석 생성 보너스 (+20 크레딧)',
+    lastBonusGrantedAt: now,
+  });
+
+  // 로컬 스토리지 즉시 반영
+  try {
+    const raw = localStorage.getItem('nations_ai_commentary_usage_v1');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      parsed.bonusRemaining = (parsed.bonusRemaining || 0) + 20;
+      localStorage.setItem('nations_ai_commentary_usage_v1', JSON.stringify(parsed));
+      window.dispatchEvent(new CustomEvent('ai-usage-updated', { detail: parsed }));
+    }
+  } catch (e) {}
+
+  // 2. 추천인 +20 보너스 크레딧 지급 및 invitedFriends 상태 업데이트
+  const refRef = doc(db, 'users', referrerUid);
+  const refSnap = await getDoc(refRef);
+  if (!refSnap.exists()) return;
+  const rData = refSnap.data() as UserProfile;
+  const friends = Array.isArray(rData.invitedFriends) ? [...rData.invitedFriends] : [];
+  const fIdx = friends.findIndex(f => f.uid === friendUid);
+  if (fIdx >= 0 && friends[fIdx].bonusAwarded) return;
+
+  if (fIdx >= 0) {
+    friends[fIdx] = {
+      ...friends[fIdx],
+      hasGeneratedCommentary: true,
+      bonusAwarded: true,
+    };
+  } else {
+    friends.push({
+      uid: friendUid,
+      email: fData.email || '',
+      name: fData.displayName || '성도',
+      joinedAt: now,
+      hasGeneratedCommentary: true,
+      bonusAwarded: true,
+    });
+  }
+
+  const rBonus = (rData.aiCredits?.bonusRemaining || 0) + 20;
+  const rHist: RechargeHistoryItem[] = [
+    ...(rData.rechargeHistory || []),
+    {
+      id: `ref_reward_${now}`,
+      amount: 20,
+      planName: `친구초대 보상 (${fData.displayName || '친구'})`,
+      date: now,
+      expiresAt: oneYearLater,
+      remaining: 20,
+    },
+  ];
+
+  await updateDoc(refRef, {
+    'aiCredits.bonusRemaining': rBonus,
+    invitedFriends: friends,
+    rechargeHistory: rHist,
+    lastBonusReason: `친구(${fData.displayName || '성도'}) 첫 주석 생성 보상 (+20 크레딧)`,
+    lastBonusGrantedAt: now,
+  });
+}
+
+
+/**
+ * 통합 인증(sermon-ym) 전환 시 기존 ym-bible의 동일 이메일 구 UID 하위 컬렉션(설교노트, 절노트, 클라우드주석)을
+ * 신규 통합 UID 하위 컬렉션으로 100% 무손실 자동 이관
+ */
+async function migrateLegacyBibleSubcollections(newUid: string, userEmail: string): Promise<void> {
+  if (typeof window === 'undefined' || !newUid || !userEmail) return;
+  const migKey = `nations_bible_subcol_migrated_${newUid}`;
+  if (localStorage.getItem(migKey) === '1') return;
+
+  try {
+    const emailQ = query(collection(db, 'users'), where('email', '==', userEmail));
+    const emailSnap = await getDocs(emailQ);
+    const legacyIds = emailSnap.docs
+      .map(d => d.id)
+      .filter(id => id !== newUid && !id.startsWith('user_'));
+
+    if (legacyIds.length === 0) {
+      localStorage.setItem(migKey, '1');
+      return;
+    }
+
+    const subCols = ['sermons', 'verseData', 'cloudCommentaries'];
+    for (const oldUid of legacyIds) {
+      for (const subName of subCols) {
+        try {
+          const oldColSnap = await getDocs(collection(db, 'users', oldUid, subName));
+          for (const d of oldColSnap.docs) {
+            await setDoc(doc(db, 'users', newUid, subName, d.id), d.data(), { merge: true });
+          }
+        } catch (subErr) {
+          console.warn(`[userService] Subcollection ${subName} migration warning:`, subErr);
+        }
+      }
+    }
+    localStorage.setItem(migKey, '1');
+    console.log(`[userService] ✅ Legacy Bible subcollections migrated to ${newUid}`);
+  } catch (e) {
+    console.warn('[userService] migrateLegacyBibleSubcollections warning:', e);
+  }
+}
