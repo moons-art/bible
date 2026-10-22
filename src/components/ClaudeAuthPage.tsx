@@ -35,7 +35,7 @@ import {
   type User
 } from 'firebase/auth';
 import { auth, googleProvider } from '../api/firebaseConfig';
-import { startKakaoLogin, startNaverLogin, syncUserWithHub, getSocialUserMeta } from '../utils/socialAuth';
+import { startKakaoLogin, startNaverLogin, syncUserWithHub, getSocialUserMeta, getRecentLoginProvider } from '../utils/socialAuth';
 import { syncUserProfile } from '../services/userService';
 import { submitReferralRequest } from '../services/promotionService';
 import { PolicyViewModal, type PolicyModalType } from './PolicyViewModal';
@@ -409,6 +409,74 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
             더 빠르게 연구하세요
           </h1>
 
+          {/* 최상단 서브 문구 (3줄글 & 기능 소개 카드) */}
+          <div className="mb-6 text-center text-xs sm:text-sm text-[#4A4741] leading-relaxed">
+            <p className="font-semibold text-lg text-[#1C1A18] font-serif mb-2">Nations Bible</p>
+            <div className="space-y-1 text-[#66625B]">
+              <p><span className="font-bold text-[#1C1A18]">EASY</span> : 쉬워요!</p>
+              <p><span className="font-bold text-[#1C1A18]">SIMPLE</span> : 필요한 기능만!</p>
+              <p><span className="font-bold text-[#1C1A18]">LIGHT</span> : 부담없어요! 평생 무료 & 합리적 요금</p>
+            </div>
+
+            {/* 4줄 순차 타이핑 효과 영역 */}
+            <div className="mt-4 w-full sm:w-[405px] h-[126px] min-h-[126px] max-h-[126px] mx-auto rounded-2xl border border-[#DA7756]/40 bg-white/80 py-2.5 shadow-2xs flex flex-col justify-between items-center shrink-0 box-border overflow-hidden">
+              <div className="w-[260px] max-w-[90%] pl-2 flex flex-col justify-between h-full">
+                {typingLines.map((item, idx) => {
+                  const charCount = displayedLengths[idx];
+                  const fromLen = item.from.length;
+                  const hasFrom = charCount > 0;
+                  const hasArrow = charCount >= fromLen + 3;
+                  const toTypedCount = Math.max(0, charCount - (fromLen + 4));
+
+                  const fromText = item.from.slice(0, charCount);
+                  const toText = item.to.slice(0, toTypedCount);
+
+                  return (
+                    <div
+                      key={idx}
+                      className="h-5 min-h-[20px] max-h-[20px] flex items-center justify-start gap-2 font-medium text-[12px] sm:text-[13px] text-[#2C2B29] whitespace-nowrap overflow-hidden"
+                    >
+                      <span
+                        className={`shrink-0 flex items-center justify-center w-3.5 h-3.5 rounded-full transition-all ${
+                          hasFrom ? 'bg-[#1C1A18] text-white opacity-100 scale-100' : 'opacity-0 scale-75'
+                        }`}
+                      >
+                        <Check className="w-2 h-2 stroke-[3px]" />
+                      </span>
+
+                      <span className="font-sans tracking-tight text-[#3A3834]">
+                        {fromText}
+                      </span>
+
+                      {hasArrow && (
+                        <span className="inline-flex items-center text-[#1C1A18] shrink-0 font-bold px-0.5 animate-fadeIn">
+                          <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="w-4 h-4 inline-block"
+                          >
+                            <line x1="3" y1="12" x2="20" y2="12" />
+                            <polyline points="15 7 20 12 15 17" />
+                          </svg>
+                        </span>
+                      )}
+
+                      {toTypedCount > 0 && (
+                        <span className="font-semibold text-[#1C1A18] tracking-tight">
+                          {toText}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
           {/* 로그인 카드 컨테이너 */}
           <div className="w-full max-w-md bg-white border border-[#E8E5DE] rounded-3xl p-6 sm:p-8 shadow-xs text-left">
             {currentUser ? (
@@ -467,7 +535,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                 <button
                   onClick={handleGoogleLogin}
                   disabled={isLoading}
-                  className="w-full py-3.5 px-4 bg-white hover:bg-[#FAF9F5] active:bg-[#F5F2EB] border border-[#DDD8CE] text-[#2C2B29] rounded-2xl font-semibold text-sm flex items-center justify-center gap-3 transition-all shadow-2xs hover:shadow-xs cursor-pointer disabled:opacity-50"
+                  className="relative w-full py-3.5 px-4 bg-white hover:bg-[#FAF9F5] active:bg-[#F5F2EB] border border-[#DDD8CE] text-[#2C2B29] rounded-2xl font-semibold text-sm flex items-center justify-center gap-3 transition-all shadow-2xs hover:shadow-xs cursor-pointer disabled:opacity-50"
                 >
                   <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -476,6 +544,11 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                     <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
                   </svg>
                   <span>Google로 계속하기</span>
+                  {recentProvider === 'google' && (
+                    <span className="absolute right-3 px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#F3EFEA] text-[#8C5E43] border border-[#E5DFD5]">
+                      최근 로그인
+                    </span>
+                  )}
                 </button>
 
                 {/* 카카오 & 네이버 간편로그인 버튼 */}
@@ -483,22 +556,32 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   type="button"
                   onClick={() => startKakaoLogin('bible')}
                   disabled={isLoading}
-                  className="w-full py-3.5 px-4 bg-[#FEE500] hover:bg-[#FDD800] active:bg-[#F5D000] text-[#191919] rounded-2xl font-semibold text-sm flex items-center justify-center gap-2.5 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                  className="relative w-full py-3.5 px-4 bg-[#FEE500] hover:bg-[#FDD800] active:bg-[#F5D000] text-[#191919] rounded-2xl font-semibold text-sm flex items-center justify-center gap-2.5 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
                 >
                   <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="#191919">
                     <path d="M12 3C6.477 3 2 6.463 2 10.735c0 2.78 1.884 5.217 4.716 6.578-.154.557-.991 3.588-1.028 3.816-.047.29.106.286.224.208.092-.06 3.658-2.482 5.134-3.489.312.031.63.047.954.047 5.523 0 10-3.463 10-7.735S17.523 3 12 3z" />
                   </svg>
                   <span>카카오로 1초 만에 시작하기</span>
+                  {recentProvider === 'kakao' && (
+                    <span className="absolute right-3 px-2 py-0.5 rounded-full text-[10px] font-medium bg-black/10 text-[#191919] border border-black/5">
+                      최근 로그인
+                    </span>
+                  )}
                 </button>
 
                 <button
                   type="button"
                   onClick={() => startNaverLogin('bible')}
                   disabled={isLoading}
-                  className="w-full py-3.5 px-4 bg-[#03C75A] hover:bg-[#02B350] active:bg-[#029E46] text-white rounded-2xl font-semibold text-sm flex items-center justify-center gap-2.5 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                  className="relative w-full py-3.5 px-4 bg-[#03C75A] hover:bg-[#02B350] active:bg-[#029E46] text-white rounded-2xl font-semibold text-sm flex items-center justify-center gap-2.5 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
                 >
                   <span className="font-black text-sm leading-none">N</span>
                   <span>네이버로 시작하기</span>
+                  {recentProvider === 'naver' && (
+                    <span className="absolute right-3 px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/20 text-white border border-white/20">
+                      최근 로그인
+                    </span>
+                  )}
                 </button>
 
 {false && (<button type="button" onClick={() => setShowEmailAuth(!showEmailAuth)}><Mail /><ChevronUp /><ChevronDown /></button>)}
@@ -1299,23 +1382,38 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   </button>
                 </li>
                 <li>
-                  <span className="hover:text-[#2C2B29] cursor-pointer">
-                    NATIONS STUDIO
-                  </span>
+                  <a
+                    href="https://sermon.thenations.kr"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-[#2C2B29] hover:underline cursor-pointer block"
+                  >
+                    NATIONS SERMON VIDEO
+                  </a>
                 </li>
                 <li>
-                  <span className="hover:text-[#2C2B29] cursor-pointer">
+                  <a
+                    href="https://studio.thenations.kr"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-[#2C2B29] hover:underline cursor-pointer block"
+                  >
+                    NATIONS STUDIO
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://vote.thenations.kr"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-[#2C2B29] hover:underline cursor-pointer block"
+                  >
                     NATIONS VOTE
-                  </span>
+                  </a>
                 </li>
                 <li>
                   <span className="hover:text-[#2C2B29] cursor-pointer">
                     NATIONS CHURCH
-                  </span>
-                </li>
-                <li>
-                  <span className="hover:text-[#2C2B29] cursor-pointer">
-                    AI 주석 연구 엔진
                   </span>
                 </li>
               </ul>

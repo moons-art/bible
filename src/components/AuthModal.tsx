@@ -10,7 +10,7 @@ import {
 } from 'firebase/auth';
 import { auth, googleProvider } from '../api/firebaseConfig';
 import { syncUserProfile } from '../services/userService';
-import { startKakaoLogin, startNaverLogin, syncUserWithHub } from '../utils/socialAuth';
+import { startKakaoLogin, startNaverLogin, syncUserWithHub, getRecentLoginProvider } from '../utils/socialAuth';
 import { PolicyViewModal, type PolicyModalType } from './PolicyViewModal';
 
 interface AuthModalProps {
@@ -28,6 +28,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
     tab: 'terms'
   });
   const [email, setEmail] = useState('');
+  const [recentProvider, setRecentProvider] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setRecentProvider(getRecentLoginProvider());
+    }
+  }, [isOpen]);
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -237,7 +244,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                   NATIONS VOTE
                 </span>
                 <span className="text-[10px] font-semibold tracking-tight py-1 px-2 bg-[#FAF9F5] text-[#5A564F] rounded-lg border border-[#EAE6DE] text-center flex items-center justify-center">
-                  NATIONS CHURCH
+                  SERMON VIDEO
                 </span>
               </div>
             </div>
@@ -247,7 +254,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
           <button
             onClick={handleGoogleLogin}
             disabled={isLoading}
-            className="w-full py-3 px-4 bg-white hover:bg-[#F5F3ED] border border-[#DDD8CE] text-[#2C2B29] rounded-xl font-medium text-xs flex items-center justify-center gap-2.5 transition-all shadow-2xs hover:shadow-xs cursor-pointer disabled:opacity-50"
+            className="relative w-full py-3 px-4 bg-white hover:bg-[#F5F3ED] border border-[#DDD8CE] text-[#2C2B29] rounded-xl font-medium text-xs flex items-center justify-center gap-2.5 transition-all shadow-2xs hover:shadow-xs cursor-pointer disabled:opacity-50"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -256,6 +263,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
               <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
             </svg>
             <span>Google 계정으로 계속하기</span>
+            {recentProvider === 'google' && (
+              <span className="absolute right-3 px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#F3EFEA] text-[#8C5E43] border border-[#E5DFD5]">
+                최근 로그인
+              </span>
+            )}
           </button>
 
           {/* 카카오 / 네이버 간편로그인 버튼 */}
@@ -264,21 +276,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
               type="button"
               onClick={() => startKakaoLogin('bible')}
               disabled={isLoading}
-              className="py-2.5 px-3 bg-[#FEE500] hover:bg-[#FDD800] text-[#191919] rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+              className="relative py-2.5 px-3 bg-[#FEE500] hover:bg-[#FDD800] text-[#191919] rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
             >
               <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="#191919">
                 <path d="M12 3C6.477 3 2 6.463 2 10.735c0 2.78 1.884 5.217 4.716 6.578-.154.557-.991 3.588-1.028 3.816-.047.29.106.286.224.208.092-.06 3.658-2.482 5.134-3.489.312.031.63.047.954.047 5.523 0 10-3.463 10-7.735S17.523 3 12 3z" />
               </svg>
               <span>카카오로 시작</span>
+              {recentProvider === 'kakao' && (
+                <span className="absolute -top-2 right-1 px-1.5 py-0.2 rounded-full text-[9px] font-medium bg-black/10 text-[#191919] border border-black/5">
+                  최근
+                </span>
+              )}
             </button>
             <button
               type="button"
               onClick={() => startNaverLogin('bible')}
               disabled={isLoading}
-              className="py-2.5 px-3 bg-[#03C75A] hover:bg-[#02B350] text-white rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+              className="relative py-2.5 px-3 bg-[#03C75A] hover:bg-[#02B350] text-white rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
             >
               <span className="font-black text-xs leading-none">N</span>
               <span>네이버로 시작</span>
+              {recentProvider === 'naver' && (
+                <span className="absolute -top-2 right-1 px-1.5 py-0.2 rounded-full text-[9px] font-medium bg-white/30 text-white border border-white/20">
+                  최근
+                </span>
+              )}
             </button>
           </div>
 

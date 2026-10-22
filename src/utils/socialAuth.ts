@@ -84,6 +84,24 @@ export interface SocialUserMeta {
   provider: string;
 }
 
+export const RECENT_LOGIN_KEY = 'nations_recent_login_provider';
+
+export function getRecentLoginProvider(): string | null {
+  try {
+    return localStorage.getItem(RECENT_LOGIN_KEY) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function setRecentLoginProvider(provider: string | null | undefined): void {
+  try {
+    if (provider) {
+      localStorage.setItem(RECENT_LOGIN_KEY, provider);
+    }
+  } catch (e) {}
+}
+
 export function getSocialUserMeta(user: User | null): SocialUserMeta | null {
   if (!user) return null;
   try {
@@ -174,6 +192,7 @@ export async function processOAuthCallback(auth: Auth): Promise<{
 
     try {
       localStorage.setItem(`nations_social_user_${cred.user.uid}`, JSON.stringify(profileMeta));
+      setRecentLoginProvider(profileMeta.provider || provider);
     } catch (e) {}
 
     if (profileMeta.displayName && !cred.user.displayName) {
@@ -207,6 +226,7 @@ export async function syncUserWithHub(user: User, targetApp: string = 'bible'): 
   if (user.uid.startsWith('kakao:')) provider = 'kakao';
   else if (user.uid.startsWith('naver:')) provider = 'naver';
   else if (providerData === 'password') provider = 'email';
+  setRecentLoginProvider(provider);
 
   const email = user.email || socialMeta?.email || '';
   const displayName = user.displayName || socialMeta?.displayName || (email ? email.split('@')[0] : '성도님');
