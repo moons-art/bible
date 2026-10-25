@@ -22,6 +22,17 @@ export function getAuthHubApiBase(): string {
   return 'https://sermon.thenations.kr';
 }
 
+// 결제 UI 리다이렉트 전용 프론트엔드 호스팅 주소 (로컬 포트 5173 / 배포 시 sermon.thenations.kr)
+export function getAuthHubFrontendBase(): string {
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return 'http://localhost:5173';
+    }
+  }
+  return 'https://sermon.thenations.kr';
+}
+
 export function initKakaoSdk(): boolean {
   if (typeof window === 'undefined' || !window.Kakao) return false;
   if (!window.Kakao.isInitialized()) {

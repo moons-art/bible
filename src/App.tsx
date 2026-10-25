@@ -486,13 +486,16 @@ const MainApp: React.FC = () => {
         cleanUrl.searchParams.delete('orderId');
         window.history.replaceState({}, '', cleanUrl.toString());
 
-        const currentUid = auth.currentUser?.uid;
-        if (currentUid) {
-          import('./services/userService').then(({ applyPlanToUser }) => {
-            applyPlanToUser(currentUid, plan, plan, 'monthly', 0).catch(console.warn);
-          });
-        }
-        alert(`🎉 결제가 성공적으로 승인되었습니다!\n[${plan}] 플랜 권한이 즉시 적용되었습니다.`);
+        // 비동기 인증 복원 대기 리스너 (Auth 복원 즉시 로컬 DB에 권한 동기화)
+        const unsubPaymentAuth = auth.onAuthStateChanged((u) => {
+          if (u) {
+            unsubPaymentAuth();
+            import('./services/userService').then(({ applyPlanToUser }) => {
+              applyPlanToUser(u.uid, plan, plan, 'monthly', 0).catch(console.warn);
+            });
+            alert(`🎉 결제가 성공적으로 승인되었습니다!\n[${plan}] 플랜 권한이 즉시 적용되었습니다.`);
+          }
+        });
       }
     }
   }, []);

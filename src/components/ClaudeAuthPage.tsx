@@ -357,7 +357,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
     const orderId = `ord_bible_${Date.now()}`;
 
     // 중앙 결제 허브 베이스 URL
-    const isLocal = window.location.hostname.includes('localhost');
+    const isLocal = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1';
     const hubBase = isLocal ? 'http://localhost:5173' : 'https://sermon.thenations.kr';
     const currentOriginUrl = window.location.origin + window.location.pathname;
 
@@ -377,7 +377,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
         orderName: `[Nations Bible] ${planName} (${cycleText})`,
         customerName: currentUser.displayName || '성경앱 회원',
         customerEmail: currentUser.email || undefined,
-        successUrl: `${hubBase}/payment/success?targetApp=bible&planId=${planId}&planName=${encodeURIComponent(planName)}&billingCycle=${isCreditOrOnce ? 'once' : billingCycle}&returnUrl=${encodeURIComponent(currentOriginUrl)}`,
+        successUrl: `${hubBase}/payment/success?targetApp=bible&planId=${planId}&planName=${encodeURIComponent(planName)}&billingCycle=${isCreditOrOnce ? 'once' : billingCycle}&uid=${encodeURIComponent(currentUser.uid)}&returnUrl=${encodeURIComponent(currentOriginUrl)}`,
         failUrl: `${hubBase}/payment/fail?returnUrl=${encodeURIComponent(currentOriginUrl)}`,
       });
     } catch (err) {
