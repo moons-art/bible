@@ -1520,3 +1520,101 @@ async function migrateLegacyBibleSubcollections(newUid: string, userEmail: strin
     console.warn('[userService] migrateLegacyBibleSubcollections warning:', e);
   }
 }
+
+
+/**
+ * 결제 승인 후 로컬 Firestore(ym-bible)의 유저 프로필에 플랜 및 크레딧을 즉각 반영/지급
+ */
+export async function applyPlanToUser(
+  uid: string,
+  planId: string,
+  planName: string,
+  billingCycle: string,
+  amount: number
+): Promise<void> {
+  if (!uid) return;
+  const userRef = doc(db, 'users', uid);
+  const now = Date.now();
+  const rawId = planId.toLowerCase();
+
+  // 1. 크레딧 단건 충전 (200, 500)
+  if (rawId.includes('200')) {
+    await setDoc(userRef, {
+      'aiCredits': {
+        paidRemaining: increment(200),
+      },
+      rechargeHistory: arrayUnion({
+        id: `rc_${now}`,
+        amount: 200,
+        planName: '크레딧 200 충전',
+        date: now,
+        expiresAt: now + (365 * 24 * 60 * 60 * 1000),
+      }),
+    }, { merge: true });
+    return;
+  }
+  if (rawId.includes('500')) {
+    await setDoc(userRef, {
+      'aiCredits': {
+        paidRemaining: increment(500),
+      },
+      rechargeHistory: arrayUnion({
+        id: `rc_${now}`,
+        amount: 500,
+        planName: '크레딧 500 충전',
+        date: now,
+        expiresAt: now + (365 * 24 * 60 * 60 * 1000),
+      }),
+    }, { merge: true });
+    return;
+  }
+
+  // 2. 클라우드 365 갱신권
+  if (rawId.includes('365') || rawId.includes('renewal')) {
+    await setDoc(userRef, {
+      cloudSubscribedAt: now,
+      cloudNotesAllowed: true,
+      lastBonusReason: '클라우드 365 갱신',
+    }, { merge: true });
+    return;
+  }
+
+  // 3. 정기 멤버십 플랜 (lite, pro, master)
+  let monthlyQuota = 20;
+  let bonusCredits = 100;
+  if (rawId.includes('pro') || rawId.includes('프로')) {
+    monthlyQuota = 40;
+    bonusCredits = 250;
+  } else if (rawId.includes('master') || rawId.includes('마스터')) {
+    monthlyQuota = 80;
+    bonusCredits = 500;
+  }
+
+  const isYearly = billingCycle === 'yearly' || planName.includes('연간');
+  const updatePayload: Record<string, any> = {
+    subscribedPlan: planName,
+    subscribedAt: now,
+    cloudSubscribedAt: now,
+    cloudNotesAllowed: true,
+    cloudCommentaryLimit: 31102,
+  };
+
+  if (isYearly) {
+    updatePayload['aiCredits'] = {
+      paidRemaining: increment(bonusCredits),
+    };
+  } else {
+    updatePayload['aiCredits'] = {
+      monthlyRemaining: monthlyQuota,
+    };
+  }
+
+  updatePayload.rechargeHistory = arrayUnion({
+    id: `plan_${now}`,
+    amount: isYearly ? bonusCredits : monthlyQuota,
+    planName,
+    date: now,
+  });
+
+  await setDoc(userRef, updatePayload, { merge: true });
+}

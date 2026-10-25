@@ -35,7 +35,15 @@ import {
   type User
 } from 'firebase/auth';
 import { auth, googleProvider } from '../api/firebaseConfig';
-import { startKakaoLogin, startNaverLogin, syncUserWithHub, getSocialUserMeta, getRecentLoginProvider } from '../utils/socialAuth';
+import { 
+  startKakaoLogin, 
+  startNaverLogin, 
+  syncUserWithHub, 
+  getSocialUserMeta, 
+  getRecentLoginProvider,
+  processUniversalPayment,
+  requestTossPayment
+} from '../utils/socialAuth';
 import { syncUserProfile } from '../services/userService';
 import { submitReferralRequest } from '../services/promotionService';
 import { PolicyViewModal, type PolicyModalType } from './PolicyViewModal';
@@ -87,6 +95,42 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
   const [pricingTab, setPricingTab] = useState<'membership' | 'credit'>('membership');
   // 멤버십 결제 주기 ('yearly': 연간 결제 | 'monthly': 월간 구독)
   const [billingCycle, setBillingCycle] = useState<'yearly' | 'monthly'>('yearly');
+
+  // 최근 로그인 수단
+  const [recentProvider, setRecentProvider] = useState<string | null>(() => getRecentLoginProvider());
+
+  // 타이핑 애니메이션 문구 및 상태
+  const typingLines = React.useMemo(() => [
+    { from: '복잡한 성경 주석', to: 'AI 원어 주석으로 한번에' },
+    { from: '흩어진 설교 자료', to: '설교노트 클라우드 보관' },
+    { from: '여러 번역본 비교', to: '한눈에 보는 다중 번역본' },
+    { from: '모바일·태블릿·PC', to: '모든 기기 실시간 동기화' },
+  ], []);
+
+  const [displayedLengths, setDisplayedLengths] = useState<number[]>([0, 0, 0, 0]);
+
+  useEffect(() => {
+    let currentLine = 0;
+    let currentChar = 0;
+    const interval = setInterval(() => {
+      setDisplayedLengths(prev => {
+        const next = [...prev];
+        const line = typingLines[currentLine];
+        const maxLen = line ? line.from.length + 4 + line.to.length : 0;
+        if (currentChar <= maxLen) {
+          next[currentLine] = currentChar;
+          currentChar++;
+        } else {
+          if (currentLine < typingLines.length - 1) {
+            currentLine++;
+            currentChar = 0;
+          }
+        }
+        return next;
+      });
+    }, 40);
+    return () => clearInterval(interval);
+  }, [typingLines]);
 
   // 친구 추천 폼
   const [isReferralOpen, setIsReferralOpen] = useState(false);
@@ -274,22 +318,73 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
     }
   };
 
-  // 플랜 선택 및 액션 핸들러 (비로그인 상태일 때는 무료플랜을 포함한 모든 플랜이 상단 로그인 화면으로 부드럽게 스크롤 이동)
-  const handlePlanAction = (planName: string, isFreePlan = false) => {
+  // 플랜 선택 및 결제 모듈 연동 핸들러
+  const handlePlanAction = async (planName: string, isFreePlan = false) => {
     if (!currentUser) {
-      alert(`${planName} 이용을 위해 먼저 로그인을 진행해주세요.\n상단 로그인 화면으로 이동합니다.`);
+      alert(`${planName} 플랜을 이용하시려면 먼저 로그인이 필요합니다.\n상단 로그인 화면으로 이동합니다.`);
       loginSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
 
     if (isFreePlan) {
-      // 이미 로그인된 상태에서 무료 플랜 선택 시 성경 본문 읽기로 이동
+      // 무료 플랜은 즉시 이용
       onClose();
       return;
     }
 
-    alert(`[${planName}] 결제 모듈 연동 준비 중입니다.\n관리자 승인 또는 친구 추천을 통해 무료 크레딧을 받으실 수 있습니다!`);
+    // 대상 플랜 ID 및 결제 금액 산출
+    let planId = 'cloud_lite';
+    let amount = billingCycle === 'yearly' ? 39000 : 3900;
+    if (planName.includes('마스터')) {
+      planId = 'cloud_master';
+      amount = billingCycle === 'yearly' ? 99000 : 9900;
+    } else if (planName.includes('프로')) {
+      planId = 'cloud_pro';
+      amount = billingCycle === 'yearly' ? 59000 : 5900;
+    } else if (planName.includes('200')) {
+      planId = 'credit_200';
+      amount = 5500;
+    } else if (planName.includes('500')) {
+      planId = 'credit_500';
+      amount = 11000;
+    } else if (planName.includes('365')) {
+      planId = 'cloud_365';
+      amount = 11000;
+    }
+
+    const isCreditOrOnce = planId.startsWith('credit_') || planId === 'cloud_365';
+    const cycleText = isCreditOrOnce ? '단건 충전' : (billingCycle === 'yearly' ? '연간 결제' : '월간 구독');
+    const orderId = `ord_bible_${Date.now()}`;
+
+    // 중앙 결제 허브 베이스 URL
+    const isLocal = window.location.hostname.includes('localhost');
+    const hubBase = isLocal ? 'http://localhost:5173' : 'https://sermon.thenations.kr';
+    const currentOriginUrl = window.location.origin + window.location.pathname;
+
+    // 세션 스토리지에 복귀 정보 기록
+    sessionStorage.setItem('pending_pay_target_app', 'bible');
+    sessionStorage.setItem('pending_pay_plan_id', planId);
+    sessionStorage.setItem('pending_pay_plan_name', planName);
+    sessionStorage.setItem('pending_pay_cycle', isCreditOrOnce ? 'once' : billingCycle);
+    sessionStorage.setItem('pending_pay_uid', currentUser.uid);
+    sessionStorage.setItem('pending_pay_return_url', currentOriginUrl);
+
+    try {
+      await requestTossPayment({
+        method: '카드',
+        amount,
+        orderId,
+        orderName: `[Nations Bible] ${planName} (${cycleText})`,
+        customerName: currentUser.displayName || '성경앱 회원',
+        customerEmail: currentUser.email || undefined,
+        successUrl: `${hubBase}/payment/success?targetApp=bible&planId=${planId}&planName=${encodeURIComponent(planName)}&billingCycle=${isCreditOrOnce ? 'once' : billingCycle}&returnUrl=${encodeURIComponent(currentOriginUrl)}`,
+        failUrl: `${hubBase}/payment/fail?returnUrl=${encodeURIComponent(currentOriginUrl)}`,
+      });
+    } catch (err) {
+      console.warn('[ClaudeAuthPage] Toss payment cancelled or error:', err);
+    }
   };
+
 
   // FAQ 목록 데이터 (사용자 요청 반영)
   const faqs = [

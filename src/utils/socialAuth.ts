@@ -340,3 +340,133 @@ export function shareInviteViaKakao(options: {
   }
   return false;
 }
+
+
+// 통합 4개 앱 플랜 결제 및 권한 동기화를 위한 공통 클라이언트 함수
+export interface UniversalPaymentOptions {
+  uid: string;
+  targetApp: 'sermon' | 'bible' | 'studio' | 'vote';
+  planId: string;
+  planName: string;
+  billingCycle: 'monthly' | 'yearly' | 'once';
+  amount?: number;
+  options?: Record<string, any>;
+}
+
+export interface UniversalPaymentResult {
+  success: boolean;
+  appPlan?: {
+    planId: string;
+    planName: string;
+    billingCycle: string;
+    amount: number;
+    orderId: string;
+    updatedAt: string;
+    options?: Record<string, any>;
+  };
+  error?: string;
+}
+
+export async function processUniversalPayment(
+  opts: UniversalPaymentOptions
+): Promise<UniversalPaymentResult> {
+  try {
+    const apiBase = getAuthHubApiBase();
+    const res = await fetch(`${apiBase}/api/user/plan/universal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uid: opts.uid,
+        target_app: opts.targetApp,
+        plan_id: opts.planId,
+        plan_name: opts.planName,
+        billing_cycle: opts.billingCycle,
+        amount: opts.amount || 0,
+        options: opts.options || {},
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || '결제/플랜 동기화 실패 응답입니다.');
+    }
+
+    const data = await res.json();
+    return {
+      success: true,
+      appPlan: data.appPlan,
+    };
+  } catch (e: any) {
+    console.error('[UniversalPayment] Error:', e);
+    return {
+      success: false,
+      error: e?.message || '플랜 변경 중 오류가 발생했습니다.',
+    };
+  }
+}
+
+export async function getHubAppPlan(
+  uid: string,
+  targetApp: 'sermon' | 'bible' | 'studio' | 'vote'
+): Promise<any | null> {
+  if (!uid) return null;
+  try {
+    const snap = await getDoc(doc(authDb, 'users', uid));
+    if (snap.exists()) {
+      const appPlans = snap.data()?.appPlans || {};
+      return appPlans[targetApp] || null;
+    }
+  } catch (e) {
+    console.warn('[HubAppPlan] Fetch warning:', e);
+  }
+  return null;
+}
+
+// 토스페이먼츠(Toss Payments) 결제창 연동 (Sandbox 기본키 탑재)
+export const TOSS_CLIENT_KEY = 'test_ck_D5GePWvyJnrK0W0k6q8gLzN97Eoq';
+
+export function loadTossPaymentsSdk(): Promise<any> {
+  if (typeof window === 'undefined') return Promise.reject(new Error('Window not available'));
+  const win = window as any;
+  if (win.TossPayments) {
+    return Promise.resolve(win.TossPayments(TOSS_CLIENT_KEY));
+  }
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://js.tosspayments.com/v1/payment';
+    script.async = true;
+    script.onload = () => {
+      if (win.TossPayments) {
+        resolve(win.TossPayments(TOSS_CLIENT_KEY));
+      } else {
+        reject(new Error('TossPayments SDK 로드 실패'));
+      }
+    };
+    script.onerror = () => reject(new Error('TossPayments SDK 스크립트 로드 오류'));
+    document.head.appendChild(script);
+  });
+}
+
+export async function requestTossPayment(params: {
+  amount: number;
+  orderId: string;
+  orderName: string;
+  customerName?: string;
+  customerEmail?: string;
+  successUrl: string;
+  failUrl: string;
+  method?: string;
+}) {
+  const toss = await loadTossPaymentsSdk();
+  const method = params.method || '카드';
+  return toss.requestPayment(method, {
+    amount: params.amount,
+    orderId: params.orderId,
+    orderName: params.orderName,
+    customerName: params.customerName || '네이션스 바이블 회원',
+    customerEmail: params.customerEmail || undefined,
+    successUrl: params.successUrl,
+    failUrl: params.failUrl,
+  });
+}

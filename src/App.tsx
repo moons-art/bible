@@ -474,6 +474,27 @@ const MainApp: React.FC = () => {
     }).finally(() => {
       if (isCb) setIsAuthChecking(false);
     });
+
+    // 토스페이먼츠 결제 승인 완료 후 복귀 감지 (?payment=success)
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get('payment') === 'success') {
+        const plan = sp.get('plan') || 'pro';
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('payment');
+        cleanUrl.searchParams.delete('plan');
+        cleanUrl.searchParams.delete('orderId');
+        window.history.replaceState({}, '', cleanUrl.toString());
+
+        const currentUid = auth.currentUser?.uid;
+        if (currentUid) {
+          import('./services/userService').then(({ applyPlanToUser }) => {
+            applyPlanToUser(currentUid, plan, plan, 'monthly', 0).catch(console.warn);
+          });
+        }
+        alert(`🎉 결제가 성공적으로 승인되었습니다!\n[${plan}] 플랜 권한이 즉시 적용되었습니다.`);
+      }
+    }
   }, []);
 
   // Firebase Auth 통합 리스너 (구글 + 카카오 + 네이버 + 일반 이메일 간편가입 지원)

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileEdit, Plus, Calendar, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers, BookOpen, Folder, FolderOpen, ArrowLeft, Bold, Italic, Underline, Highlighter, HardDrive, Cloud, CloudOff } from 'lucide-react';
+import { X, FileEdit, Plus, Calendar, Clock, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers, BookOpen, Folder, FolderOpen, ArrowLeft, Bold, Italic, Underline, Highlighter, HardDrive, Cloud, CloudOff } from 'lucide-react';
 import { db, auth } from '../api/firebaseConfig';
 import { doc, collection, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
 import { BIBLE_LIST } from '../constants/bibleMeta';
@@ -66,9 +66,39 @@ const stripHtml = (html?: string): string => {
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
-    .replace(/[#*`\n\r\t]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+};
+
+/**
+ * 설교 목록 및 에디터에서 날짜와 시간(오전/오후 HH:mm)을 보기 좋게 표시해주는 헬퍼
+ */
+const formatSermonDateTime = (dateStr?: string, updatedAt?: number): string => {
+  if (updatedAt) {
+    const d = new Date(updatedAt);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hours = d.getHours();
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      const period = hours < 12 ? '오전' : '오후';
+      const formattedHour = hours % 12 === 0 ? 12 : hours % 12;
+      return `${year}-${month}-${day} ${period} ${formattedHour}:${minutes}`;
+    }
+  }
+  return dateStr || '';
+};
+
+const formatSermonTime = (updatedAt?: number): string => {
+  if (!updatedAt) return '';
+  const d = new Date(updatedAt);
+  if (isNaN(d.getTime())) return '';
+  const hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const period = hours < 12 ? '오전' : '오후';
+  const formattedHour = hours % 12 === 0 ? 12 : hours % 12;
+  return `${period} ${formattedHour}:${minutes}`;
 };
 
 export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({ 
@@ -1962,8 +1992,9 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                             <p className="text-[11px] text-[#6A6864] line-clamp-1 font-serif flex-1 min-w-0">
                               {stripHtml(s.content)}
                             </p>
-                            <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1">
-                              <Calendar className="w-3 h-3 stroke-[1.5px]" /> {s.date}
+                            <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1" title={s.updatedAt ? new Date(s.updatedAt).toLocaleString() : s.date}>
+                              <Calendar className="w-3 h-3 stroke-[1.5px]" />
+                              <span>{formatSermonDateTime(s.date, s.updatedAt)}</span>
                             </span>
                           </div>
                         </div>
@@ -2028,8 +2059,9 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                                       <p className="text-[10px] text-[#6A6864] line-clamp-1 font-serif flex-1 min-w-0">
                                         {stripHtml(s.content)}
                                       </p>
-                                      <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1">
-                                        <Calendar className="w-2.5 h-2.5" /> {s.date}
+                                      <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1" title={s.updatedAt ? new Date(s.updatedAt).toLocaleString() : s.date}>
+                                        <Calendar className="w-2.5 h-2.5" />
+                                        <span>{formatSermonDateTime(s.date, s.updatedAt)}</span>
                                       </span>
                                     </div>
                                   </div>
@@ -2086,8 +2118,9 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                                     <p className="text-[10px] text-[#6A6864] line-clamp-1 font-serif flex-1 min-w-0">
                                       {stripHtml(s.content)}
                                     </p>
-                                    <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1">
-                                      <Calendar className="w-2.5 h-2.5" /> {s.date}
+                                    <span className="text-[10px] text-[#A3A19B] flex items-center gap-1 shrink-0 whitespace-nowrap ml-1" title={s.updatedAt ? new Date(s.updatedAt).toLocaleString() : s.date}>
+                                      <Calendar className="w-2.5 h-2.5" />
+                                      <span>{formatSermonDateTime(s.date, s.updatedAt)}</span>
                                     </span>
                                   </div>
                                 </div>
@@ -2452,23 +2485,34 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
               </div>
 
               <div className="relative flex-1 flex flex-col min-h-0 bg-[#FAF9F5]">
-                <input 
-                  id="sermon-title-input"
-                  type="text" 
-                  placeholder="설교 제목..." 
-                  style={{ fontFamily: activeFontFamily }}
-                  className="w-full text-base font-bold border-b border-[#E7E5DF] outline-none px-6 py-3.5 placeholder:text-[#A3A19B] shrink-0 text-[#2C2B29] bg-white"
-                  value={editorTitle}
-                  onChange={(e) => {
-                    const newTitle = e.target.value;
-                    setEditorTitle(newTitle);
-                    notifyChange(newTitle, latestEditorRef.current.content, {
-                      fontId: sermonFontId,
-                      fontSize: sermonFontSize,
-                      autoVerseConversion: isAutoVerseEnabled,
-                    });
-                  }}
-                />
+                <div className="relative flex items-center border-b border-[#E7E5DF] bg-white">
+                  <input 
+                    id="sermon-title-input"
+                    type="text" 
+                    placeholder="설교 제목..." 
+                    style={{ fontFamily: activeFontFamily }}
+                    className="w-full text-base font-bold outline-none px-6 py-3.5 pr-44 placeholder:text-[#A3A19B] shrink-0 text-[#2C2B29] bg-transparent"
+                    value={editorTitle}
+                    onChange={(e) => {
+                      const newTitle = e.target.value;
+                      setEditorTitle(newTitle);
+                      notifyChange(newTitle, latestEditorRef.current.content, {
+                        fontId: sermonFontId,
+                        fontSize: sermonFontSize,
+                        autoVerseConversion: isAutoVerseEnabled,
+                      });
+                    }}
+                  />
+                  {(activeSermonObj?.updatedAt || activeSermonObj?.date) && (
+                    <div 
+                      className="absolute right-4 hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#FAF9F5] border border-[#EAE7E0] text-[11px] text-[#8C877D] shrink-0 pointer-events-none select-none"
+                      title={activeSermonObj.updatedAt ? `최종 수정: ${new Date(activeSermonObj.updatedAt).toLocaleString()}` : `작성일: ${activeSermonObj.date}`}
+                    >
+                      <Clock className="w-3 h-3 text-[#A3A19B] stroke-[1.8px]" />
+                      <span>{formatSermonDateTime(activeSermonObj.date, activeSermonObj.updatedAt)}</span>
+                    </div>
+                  )}
+                </div>
                 <div
                   key={activeSermonId || 'empty'}
                   ref={editorAreaRef}
