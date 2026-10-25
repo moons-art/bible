@@ -33,7 +33,7 @@ import { InviteBonusModal } from './components/InviteBonusModal';
 import { getCachedSitePolicy, subscribeSitePolicy, type SitePolicy, DEFAULT_SITE_POLICY } from './services/policyService';
 import { isAdminUser, syncUserProfile, getLocalUserResourceCounts } from './services/userService';
 import { auth } from './api/firebaseConfig';
-import { processOAuthCallback, syncUserWithHub, getSocialUserMeta } from './utils/socialAuth';
+import { processOAuthCallback, syncUserWithHub, getSocialUserMeta, getHubAppPlan } from './utils/socialAuth';
 import { signOut } from 'firebase/auth';
 
 const AdminModal = React.lazy(() => import('./components/AdminModal').then(m => ({ default: m.AdminModal })));
@@ -516,6 +516,19 @@ const MainApp: React.FC = () => {
         };
         // 중앙 인증 허브(sermon-ym)에 바이블 앱 접속 이력 동기화
         syncUserWithHub(user, 'bible').catch(() => {});
+
+        // ─── [Self-Healing] 중앙 인증 허브(authDb)의 최신 플랜을 로컬 DB(ym-bible)에 자가 치유 동기화 ───
+        getHubAppPlan(user.uid, 'bible').then((hubPlan) => {
+          if (hubPlan && (hubPlan.isPro || hubPlan.planId)) {
+            import('./services/userService').then(({ applyPlanToUser }) => {
+              const targetPlan = hubPlan.planId || (hubPlan.isPro ? 'pro' : 'free');
+              applyPlanToUser(user.uid, targetPlan, hubPlan.planName || targetPlan, hubPlan.billingCycle || 'monthly', 0)
+                .then(() => console.log(`[Self-Healing] Bible plan synced from Hub: ${targetPlan}`))
+                .catch(console.warn);
+            });
+          }
+        }).catch((healErr) => console.warn('[Self-Healing] Bible plan sync error:', healErr));
+
         setUserProfile(profile);
         try {
           localStorage.setItem('cached_auth_user', JSON.stringify(profile));

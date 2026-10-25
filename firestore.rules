@@ -1,7 +1,19 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 개발/운영 단계: 모든 읽기/쓰기 허용 (추후 보안 규칙 강화 예정)
+    // 1. 공통 약관 및 법적 정책 (누구나 읽기만 가능, 쓰기 전면 차단)
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // 2. 활동 로그 (쓰기만 허용, 변조 및 타인 로그 열람 차단)
+    match /activity_logs/{logId} {
+      allow create: if true;
+      allow read, update, delete: if false;
+    }
+
+    // 3. 설교 노트 및 구절 메모 데이터 (기존 클라이언트 호환 유지)
     match /{document=**} {
       allow read, write: if true;
     }

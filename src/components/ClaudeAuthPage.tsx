@@ -35,6 +35,7 @@ import {
   type User
 } from 'firebase/auth';
 import { auth, googleProvider } from '../api/firebaseConfig';
+import { isInAppBrowser, escapeInAppBrowser } from '../utils/inAppBrowser';
 import { 
   startKakaoLogin, 
   startNaverLogin, 
@@ -179,6 +180,12 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
 
   // 구글 로그인 핸들러
   const handleGoogleLogin = async () => {
+    if (isInAppBrowser()) {
+      escapeInAppBrowser();
+      setErrorMsg('카카오톡/인앱 브라우저에서는 구글 정책상 로그인이 제한됩니다. 크롬 또는 사파리 외부 브라우저로 이동합니다.');
+      return;
+    }
+
     setIsLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -1600,8 +1607,24 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
             </div>
           </div>
 
+          {/* 전자상거래법 및 PG사 심사 기준 준수 사업자 정보 표기 */}
+          <div className="pt-6 border-t border-[#E8E5DE] text-[11px] leading-relaxed text-[#8C877D] space-y-1">
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              <span>상호명: <strong className="text-[#5A564F]">네이션스 솔루션</strong></span>
+              <span className="text-[#D6D2C9]">|</span>
+              <span>대표자: <strong className="text-[#5A564F]">최희정</strong></span>
+              <span className="text-[#D6D2C9]">|</span>
+              <span>사업자등록번호: <strong className="text-[#5A564F] font-mono">120-00-00000</strong></span>
+              <span className="text-[#D6D2C9]">|</span>
+              <span>통신판매업신고: <strong className="text-[#5A564F]">제 2026-경남창원-00000 호</strong></span>
+            </div>
+            <div>
+              <span>사업장 소재지: <strong className="text-[#5A564F]">창원시 마산합포구 산호시장길 40</strong></span>
+            </div>
+          </div>
+
           {/* 하단 카피라이트 및 법적 고지 */}
-          <div className="pt-6 border-t border-[#E8E5DE] flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-[#8C877D]">
+          <div className="pt-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-[#8C877D]">
             <div className="flex items-center gap-2">
               <img
                 src="/icon.png"
