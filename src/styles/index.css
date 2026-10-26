@@ -2,12 +2,12 @@
 
 @theme {
   --font-serif: 'Noto Serif KR', 'Source Serif 4', Georgia, serif;
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
   --font-noto-serif: 'Noto Serif KR', serif;
   --font-nanum-myeongjo: 'Nanum Myeongjo', serif;
   --font-maru-buri: 'MaruBuri', serif;
   --font-noto-sans: 'Noto Sans KR', sans-serif;
-  --font-pretendard: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+  --font-pretendard: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
 
   /* Claude Signature Colors */
   --color-claude-canvas: #FAF9F5;
@@ -46,8 +46,7 @@
   body {
     background-color: #FAF9F5;
     color: #2C2B29;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    font-feature-settings: "ss01", "ss03", "cv01", "cv11";
+    font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
