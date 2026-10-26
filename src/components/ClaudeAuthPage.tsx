@@ -1487,7 +1487,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                     </span>
                   </a>
 
-                  {/* 2. NATIONS SERMON VIDEO */}
+                  {/* 2. NATIONS VIDEO */}
                   <a
                     href="https://sermon.thenations.kr/"
                     target="_blank"
@@ -1496,10 +1496,10 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                     className="px-3 py-2 rounded-xl hover:bg-white/15 transition-colors flex flex-col cursor-pointer group"
                   >
                     <span className="text-[13px] sm:text-[13.5px] font-bold text-white group-hover:text-white leading-tight">
-                      NATIONS SERMON
+                      NATIONS VIDEO
                     </span>
                     <span className="text-[11px] text-white/80 mt-0.5 font-normal leading-tight">
-                      설교 숏폼 & 미디어 AI
+                      목사님의 설교를 숏폼으로 제작
                     </span>
                   </a>
 
