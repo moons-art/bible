@@ -481,3 +481,20 @@ export async function requestTossPayment(params: {
     failUrl: params.failUrl,
   });
 }
+
+/**
+ * 토스페이먼츠 정기결제(빌링키 발급) 카드 등록창 호출 함수
+ */
+export async function requestTossBillingAuth(params: {
+  customerKey: string;
+  successUrl: string;
+  failUrl: string;
+}) {
+  const toss = await loadTossPaymentsSdk();
+  return toss.requestBillingAuth('카드', {
+    customerKey: params.customerKey,
+    successUrl: params.successUrl,
+    failUrl: params.failUrl,
+  });
+}
+

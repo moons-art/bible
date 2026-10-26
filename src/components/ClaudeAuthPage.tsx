@@ -43,7 +43,8 @@ import {
   getSocialUserMeta, 
   getRecentLoginProvider,
   processUniversalPayment,
-  requestTossPayment
+  requestTossPayment,
+  requestTossBillingAuth
 } from '../utils/socialAuth';
 import { syncUserProfile } from '../services/userService';
 import { submitReferralRequest } from '../services/promotionService';
@@ -94,8 +95,29 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
 
   // 이용권 탭 ('membership': 클라우드 멤버십 | 'credit': AI 크레딧 충전)
   const [pricingTab, setPricingTab] = useState<'membership' | 'credit'>('membership');
-  // 멤버십 결제 주기 ('yearly': 연간 결제 | 'monthly': 월간 구독)
+  // 전체 기본 결제 주기 ('yearly': 연간 결제 | 'monthly': 월간 구독)
   const [billingCycle, setBillingCycle] = useState<'yearly' | 'monthly'>('yearly');
+
+  // 각 요금제 카드별 개별 결제 주기 ('yearly': 연 정기결제 | 'monthly': 월 정기결제)
+  const [cardBillingCycles, setCardBillingCycles] = useState<{
+    lite: 'yearly' | 'monthly';
+    pro: 'yearly' | 'monthly';
+    master: 'yearly' | 'monthly';
+  }>({
+    lite: 'yearly',
+    pro: 'yearly',
+    master: 'yearly',
+  });
+
+  // 상단 일괄 결제 주기 변경 헬퍼
+  const handleGlobalBillingCycleChange = (cycle: 'yearly' | 'monthly') => {
+    setBillingCycle(cycle);
+    setCardBillingCycles({
+      lite: cycle,
+      pro: cycle,
+      master: cycle,
+    });
+  };
 
   // 최근 로그인 수단
   const [recentProvider, setRecentProvider] = useState<string | null>(() => getRecentLoginProvider());
@@ -325,68 +347,113 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
     }
   };
 
-  // 플랜 선택 및 결제 모듈 연동 핸들러
-  const handlePlanAction = async (planName: string, isFreePlan = false) => {
-    if (!currentUser) {
-      alert(`${planName} 플랜을 이용하시려면 먼저 로그인이 필요합니다.\n상단 로그인 화면으로 이동합니다.`);
-      loginSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      return;
-    }
-
-    if (isFreePlan) {
-      // 무료 플랜은 즉시 이용
+  // 플랜 선택 및 결제 모듈 연동 핸들러 (정기결제 빌링키 & 단건결제 완벽 분기)
+  const handlePlanAction = async (
+    targetPlanId: 'free' | 'lite' | 'pro' | 'master' | 'cloud_365' | 'credit_200' | 'credit_500',
+    cycleOverride?: 'yearly' | 'monthly' | 'once'
+  ) => {
+    if (targetPlanId === 'free') {
+      // 무료 플랜은 즉시 닫기
       onClose();
       return;
     }
 
-    // 대상 플랜 ID 및 결제 금액 산출
-    let planId = 'cloud_lite';
-    let amount = billingCycle === 'yearly' ? 39000 : 3900;
-    if (planName.includes('마스터')) {
-      planId = 'cloud_master';
-      amount = billingCycle === 'yearly' ? 99000 : 9900;
-    } else if (planName.includes('프로')) {
-      planId = 'cloud_pro';
-      amount = billingCycle === 'yearly' ? 59000 : 5900;
-    } else if (planName.includes('200')) {
-      planId = 'credit_200';
-      amount = 5500;
-    } else if (planName.includes('500')) {
-      planId = 'credit_500';
+    if (!currentUser) {
+      alert(`해당 플랜을 이용하시려면 먼저 로그인이 필요합니다.\n상단 로그인 화면으로 이동합니다.`);
+      loginSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
+    // ─── [클라우드 365 전용 검증 가드] ───
+    // 단회성 결제이며, 기존 멤버십 요금제(라이트/프로/마스터) 사용자의 기간을 1년 연장
+    // (미리 결제를 해도 1년이 끝나는 지점부터 연장되며, 현재 멤버십 회원이 아니면 적용 불가)
+    if (targetPlanId === 'cloud_365') {
+      const isExistingMember = (cloudCommentaryLimit && cloudCommentaryLimit > 0);
+      if (!isExistingMember) {
+        alert(
+          '⚠️ 클라우드 365 요금제는 현재 클라우드 멤버십(라이트/프로/마스터)을 이용 중인 회원 전용 상품입니다.\n\n' +
+          '※ 미리 결제하셔도 기존 1년 멤버십이 끝나는 시점부터 +1년이 자동 연장됩니다.\n' +
+          '현재 유효한 멤버십 회원이 아니시면 적용되지 않으므로, 먼저 클라우드 멤버십 플랜을 구독해 주세요.'
+        );
+        return;
+      }
+    }
+
+    // 결제 주기 산출: 멤버십은 카드별 설정값 또는 override, 365/크레딧은 단건(once)
+    const isCreditOrOnce = targetPlanId === 'cloud_365' || targetPlanId === 'credit_200' || targetPlanId === 'credit_500';
+    let chosenCycle: 'yearly' | 'monthly' | 'once' = 'once';
+    if (!isCreditOrOnce) {
+      if (cycleOverride) {
+        chosenCycle = cycleOverride;
+      } else {
+        const cardKey = (targetPlanId === 'lite' || targetPlanId === 'pro' || targetPlanId === 'master') ? targetPlanId : 'pro';
+        chosenCycle = cardBillingCycles[cardKey] || billingCycle || 'yearly';
+      }
+    }
+
+    // 플랜명 및 결제 금액 결정
+    let planDisplayName = '클라우드 멤버십';
+    let amount = 0;
+    if (targetPlanId === 'lite') {
+      planDisplayName = '클라우드 라이트';
+      amount = chosenCycle === 'yearly' ? 39000 : 3900;
+    } else if (targetPlanId === 'pro') {
+      planDisplayName = '클라우드 프로';
+      amount = chosenCycle === 'yearly' ? 59000 : 5900;
+    } else if (targetPlanId === 'master') {
+      planDisplayName = '클라우드 마스터';
+      amount = chosenCycle === 'yearly' ? 99000 : 9900;
+    } else if (targetPlanId === 'cloud_365') {
+      planDisplayName = '클라우드 365 (1년 연장)';
       amount = 11000;
-    } else if (planName.includes('365')) {
-      planId = 'cloud_365';
+    } else if (targetPlanId === 'credit_200') {
+      planDisplayName = 'AI 크레딧 200';
+      amount = 5500;
+    } else if (targetPlanId === 'credit_500') {
+      planDisplayName = 'AI 크레딧 500';
       amount = 11000;
     }
 
-    const isCreditOrOnce = planId.startsWith('credit_') || planId === 'cloud_365';
-    const cycleText = isCreditOrOnce ? '단건 충전' : (billingCycle === 'yearly' ? '연간 결제' : '월간 구독');
+    const cycleText = isCreditOrOnce ? '단건 결제' : (chosenCycle === 'yearly' ? '연 정기결제' : '월 정기결제');
     const orderId = `ord_bible_${Date.now()}`;
 
-    // 중앙 결제 허브 베이스 URL
+    // 중앙 결제 허브 베이스 URL (개발 환경 및 상용 서버 자동 판별)
     const isLocal = window.location.hostname.includes('localhost') || window.location.hostname === '127.0.0.1';
     const hubBase = isLocal ? 'http://localhost:5173' : 'https://sermon.thenations.kr';
     const currentOriginUrl = window.location.origin + window.location.pathname;
 
-    // 세션 스토리지에 복귀 정보 기록
+    // 세션 스토리지에 복귀 정보 기록 (중앙 결제창에서 복귀 시 인증 및 플랜 식별용)
     sessionStorage.setItem('pending_pay_target_app', 'bible');
-    sessionStorage.setItem('pending_pay_plan_id', planId);
-    sessionStorage.setItem('pending_pay_plan_name', planName);
-    sessionStorage.setItem('pending_pay_cycle', isCreditOrOnce ? 'once' : billingCycle);
+    sessionStorage.setItem('pending_pay_plan_id', targetPlanId);
+    sessionStorage.setItem('pending_pay_plan_name', planDisplayName);
+    sessionStorage.setItem('pending_pay_cycle', chosenCycle);
     sessionStorage.setItem('pending_pay_uid', currentUser.uid);
     sessionStorage.setItem('pending_pay_return_url', currentOriginUrl);
 
     try {
-      await requestTossPayment({
-        method: '카드',
-        amount,
-        orderId,
-        orderName: `[Nations Bible] ${planName} (${cycleText})`,
-        customerName: currentUser.displayName || '성경앱 회원',
-        customerEmail: currentUser.email || undefined,
-        successUrl: `${hubBase}/payment/success?targetApp=bible&planId=${planId}&planName=${encodeURIComponent(planName)}&billingCycle=${isCreditOrOnce ? 'once' : billingCycle}&uid=${encodeURIComponent(currentUser.uid)}&returnUrl=${encodeURIComponent(currentOriginUrl)}`,
-        failUrl: `${hubBase}/payment/fail?returnUrl=${encodeURIComponent(currentOriginUrl)}`,
-      });
+      if (!isCreditOrOnce) {
+        // ─── A. 정기구독 플랜 (라이트 / 프로 / 마스터): 토스페이먼츠 빌링키 등록창 호출 ───
+        const safeUid = currentUser.uid.replace(/[^a-zA-Z0-9-_]/g, '_');
+        const customerKey = `cust_bible_${safeUid}`;
+
+        await requestTossBillingAuth({
+          customerKey,
+          successUrl: `${hubBase}/payment/success?targetApp=bible&planId=${targetPlanId}&planName=${encodeURIComponent(planDisplayName)}&billingCycle=${chosenCycle}&uid=${encodeURIComponent(currentUser.uid)}&returnUrl=${encodeURIComponent(currentOriginUrl)}`,
+          failUrl: `${hubBase}/payment/fail?returnUrl=${encodeURIComponent(currentOriginUrl)}`,
+        });
+      } else {
+        // ─── B. 단회성 결제 (클라우드 365 1년 연장권, 크레딧 200/500): 일반 결제창 호출 ───
+        await requestTossPayment({
+          method: '카드',
+          amount,
+          orderId,
+          orderName: `[Nations Bible] ${planDisplayName} (${cycleText})`,
+          customerName: currentUser.displayName || '성경앱 회원',
+          customerEmail: currentUser.email || undefined,
+          successUrl: `${hubBase}/payment/success?targetApp=bible&planId=${targetPlanId}&planName=${encodeURIComponent(planDisplayName)}&billingCycle=once&amount=${amount}&uid=${encodeURIComponent(currentUser.uid)}&returnUrl=${encodeURIComponent(currentOriginUrl)}`,
+          failUrl: `${hubBase}/payment/fail?returnUrl=${encodeURIComponent(currentOriginUrl)}`,
+        });
+      }
     } catch (err) {
       console.warn('[ClaudeAuthPage] Toss payment cancelled or error:', err);
     }
@@ -984,29 +1051,29 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   </div>
                 </div>
 
-                {/* 연간 결제 / 월간 구독 토글 */}
+                {/* 상단 일괄 결제 주기 선택 (연 정기결제 / 월 정기결제) */}
                 <div className="inline-flex items-center bg-[#EAE6DE] p-1 rounded-xl shrink-0 text-xs font-bold">
                   <button
                     type="button"
-                    onClick={() => setBillingCycle('yearly')}
+                    onClick={() => handleGlobalBillingCycleChange('yearly')}
                     className={`px-3.5 py-1.5 rounded-lg transition-all cursor-pointer ${
                       billingCycle === 'yearly'
                         ? 'bg-[#C46A40] text-white shadow-xs'
                         : 'text-[#6E6A63] hover:text-[#2C2B29]'
                     }`}
                   >
-                    연간 결제
+                    연 정기결제
                   </button>
                   <button
                     type="button"
-                    onClick={() => setBillingCycle('monthly')}
+                    onClick={() => handleGlobalBillingCycleChange('monthly')}
                     className={`px-3.5 py-1.5 rounded-lg transition-all cursor-pointer ${
                       billingCycle === 'monthly'
                         ? 'bg-[#2C2B29] text-white shadow-xs'
                         : 'text-[#6E6A63] hover:text-[#2C2B29]'
                     }`}
                   >
-                    월간 구독
+                    월 정기결제
                   </button>
                 </div>
               </div>
@@ -1025,7 +1092,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handlePlanAction('Free 기본 제공', true)}
+                      onClick={() => handlePlanAction('free')}
                       className="w-full py-2.5 px-4 bg-[#F5F3ED] hover:bg-[#EAE6DE] text-[#2C2B29] rounded-xl text-xs font-bold transition-all cursor-pointer mb-6"
                     >
                       무료로 이용하기
@@ -1036,7 +1103,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                       <ul className="text-xs text-[#6E6A63] space-y-2.5">
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#8C877D] shrink-0 mt-0.5" />
-                          <span>번역본 비교,</span>
+                          <span>번역본 비교</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#8C877D] shrink-0 mt-0.5" />
@@ -1063,19 +1130,45 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   <div>
                     <Database className="w-7 h-7 text-[#7A756D] mb-3 stroke-[1.8px]" />
                     <h3 className="text-xl font-bold text-[#1A1918]">클라우드 라이트</h3>
-                    <p className="text-[11px] text-[#7A756D] mt-1 mb-4 leading-relaxed">
+                    <p className="text-[11px] text-[#7A756D] mt-1 mb-3 leading-relaxed">
                       나만의 설교노트와 구절주석 DB서버를 구축하려는 전도사님 추천
                     </p>
 
+                    {/* 각 카드별 연 정기결제 / 월 정기결제 개별 토글 */}
+                    <div className="flex items-center bg-[#EAE6DE] p-1 rounded-xl shrink-0 text-[11px] font-bold mb-4">
+                      <button
+                        type="button"
+                        onClick={() => setCardBillingCycles(prev => ({ ...prev, lite: 'monthly' }))}
+                        className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
+                          cardBillingCycles.lite === 'monthly'
+                            ? 'bg-[#2C2B29] text-white shadow-xs'
+                            : 'text-[#6E6A63] hover:text-[#2C2B29]'
+                        }`}
+                      >
+                        월 정기결제
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCardBillingCycles(prev => ({ ...prev, lite: 'yearly' }))}
+                        className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
+                          cardBillingCycles.lite === 'yearly'
+                            ? 'bg-[#C46A40] text-white shadow-xs'
+                            : 'text-[#6E6A63] hover:text-[#2C2B29]'
+                        }`}
+                      >
+                        연 정기결제
+                      </button>
+                    </div>
+
                     <div className="mb-6">
-                      {billingCycle === 'yearly' ? (
+                      {cardBillingCycles.lite === 'yearly' ? (
                         <>
                           <div className="flex items-baseline gap-1.5">
                             <span className="text-3xl font-serif font-bold text-[#1A1918]">₩39,000</span>
                             <span className="text-xs text-[#8C877D]">/ 연간</span>
                           </div>
-                          <p className="text-[10px] text-[#1A1918] font-medium mt-1">
-                            *2년 차부터 서버유지 11,000원(월 900원) 연장 가능
+                          <p className="text-[10px] text-[#C46A40] font-semibold mt-1">
+                            (월 3,250원 상당 · 2년 차부터 클라우드 365 11,000원 연장)
                           </p>
                         </>
                       ) : (
@@ -1088,10 +1181,10 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handlePlanAction(`클라우드 라이트 (${billingCycle === 'yearly' ? '연간 39,000원' : '월간 3,900원'})`)}
+                      onClick={() => handlePlanAction('lite', cardBillingCycles.lite)}
                       className="w-full py-2.5 px-4 bg-[#2C2B29] hover:bg-[#1A1918] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer mb-6"
                     >
-                      클라우드 라이트 시작하기
+                      {cardBillingCycles.lite === 'yearly' ? '클라우드 라이트 연 정기결제' : '클라우드 라이트 월 정기결제'}
                     </button>
 
                     <div className="border-t border-[#EFECE6] pt-4">
@@ -1107,8 +1200,10 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
                           <span>
-                            250 크레딧 즉시 지급 (유효기간 1년)
-                            <span className="text-[11px] text-[#8C877D] block mt-0.5">(AI 원어주석 250회 or 설교자료 5종 set 12개)</span>
+                            {cardBillingCycles.lite === 'yearly' ? 'AI 250 크레딧 즉시 지급 (유효기간 1년)' : '매월 AI 20 크레딧 자동 지급'}
+                            <span className="text-[11px] text-[#8C877D] block mt-0.5">
+                              {cardBillingCycles.lite === 'yearly' ? '(AI 원어주석 250회 or 설교자료 5종 set 12개)' : '(AI 원어주석 20회 or 설교자료 1개)'}
+                            </span>
                           </span>
                         </li>
                         <li className="flex items-start gap-2">
@@ -1128,19 +1223,45 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   <div>
                     <Database className="w-7 h-7 text-[#C46A40] mb-3 stroke-[1.8px]" />
                     <h3 className="text-xl font-bold text-[#1A1918]">클라우드 프로</h3>
-                    <p className="text-[11px] text-[#7A756D] mt-1 mb-4 leading-relaxed">
-                      나만의 DB구축과 함께  AI 주석과 설교자료도 필요하신 강도사님 추천
+                    <p className="text-[11px] text-[#7A756D] mt-1 mb-3 leading-relaxed">
+                      나만의 DB구축과 함께 AI 주석과 설교자료도 필요하신 강도사님 추천
                     </p>
 
+                    {/* 각 카드별 연 정기결제 / 월 정기결제 개별 토글 */}
+                    <div className="flex items-center bg-[#EAE6DE] p-1 rounded-xl shrink-0 text-[11px] font-bold mb-4">
+                      <button
+                        type="button"
+                        onClick={() => setCardBillingCycles(prev => ({ ...prev, pro: 'monthly' }))}
+                        className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
+                          cardBillingCycles.pro === 'monthly'
+                            ? 'bg-[#2C2B29] text-white shadow-xs'
+                            : 'text-[#6E6A63] hover:text-[#2C2B29]'
+                        }`}
+                      >
+                        월 정기결제
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCardBillingCycles(prev => ({ ...prev, pro: 'yearly' }))}
+                        className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
+                          cardBillingCycles.pro === 'yearly'
+                            ? 'bg-[#C46A40] text-white shadow-xs'
+                            : 'text-[#6E6A63] hover:text-[#2C2B29]'
+                        }`}
+                      >
+                        연 정기결제
+                      </button>
+                    </div>
+
                     <div className="mb-6">
-                      {billingCycle === 'yearly' ? (
+                      {cardBillingCycles.pro === 'yearly' ? (
                         <>
                           <div className="flex items-baseline gap-1.5">
                             <span className="text-3xl font-serif font-bold text-[#1A1918]">₩59,000</span>
                             <span className="text-xs text-[#8C877D]">/ 연간</span>
                           </div>
-                          <p className="text-[10px] text-[#1A1918] font-medium mt-1">
-                            *2년 차부터 서버유지 11,000원(월 900원) 연장 가능
+                          <p className="text-[10px] text-[#C46A40] font-semibold mt-1">
+                            (월 4,910원 상당 · 2년 차부터 클라우드 365 11,000원 연장)
                           </p>
                         </>
                       ) : (
@@ -1153,10 +1274,10 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handlePlanAction(`클라우드 프로 (${billingCycle === 'yearly' ? '연간 59,000원' : '월간 5,900원'})`)}
+                      onClick={() => handlePlanAction('pro', cardBillingCycles.pro)}
                       className="w-full py-2.5 px-4 bg-[#C46A40] hover:bg-[#B55434] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer mb-6"
                     >
-                      클라우드 프로 시작하기
+                      {cardBillingCycles.pro === 'yearly' ? '클라우드 프로 연 정기결제' : '클라우드 프로 월 정기결제'}
                     </button>
 
                     <div className="border-t border-[#F1D3C6] pt-4">
@@ -1168,13 +1289,15 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
-                          <span>AI 원어주석 1000구절 클라우드 보관</span>
+                          <span>AI 원어주석 1,000구절 클라우드 보관</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#C46A40] shrink-0 mt-0.5" />
                           <span>
-                            500 크레딧 즉시 지급 (유효기간 1년)
-                            <span className="text-[11px] text-[#8C877D] block mt-0.5">(AI 원어주석 500회 or 설교자료 5종 set 25개)</span>
+                            {cardBillingCycles.pro === 'yearly' ? 'AI 500 크레딧 즉시 지급 (유효기간 1년)' : '매월 AI 40 크레딧 자동 지급'}
+                            <span className="text-[11px] text-[#8C877D] block mt-0.5">
+                              {cardBillingCycles.pro === 'yearly' ? '(AI 원어주석 500회 or 설교자료 5종 set 25개)' : '(AI 원어주석 40회 or 설교자료 2개)'}
+                            </span>
                           </span>
                         </li>
                       </ul>
@@ -1187,19 +1310,45 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                   <div>
                     <Database className="w-7 h-7 text-[#2C2B29] mb-3 stroke-[1.8px]" />
                     <h3 className="text-xl font-bold text-[#1A1918]">클라우드 마스터</h3>
-                    <p className="text-[11px] text-[#7A756D] mt-1 mb-4 leading-relaxed">
+                    <p className="text-[11px] text-[#7A756D] mt-1 mb-3 leading-relaxed">
                       성경 66권 AI 주석 서재를 완성하려는 목사님 추천
                     </p>
 
+                    {/* 각 카드별 연 정기결제 / 월 정기결제 개별 토글 */}
+                    <div className="flex items-center bg-[#EAE6DE] p-1 rounded-xl shrink-0 text-[11px] font-bold mb-4">
+                      <button
+                        type="button"
+                        onClick={() => setCardBillingCycles(prev => ({ ...prev, master: 'monthly' }))}
+                        className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
+                          cardBillingCycles.master === 'monthly'
+                            ? 'bg-[#2C2B29] text-white shadow-xs'
+                            : 'text-[#6E6A63] hover:text-[#2C2B29]'
+                        }`}
+                      >
+                        월 정기결제
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCardBillingCycles(prev => ({ ...prev, master: 'yearly' }))}
+                        className={`flex-1 py-1 rounded-lg transition-all cursor-pointer ${
+                          cardBillingCycles.master === 'yearly'
+                            ? 'bg-[#C46A40] text-white shadow-xs'
+                            : 'text-[#6E6A63] hover:text-[#2C2B29]'
+                        }`}
+                      >
+                        연 정기결제
+                      </button>
+                    </div>
+
                     <div className="mb-6">
-                      {billingCycle === 'yearly' ? (
+                      {cardBillingCycles.master === 'yearly' ? (
                         <>
                           <div className="flex items-baseline gap-1.5">
                             <span className="text-3xl font-serif font-bold text-[#2C2B29]">₩99,000</span>
                             <span className="text-xs text-[#8C877D]">/ 연간</span>
                           </div>
-                          <p className="text-[10px] text-[#1A1918] font-medium mt-1">
-                            *2년 차부터 서버유지 11,000원(월 900원) 연장 가능
+                          <p className="text-[10px] text-[#C46A40] font-semibold mt-1">
+                            (월 8,250원 상당 · 2년 차부터 클라우드 365 11,000원 연장)
                           </p>
                         </>
                       ) : (
@@ -1212,10 +1361,10 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handlePlanAction(`클라우드 마스터 (${billingCycle === 'yearly' ? '연간 99,000원' : '월간 9,900원'})`)}
+                      onClick={() => handlePlanAction('master', cardBillingCycles.master)}
                       className="w-full py-2.5 px-4 bg-[#2C2B29] hover:bg-[#1A1918] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer mb-6"
                     >
-                      연간 플랜 시작하기
+                      {cardBillingCycles.master === 'yearly' ? '클라우드 마스터 연 정기결제' : '클라우드 마스터 월 정기결제'}
                     </button>
 
                     <div className="border-t border-[#EFECE6] pt-4">
@@ -1232,8 +1381,10 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                         <li className="flex items-start gap-2">
                           <Check className="w-4 h-4 text-[#2C2B29] shrink-0 mt-0.5" />
                           <span>
-                            AI 1,000 크레딧 즉시 지급 (유효기간 2년)
-                            <span className="text-[11px] text-[#8C877D] block mt-0.5">(AI 원어주석 1000회 or 설교자료 5종 set 50개)</span>
+                            {cardBillingCycles.master === 'yearly' ? 'AI 1,000 크레딧 즉시 지급 (유효기간 2년)' : '매월 AI 80 크레딧 자동 지급'}
+                            <span className="text-[11px] text-[#8C877D] block mt-0.5">
+                              {cardBillingCycles.master === 'yearly' ? '(AI 원어주석 1000회 or 설교자료 5종 set 50개)' : '(AI 원어주석 80회 or 설교자료 4개)'}
+                            </span>
                           </span>
                         </li>
                       </ul>
@@ -1242,43 +1393,55 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                 </div>
               </div>
 
-              {/* 클라우드 365 (1년 갱신) 카드 */}
-              <div className="p-5 sm:p-6 bg-gradient-to-r from-[#FAF9F5] via-white to-[#FAF0EB] border border-[#E7E2D8] rounded-3xl shadow-2xs max-w-4xl mx-auto">
+              {/* 클라우드 365 (1년 연장권) 단회성 결제 카드 */}
+              <div className="p-5 sm:p-6 bg-gradient-to-r from-[#FAF9F5] via-white to-[#FAF0EB] border-2 border-[#C46A40]/40 rounded-3xl shadow-sm max-w-4xl mx-auto">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                   <div className="flex items-start gap-3.5 text-left">
-                    <div className="w-10 h-10 rounded-2xl bg-[#FAF0EB] text-[#C46A40] flex items-center justify-center border border-[#F1D3C6] shrink-0">
-                      <CreditCard className="w-5 h-5 stroke-[2px]" />
+                    <div className="w-11 h-11 rounded-2xl bg-[#FAF0EB] text-[#C46A40] flex items-center justify-center border border-[#F1D3C6] shrink-0">
+                      <CreditCard className="w-6 h-6 stroke-[2px]" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="text-sm sm:text-base font-bold text-[#1A1918]">
-                          클라우드 365 (1년 갱신)
+                          클라우드 365 (1년 연장권)
                         </h4>
+                        <span className="px-2 py-0.5 bg-[#2C2B29] text-white rounded-md text-[10px] font-bold">
+                          단회성 결제
+                        </span>
                         <span className="px-2 py-0.5 bg-[#FAF0EB] text-[#C46A40] border border-[#F1D3C6] rounded-md text-[10px] font-bold">
-                          클라우드 요금제 연간 결제 이용자 전용
+                          클라우드 멤버십 회원 전용
                         </span>
                       </div>
-                      <p className="text-xs text-[#6E6A63] mt-1 leading-relaxed">
+                      <p className="text-xs text-[#6E6A63] mt-1.5 leading-relaxed">
                         2년 차부터 적용되는 서버 유지 및 보관 연장권 (월 900원 상당)
                         <br className="hidden sm:inline" />
-                        {' '}· 기존 구축된 설교 데이터 및 AI 원어주석 데이터 동기화 유지
+                        {' '}· 기존 구축된 설교 데이터 및 AI 원어주석 데이터 동기화 1년 연장
                       </p>
-                      <p className="text-xs font-semibold text-[#C46A40] mt-1">
-                        갱신 감사 혜택: AI 200 크레딧 즉시 지급 (유효기간 1년)
-                      </p>
+                      <div className="bg-[#FAF0EB]/60 p-2.5 rounded-xl border border-[#F1D3C6]/60 mt-2 text-[11px] space-y-1">
+                        <p className="font-bold text-[#C46A40]">
+                          ★ 연장 정책: 미리 결제하셔도 결제 시점이 아닌, 기존 1년 멤버십이 끝나는 시점부터 +1년이 연장됩니다.
+                        </p>
+                        <p className="text-[#8C877D]">
+                          ※ 현재 클라우드 멤버십(라이트/프로/마스터) 회원이 아니거나 이미 만료된 경우 적용되지 않습니다.
+                        </p>
+                        <p className="font-semibold text-[#1A1918]">
+                          🎁 갱신 감사 혜택: AI 200 크레딧 즉시 지급 (유효기간 1년)
+                        </p>
+                      </div>
                     </div>
                   </div>
 
                   <div className="flex flex-col items-end gap-2 w-full sm:w-auto shrink-0">
                     <div className="text-right">
                       <div className="text-xl sm:text-2xl font-serif font-bold text-[#C46A40]">₩11,000</div>
+                      <span className="text-[10px] text-[#8C877D]">단회 결제</span>
                     </div>
                     <button
                       type="button"
-                      onClick={() => handlePlanAction('클라우드 365 이용하기')}
-                      className="w-full sm:w-auto px-4 py-2 bg-[#2C2B29] hover:bg-[#1A1918] text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+                      onClick={() => handlePlanAction('cloud_365', 'once')}
+                      className="w-full sm:w-auto px-5 py-2.5 bg-[#C46A40] hover:bg-[#B55434] text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
                     >
-                      클라우드 365 이용하기
+                      클라우드 365 1년 연장하기
                     </button>
                   </div>
                 </div>
@@ -1305,7 +1468,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handlePlanAction('크레딧 200 충전')}
+                      onClick={() => handlePlanAction('credit_200', 'once')}
                       className="w-full py-2.5 px-4 bg-[#2C2B29] hover:bg-[#1A1918] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer mb-6"
                     >
                       충전하기
@@ -1346,7 +1509,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handlePlanAction('크레딧 500 충전')}
+                      onClick={() => handlePlanAction('credit_500', 'once')}
                       className="w-full py-2.5 px-4 bg-[#C46A40] hover:bg-[#B55434] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer mb-6"
                     >
                       충전하기
