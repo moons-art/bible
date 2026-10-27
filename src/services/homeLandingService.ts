@@ -225,6 +225,7 @@ function initFirestoreLandingSync(pageKey = 'bible') {
               desc: data.corePoints?.[idx]?.desc || cp.desc,
               image: data.corePoints?.[idx]?.image || cp.image,
             })),
+            faqs: Array.isArray(data.faqs) ? data.faqs : memoryCache[pageKey].faqs,
           };
           saveToLocalStorage(pageKey);
           window.dispatchEvent(new CustomEvent(UPDATE_EVENT));

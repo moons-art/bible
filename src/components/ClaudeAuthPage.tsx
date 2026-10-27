@@ -1570,29 +1570,28 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
             <span>{landingData.questionHeading || '설교준비와 말씀 연구로 분주한 설교자의 고민'}</span>
           </h2>
 
-          <div className="w-full max-w-4xl lg:max-w-5xl p-2 min-[360px]:p-2.5 sm:p-3.5 md:p-4 rounded-[26px] min-[360px]:rounded-[30px] sm:rounded-[40px] md:rounded-[44px] bg-slate-100/80 border border-slate-200/80 shadow-[0_10px_35px_-10px_rgba(15,23,42,0.04)]">
-            <div className="w-full bg-white rounded-[22px] min-[360px]:rounded-[26px] sm:rounded-[32px] md:rounded-[36px] p-2 min-[360px]:p-2.5 sm:p-3.5 md:p-4 shadow-sm border border-slate-200/60">
-              <div className="relative w-full bg-[#FAFBFD] hover:bg-white rounded-[18px] min-[360px]:rounded-[20px] sm:rounded-[26px] md:rounded-[28px] border border-slate-200/90 hover:border-slate-300 transition-colors duration-200 p-3.5 min-[360px]:p-4 min-[400px]:p-5 sm:p-7 md:p-8 h-[195px] min-[360px]:h-[205px] min-[400px]:h-[215px] sm:h-[240px] md:h-[255px] flex flex-col justify-between text-left overflow-hidden">
-                <div className="w-full">
-                  <p className="text-[11.2px] min-[360px]:text-[12px] min-[390px]:text-[12.6px] min-[430px]:text-[13.5px] sm:text-[16px] md:text-[17px] text-slate-800 leading-[1.52] min-[360px]:leading-[1.58] sm:leading-[1.78] font-normal tracking-tight break-keep-all whitespace-pre-wrap select-text">
-                    <span>{displayedQuestion}</span>
-                    <span className="inline-block w-[1.75px] min-[360px]:w-[2px] sm:w-[2.25px] h-[1.22em] bg-[#7C3AED] ml-0.5 sm:ml-1 align-middle animate-pulse shrink-0" />
-                  </p>
-                </div>
+          {/* Question Card Surface (Outer border removed) */}
+          <div className="w-full max-w-4xl lg:max-w-5xl bg-white rounded-[22px] min-[360px]:rounded-[26px] sm:rounded-[32px] md:rounded-[36px] p-2 min-[360px]:p-2.5 sm:p-3.5 md:p-4 shadow-sm border border-slate-200/80">
+            <div className="relative w-full bg-[#FAFBFD] hover:bg-white rounded-[18px] min-[360px]:rounded-[20px] sm:rounded-[26px] md:rounded-[28px] border border-slate-200/90 hover:border-slate-300 transition-colors duration-200 p-3.5 min-[360px]:p-4 min-[400px]:p-5 sm:p-7 md:p-8 h-[195px] min-[360px]:h-[205px] min-[400px]:h-[215px] sm:h-[240px] md:h-[255px] flex flex-col justify-between text-left overflow-hidden">
+              <div className="w-full">
+                <p className="text-[11.2px] min-[360px]:text-[12px] min-[390px]:text-[12.6px] min-[430px]:text-[13.5px] sm:text-[16px] md:text-[17px] text-slate-800 leading-[1.52] min-[360px]:leading-[1.58] sm:leading-[1.78] font-normal tracking-tight break-keep-all whitespace-pre-wrap select-text">
+                  <span>{displayedQuestion}</span>
+                  <span className="inline-block w-[1.75px] min-[360px]:w-[2px] sm:w-[2.25px] h-[1.22em] bg-[#7C3AED] ml-0.5 sm:ml-1 align-middle animate-pulse shrink-0" />
+                </p>
+              </div>
 
-                <div className="w-full pt-1 sm:pt-2 flex items-center justify-between gap-2 mt-auto">
-                  <span className="text-slate-400 text-[20px] sm:text-[22px] font-light leading-none select-none pl-1">
-                    +
-                  </span>
-                  <button
-                    type="button"
-                    onClick={scrollToCoreValues}
-                    aria-label="핵심 기능으로 이동"
-                    className="w-7 h-7 min-[360px]:w-7.5 min-[360px]:h-7.5 sm:w-8.5 sm:h-8.5 rounded-full bg-[#0F172A] hover:bg-[#1E293B] text-white flex items-center justify-center shadow-sm hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer shrink-0"
-                  >
-                    <ArrowRight className="w-4 h-4 stroke-[2.2px]" />
-                  </button>
-                </div>
+              <div className="w-full pt-1 sm:pt-2 flex items-center justify-between gap-2 mt-auto">
+                <span className="text-slate-400 text-[20px] sm:text-[22px] font-light leading-none select-none pl-1">
+                  +
+                </span>
+                <button
+                  type="button"
+                  onClick={scrollToCoreValues}
+                  aria-label="핵심 기능으로 이동"
+                  className="w-7 h-7 min-[360px]:w-7.5 min-[360px]:h-7.5 sm:w-8.5 sm:h-8.5 rounded-full bg-[#0F172A] hover:bg-[#1E293B] text-white flex items-center justify-center shadow-sm hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer shrink-0"
+                >
+                  <ArrowRight className="w-4 h-4 stroke-[2.2px]" />
+                </button>
               </div>
             </div>
           </div>
@@ -1653,25 +1652,23 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
               </div>
 
               <div className="lg:col-span-6 w-full flex items-center justify-center">
-                <div className="w-full rounded-[24px] sm:rounded-[30px] p-3 sm:p-5 bg-gradient-to-br from-[#EAE6F5] via-[#E4E8F7] to-[#D5DCF5] border border-slate-200/60 shadow-inner flex items-center justify-center transition-all duration-300">
-                  <div className="w-full max-w-[500px] h-[250px] sm:h-[290px] lg:h-[320px] rounded-2xl flex items-center justify-center relative overflow-hidden select-none">
-                    {coreCards[0]?.image ? (
-                      <img
-                        src={coreCards[0].image}
-                        alt="설교자를 위한 맞춤 설교데스크"
-                        className="w-full h-full object-contain drop-shadow-md rounded-xl transition-transform duration-300 hover:scale-102"
-                      />
-                    ) : (
-                      <div className="w-full h-full rounded-2xl border-2 border-dashed border-slate-400/30 flex flex-col items-center justify-center text-slate-400/70 gap-2 p-4">
-                        <span className="material-symbols-outlined text-3xl opacity-35">
-                          add_photo_alternate
-                        </span>
-                        <span className="text-[12px] font-medium text-slate-500/70 tracking-tight">
-                          이미지 등록 대기 중
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                <div className="w-full max-w-[500px] h-[250px] sm:h-[290px] lg:h-[320px] rounded-[28px] sm:rounded-[36px] overflow-hidden flex items-center justify-center select-none">
+                  {coreCards[0]?.image ? (
+                    <img
+                      src={coreCards[0].image}
+                      alt="설교자를 위한 맞춤 설교데스크"
+                      className="w-full h-full object-contain rounded-[28px] sm:rounded-[36px] drop-shadow-sm transition-transform duration-300 hover:scale-[1.01]"
+                    />
+                  ) : (
+                    <div className="w-full h-full rounded-[28px] sm:rounded-[36px] border-2 border-dashed border-slate-300/70 flex flex-col items-center justify-center text-slate-400 gap-2 p-4">
+                      <span className="material-symbols-outlined text-3xl opacity-35">
+                        add_photo_alternate
+                      </span>
+                      <span className="text-[12px] font-medium text-slate-500/70 tracking-tight">
+                        이미지 등록 대기 중
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1679,25 +1676,23 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
             {/* Row 2: 역본 동시 대조 & AI 원어 주석 (Alternating) */}
             <div className="w-full bg-white rounded-[28px] sm:rounded-[36px] p-6 sm:p-10 lg:p-12 border border-slate-200/80 shadow-sm grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
               <div className="order-last lg:order-first lg:col-span-6 w-full flex items-center justify-center">
-                <div className="w-full rounded-[24px] sm:rounded-[30px] p-3 sm:p-5 bg-gradient-to-br from-[#E3F5EC] via-[#E8F3EE] to-[#D6EBE0] border border-slate-200/60 shadow-inner flex items-center justify-center transition-all duration-300">
-                  <div className="w-full max-w-[500px] h-[250px] sm:h-[290px] lg:h-[320px] rounded-2xl flex items-center justify-center relative overflow-hidden select-none">
-                    {coreCards[1]?.image ? (
-                      <img
-                        src={coreCards[1].image}
-                        alt="다중 역본 동시 대조 및 원어 사전"
-                        className="w-full h-full object-contain drop-shadow-md rounded-xl transition-transform duration-300 hover:scale-102"
-                      />
-                    ) : (
-                      <div className="w-full h-full rounded-2xl border-2 border-dashed border-slate-400/30 flex flex-col items-center justify-center text-slate-400/70 gap-2 p-4">
-                        <span className="material-symbols-outlined text-3xl opacity-35">
-                          add_photo_alternate
-                        </span>
-                        <span className="text-[12px] font-medium text-slate-500/70 tracking-tight">
-                          이미지 등록 대기 중
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                <div className="w-full max-w-[500px] h-[250px] sm:h-[290px] lg:h-[320px] rounded-[28px] sm:rounded-[36px] overflow-hidden flex items-center justify-center select-none">
+                  {coreCards[1]?.image ? (
+                    <img
+                      src={coreCards[1].image}
+                      alt="다중 역본 동시 대조 및 원어 사전"
+                      className="w-full h-full object-contain rounded-[28px] sm:rounded-[36px] drop-shadow-sm transition-transform duration-300 hover:scale-[1.01]"
+                    />
+                  ) : (
+                    <div className="w-full h-full rounded-[28px] sm:rounded-[36px] border-2 border-dashed border-slate-300/70 flex flex-col items-center justify-center text-slate-400 gap-2 p-4">
+                      <span className="material-symbols-outlined text-3xl opacity-35">
+                        add_photo_alternate
+                      </span>
+                      <span className="text-[12px] font-medium text-slate-500/70 tracking-tight">
+                        이미지 등록 대기 중
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1723,25 +1718,23 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
               </div>
 
               <div className="lg:col-span-6 w-full flex items-center justify-center">
-                <div className="w-full rounded-[24px] sm:rounded-[30px] p-3 sm:p-5 bg-gradient-to-br from-[#FFF3E6] via-[#FCEEE2] to-[#F7DFCD] border border-slate-200/60 shadow-inner flex items-center justify-center transition-all duration-300">
-                  <div className="w-full max-w-[500px] h-[250px] sm:h-[290px] lg:h-[320px] rounded-2xl flex items-center justify-center relative overflow-hidden select-none">
-                    {coreCards[2]?.image ? (
-                      <img
-                        src={coreCards[2].image}
-                        alt="성경 본문 연동 설교 아카이빙"
-                        className="w-full h-full object-contain drop-shadow-md rounded-xl transition-transform duration-300 hover:scale-102"
-                      />
-                    ) : (
-                      <div className="w-full h-full rounded-2xl border-2 border-dashed border-slate-400/30 flex flex-col items-center justify-center text-slate-400/70 gap-2 p-4">
-                        <span className="material-symbols-outlined text-3xl opacity-35">
-                          add_photo_alternate
-                        </span>
-                        <span className="text-[12px] font-medium text-slate-500/70 tracking-tight">
-                          이미지 등록 대기 중
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                <div className="w-full max-w-[500px] h-[250px] sm:h-[290px] lg:h-[320px] rounded-[28px] sm:rounded-[36px] overflow-hidden flex items-center justify-center select-none">
+                  {coreCards[2]?.image ? (
+                    <img
+                      src={coreCards[2].image}
+                      alt="성경 본문 연동 설교 아카이빙"
+                      className="w-full h-full object-contain rounded-[28px] sm:rounded-[36px] drop-shadow-sm transition-transform duration-300 hover:scale-[1.01]"
+                    />
+                  ) : (
+                    <div className="w-full h-full rounded-[28px] sm:rounded-[36px] border-2 border-dashed border-slate-300/70 flex flex-col items-center justify-center text-slate-400 gap-2 p-4">
+                      <span className="material-symbols-outlined text-3xl opacity-35">
+                        add_photo_alternate
+                      </span>
+                      <span className="text-[12px] font-medium text-slate-500/70 tracking-tight">
+                        이미지 등록 대기 중
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1811,7 +1804,7 @@ export const ClaudeAuthPage: React.FC<ClaudeAuthPageProps> = ({
                       className="flex items-center justify-between gap-3 cursor-pointer group select-none"
                     >
                       <p className="text-[12px] sm:text-[13px] text-slate-400 font-normal leading-snug break-keep-all group-hover:text-slate-600 transition-colors">
-                        {faq.preview || faq.a.split('\n')[0]}
+                        {faq.preview || faq.a}
                       </p>
                       <button
                         type="button"
