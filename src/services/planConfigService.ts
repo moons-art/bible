@@ -352,6 +352,12 @@ export function canUserSyncCloudNotes(
 ): boolean {
   if (!userProfile) return false;
 
+  // 0순위: 관리자 계정은 항상 무제한 클라우드 노트 동기화 100% 허용 (데이터 절대 보존)
+  const userEmail = (userProfile.email || '').trim().toLowerCase();
+  if (userEmail === 'ymoonsik@gmail.com' || userEmail === 'global0103@naver.com') {
+    return true;
+  }
+
   // 1순위: 관리자 수동 개별 지정 (true면 강제 허용, false면 강제 차단)
   if (typeof userProfile.cloudNotesAllowed === 'boolean') {
     return userProfile.cloudNotesAllowed;
