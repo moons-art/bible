@@ -1,66 +1,21 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 1. 공통 약관 및 법적 정책 (공개 읽기 가능, 클라이언트 임의 수정 전면 차단)
+    // 1. 공통 약관 및 법적 정책 (누구나 읽기만 가능, 쓰기 전면 차단)
     match /settings/{docId} {
       allow read: if true;
       allow write: if false;
     }
 
-    // 2. 시스템 요금제 및 프로모션 설정 (공개 읽기 가능, 클라이언트 가격/설정 변조 차단)
-    match /system_settings/{docId} {
-      allow read: if true;
-      allow write: if false;
-    }
-
-    // 3. 활동 로그 (작성만 허용, 변조 및 타인 로그 열람/삭제 원천 차단)
+    // 2. 활동 로그 (쓰기만 허용, 변조 및 타인 로그 열람 차단)
     match /activity_logs/{logId} {
       allow create: if true;
       allow read, update, delete: if false;
     }
 
-    // 4. 시스템 메트릭 (읽기 및 기록 허용, 데이터 파기/삭제 차단)
-    match /system_metrics/{docId} {
-      allow read, create, update: if true;
-      allow delete: if false;
-    }
-    match /system_metrics_monthly/{docId} {
-      allow read, create, update: if true;
-      allow delete: if false;
-    }
-
-    // 5. 친구 추천 및 프로모션 요청
-    match /referral_requests/{docId} {
-      allow read, create: if true;
-      allow delete: if false;
-    }
-
-    // 6. 회원 프로필 및 사용자 데이터 영역
-    match /users/{userId} {
-      // 프로필 읽기 및 생성/수정 허용 (로그인 동기화 및 크레딧 차감 호환 유지)
-      // 회원 프로필 일괄 삭제나 악의적 DB 파기 공격(delete) 전면 차단
-      allow read, create, update: if true;
-      allow delete: if false;
-
-      // 사용자 개인 설교 노트 서브컬렉션 (성도 본인의 설교 작성, 수정, 삭제 100% 보장)
-      match /sermons/{sermonId} {
-        allow read, write: if true;
-      }
-
-      // 성경 구절별 개인 메모, 하이라이트 및 관주 서브컬렉션
-      match /verseData/{verseId} {
-        allow read, write: if true;
-      }
-
-      // 클라우드 영구 저장 AI 주석 보관소 서브컬렉션
-      match /cloudCommentaries/{commentaryId} {
-        allow read, write: if true;
-      }
-    }
-
-    // 7. 기본 차단 원칙 (Default Deny - 정의되지 않은 컬렉션 무단 접근 차단)
+    // 3. 설교 노트 및 구절 메모 데이터 (기존 클라이언트 호환 유지)
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if true;
     }
   }
 }

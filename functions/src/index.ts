@@ -120,35 +120,8 @@ export const generateBibleContent = onCall(
     if (!apiKey) {
       throw new HttpsError('internal', 'GEMINI_API_KEY 설정이 누락되었습니다.');
     }
+
     const { actionType = 'verse_commentary', payload } = request.data || {};
-
-    // 1-2. 서버 사이드 잔여 크레딧 검증 가드 (무단 호출 및 비인가 자원 소진 원천 차단)
-    const adminEmails = ['ymoonsik@gmail.com', 'global0103@naver.com'];
-    const db = admin.firestore();
-    const userRef = db.collection('users').doc(callerUid);
-    const userSnap = await userRef.get().catch(() => null);
-
-    if (userSnap && userSnap.exists) {
-      const profile = userSnap.data() || {};
-      const userEmail = (profile.email || '').toLowerCase();
-      const isAdmin = adminEmails.includes(userEmail);
-
-      if (!isAdmin) {
-        const credits = profile.aiCredits || {};
-        const totalRemaining =
-          (credits.freeRemaining || 0) +
-          (credits.monthlyRemaining || 0) +
-          (credits.bonusRemaining || 0) +
-          (credits.paidRemaining || 0);
-
-        if (totalRemaining <= 0) {
-          throw new HttpsError(
-            'resource-exhausted',
-            'AI 주석 잔여 크레딧이 모두 소진되었습니다. 크레딧 충전 후 이용해 주세요.'
-          );
-        }
-      }
-    }
 
     // 1-2. actionType 분기 (추후 설교문 분석, 2차 자료 생성 등 확장용 스켈레톤)
     switch (actionType) {
