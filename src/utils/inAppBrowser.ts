@@ -19,7 +19,23 @@ export function isInAppBrowser(): boolean {
 
 export function escapeInAppBrowser(targetUrl?: string): void {
   if (typeof window === 'undefined') return;
-  const currentUrl = targetUrl || window.location.href;
+  let safeUrl = window.location.href;
+  if (targetUrl) {
+    try {
+      const parsed = new URL(targetUrl, window.location.origin);
+      // 자체 도메인 또는 신뢰된 도메인만 허용 (Open Redirect 방지)
+      if (
+        parsed.origin === window.location.origin ||
+        parsed.hostname.endsWith('thenations.kr') ||
+        parsed.hostname.endsWith('firebaseapp.com')
+      ) {
+        safeUrl = parsed.href;
+      }
+    } catch {
+      safeUrl = window.location.href;
+    }
+  }
+  const currentUrl = safeUrl;
   const ua = navigator.userAgent.toUpperCase();
 
   // 1. 안드로이드: 크롬 외부 브라우저 강제 인텐트 실행
