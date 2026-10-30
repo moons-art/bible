@@ -12,7 +12,7 @@ import {
   FileEdit, Eye, EyeOff, WifiOff, Sparkles, PanelLeft, ChevronsLeftRight, Copy, Columns,
   MoreVertical, ArrowUp, ArrowDown, SlidersHorizontal, GripVertical, ArrowLeft,
   CreditCard, History, AlertCircle, LogOut, ExternalLink, Clock, HardDrive, Database, Folder, FolderOpen,
-  Gift, MessageSquare, Lock
+  Gift, MessageSquare, Lock, BarChart2, User
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder, useDragControls } from 'framer-motion';
 import { searchService, type SearchRange } from './services/searchService';
@@ -802,6 +802,7 @@ const MainApp: React.FC = () => {
 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isSettingsPageOpen, setIsSettingsPageOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<'account' | 'usage' | 'display'>('display');
   
   const [fontSize, setFontSize] = useState(() => {
     const saved = localStorage.getItem('bible-font-size');
@@ -1510,10 +1511,10 @@ const MainApp: React.FC = () => {
                 <div className="my-2.5 border-t border-[#EAE4DA]" />
 
                 {/* 구독상태 및 플랜 업그레이드 / 친구 초대 */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {/* 플랜 정보 & 플랜 업그레이드 헤더 */}
                   <div className="flex items-center justify-between px-2 pt-1">
-                    <span className="text-xs font-bold text-[#2B2927]">
+                    <span className="text-xs font-normal text-[#2B2927]">
                       {formatPlanDisplayName(subscribedPlan)}
                     </span>
                     <button
@@ -1533,25 +1534,88 @@ const MainApp: React.FC = () => {
                     </button>
                   </div>
 
-                  {/* 친구 초대 1+1 보너스 카드 */}
-                  <button
+                  {/* 친구 초대 1+1 보너스 (카드 스타일 삭제, 글자만 표시) */}
+                  <div className="px-2 pb-0.5">
+                    <button
+                      onClick={() => {
+                        setShowInviteBonusModal(true);
+                        setIsSidebarOpen(false);
+                      }}
+                      className="flex items-center gap-1.5 text-xs text-[#C46A40] hover:text-[#A8532B] hover:underline transition-colors cursor-pointer text-left py-0.5"
+                      title="친구 초대 1+1 보너스 확인"
+                    >
+                      <Gift className="w-3.5 h-3.5 text-[#C46A40] stroke-[1.6px] shrink-0" />
+                      <span className="font-medium">친구 초대 1+1 보너스</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 구분선 */}
+                <div className="my-2 border-t border-[#EAE4DA]" />
+
+                {/* 메뉴 목록: 사용량 / 계정 / 설정 */}
+                <div className="space-y-0.5">
+                  {/* 사용량 메뉴 */}
+                  <button 
                     onClick={() => {
-                      setShowInviteBonusModal(true);
+                      setSettingsInitialSection('usage');
+                      setIsSettingsPageOpen(true);
                       setIsSidebarOpen(false);
                     }}
-                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs bg-[#FAF3EC] border border-[#ECD9CC] hover:bg-[#F5EAE0] transition-all cursor-pointer group text-left"
-                    title="친구 초대 1+1 보너스 확인"
+                    className={`flex items-center gap-2 px-2.5 py-1.5 w-full rounded-xl transition-all cursor-pointer text-xs font-normal ${
+                      isSettingsPageOpen && settingsInitialSection === 'usage'
+                        ? 'bg-[#EBE5DC] text-[#2B2927] font-medium'
+                        : 'text-[#4A4741] hover:text-[#2B2927] hover:bg-[#F3EFE9]'
+                    }`}
                   >
-                    <div className="flex items-center gap-2">
-                      <Gift className="w-4 h-4 text-[#C46A40] stroke-[1.8px] shrink-0" />
-                      <span className="font-bold text-[#C46A40]">친구 초대 1+1 보너스</span>
-                    </div>
+                    <BarChart2 className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" />
+                    <span>사용량</span>
+                  </button>
+
+                  {/* 계정 메뉴 */}
+                  <button 
+                    onClick={() => {
+                      if (!isAuthenticated) {
+                        setAuthPageSection('login');
+                        setShowAuthModal(true);
+                        setIsSidebarOpen(false);
+                        return;
+                      }
+                      setSettingsInitialSection('account');
+                      setIsSettingsPageOpen(true);
+                      setIsSidebarOpen(false);
+                    }}
+                    className={`flex items-center gap-2 px-2.5 py-1.5 w-full rounded-xl transition-all cursor-pointer text-xs font-normal ${
+                      isSettingsPageOpen && settingsInitialSection === 'account'
+                        ? 'bg-[#EBE5DC] text-[#2B2927] font-medium'
+                        : 'text-[#4A4741] hover:text-[#2B2927] hover:bg-[#F3EFE9]'
+                    }`}
+                  >
+                    <User className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" />
+                    <span>계정</span>
+                  </button>
+
+                  {/* 설정 메뉴 */}
+                  <button 
+                    onClick={() => {
+                      setSettingsInitialSection('display');
+                      setIsSettingsPageOpen(true);
+                      setIsSidebarOpen(false);
+                    }}
+                    className={`flex items-center gap-2 px-2.5 py-1.5 w-full rounded-xl transition-all cursor-pointer text-xs font-normal ${
+                      isSettingsPageOpen && settingsInitialSection === 'display'
+                        ? 'bg-[#EBE5DC] text-[#2B2927] font-medium' 
+                        : 'text-[#4A4741] hover:text-[#2B2927] hover:bg-[#F3EFE9]'
+                    }`}
+                  >
+                    <Settings className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" />
+                    <span>설정</span>
                   </button>
                 </div>
 
               </div>
 
-              {/* 최하단: 구글 로그인 (흑백 구글 아이콘) 및 설정 */}
+              {/* 최하단: 제일 아래에 로그인 정보 */}
               <div className="mt-auto pt-2 border-t border-[#F0EBE1] space-y-1 shrink-0">
                 {!isAuthenticated ? (
                   <button
@@ -1642,19 +1706,6 @@ const MainApp: React.FC = () => {
                   </div>
                 </div>
               )}
-
-                {/* 설정 */}
-                <button 
-                  onClick={() => setIsSettingsPageOpen(true)}
-                  className={`flex items-center gap-2 px-2.5 py-1.5 w-full rounded-xl transition-all cursor-pointer ${
-                    isSettingsPageOpen 
-                      ? 'bg-[#EBE5DC] text-[#2B2927] font-medium' 
-                      : 'text-[#4A4741] hover:text-[#2B2927] hover:bg-[#F3EFE9]'
-                  }`}
-                >
-                  <Settings className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" />
-                  <span className="text-xs font-normal">설정</span>
-                </button>
 
                 {/* 최하단 바닥글: 사업자 요약 정보 + 카카오톡 버튼 2개 + 약관/개인정보 모달 링크 */}
                 <div className="pt-2 mt-1 border-t border-[#F0EBE1] text-[10px] text-[#A39E94] leading-relaxed space-y-1.5">
@@ -1854,6 +1905,7 @@ const MainApp: React.FC = () => {
             <div ref={contentRef} className="flex-1 overflow-hidden relative bg-[#FAF9F5]">
               {isSettingsPageOpen ? (
                 <SettingsPage 
+                  initialSection={settingsInitialSection}
                   onClose={() => setIsSettingsPageOpen(false)}
                   fontSize={fontSize}
                   setFontSize={setFontSize}

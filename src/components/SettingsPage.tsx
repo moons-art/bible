@@ -26,6 +26,7 @@ interface SettingsPageProps {
   setSearchFontSize: (size: number) => void;
   onOpenAdminModal: () => void;
   onOpenPricing?: () => void;
+  initialSection?: 'account' | 'usage' | 'display';
 }
 
 const SAMPLE_VERSES = [
@@ -55,8 +56,26 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   setSearchFontSize,
   onOpenAdminModal,
   onOpenPricing,
+  initialSection,
 }) => {
   const [policy, setPolicy] = useState<SitePolicy>(DEFAULT_SITE_POLICY);
+
+  useEffect(() => {
+    if (!initialSection) return;
+    const timer = setTimeout(() => {
+      if (initialSection === 'usage') {
+        const el = document.getElementById('settings-usage-section');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (initialSection === 'account') {
+        const el = document.getElementById('settings-account-section');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (initialSection === 'display') {
+        const el = document.getElementById('settings-display-section');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [initialSection]);
   const [policyModal, setPolicyModal] = useState<{ isOpen: boolean; tab: PolicyModalType }>({
     isOpen: false,
     tab: 'terms'
@@ -217,7 +236,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </div>
 
         {/* ───── 계정 관리 카드 ───── */}
-        <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-2xs overflow-hidden">
+        <div id="settings-account-section" className="bg-white rounded-2xl border border-[#E5E0D8] shadow-2xs overflow-hidden">
           {/* 상단 계정 헤더 */}
           <div className="p-5 sm:p-6 border-b border-[#F0EBE1] flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -271,7 +290,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
 
             {/* [이번 달 크레딧] */}
-            <div className="space-y-3">
+            <div id="settings-usage-section" className="space-y-3">
               <span className="text-xs font-bold text-[#6E6A63]">이번 달 크레딧</span>
 
               <div className="p-4 sm:p-5 rounded-xl bg-[#FAF8F5] border border-[#EAE4DC] space-y-4">
@@ -541,7 +560,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </section>
 
         {/* ───── 본문 서체 및 간격 설정 섹션 ───── */}
-        <section className="bg-white rounded-2xl border border-[#E5E0D8] p-5 sm:p-7 shadow-xs space-y-6">
+        <section id="settings-display-section" className="bg-white rounded-2xl border border-[#E5E0D8] p-5 sm:p-7 shadow-xs space-y-6">
           <div className="border-b border-[#F0EBE1] pb-3">
             <h2 className="font-serif font-bold text-base text-[#2B2927] flex items-center gap-2">
               <Type className="w-4 h-4 text-[#C96442] stroke-[1.8px]" />
