@@ -20,6 +20,7 @@ import { BIBLE_BOOKS, BIBLE_LIST } from './constants/bibleMeta';
 import { initGoogleApi, IS_LOCAL_DEV } from './api/gdriveWebService';
 import { TooltipIcon } from './components/TooltipIcon';
 import { SettingsPage } from './components/SettingsPage';
+import { AccountUsagePage } from './components/AccountUsagePage';
 import { AiCommentaryPanel, ClaudeSparkleIcon, type AiTabType } from './components/AiCommentaryPanel';
 import { useAiUsage } from './hooks/useAiUsage';
 import { getCommentaryHistory, getCloudCommentaryCount, getTotalMergedCommentaryCount } from './services/aiHistoryService';
@@ -743,37 +744,9 @@ const MainApp: React.FC = () => {
   }
   const [appConfirmDialog, setAppConfirmDialog] = useState<AppConfirmDialogState | null>(null);
 
-  // 사이드바 Hover 자동 열림/닫힘 및 외부 클릭 처리
-  const sidebarCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 사이드바 토글 및 외부 클릭 처리
   const leftSidebarRef = useRef<HTMLDivElement>(null);
   const sidebarToggleBtnRef = useRef<HTMLButtonElement>(null);
-
-  const openSidebarWithHover = () => {
-    if (sidebarCloseTimerRef.current) {
-      clearTimeout(sidebarCloseTimerRef.current);
-      sidebarCloseTimerRef.current = null;
-    }
-    setIsSidebarOpen(true);
-  };
-
-  const closeSidebarWithHover = () => {
-    // 사용자가 클릭으로 고정(Pinned)해두었거나 확인 모달/리사이징 중일 때는 마우스가 벗어나도 절대 닫지 않음
-    if (isSidebarPinned || isResizingLeftSidebar || appConfirmDialog?.isOpen) return;
-    if (sidebarCloseTimerRef.current) {
-      clearTimeout(sidebarCloseTimerRef.current);
-    }
-    sidebarCloseTimerRef.current = setTimeout(() => {
-      setIsSidebarOpen(false);
-    }, 280);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (sidebarCloseTimerRef.current) {
-        clearTimeout(sidebarCloseTimerRef.current);
-      }
-    };
-  }, []);
 
   // 사이드바 외부 클릭 시 닫기 (확인 모달 상호작용 중에는 닫히지 않도록 완벽 가드)
   useEffect(() => {
@@ -802,7 +775,7 @@ const MainApp: React.FC = () => {
 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isSettingsPageOpen, setIsSettingsPageOpen] = useState(false);
-  const [settingsInitialSection, setSettingsInitialSection] = useState<'account' | 'usage' | 'display'>('display');
+  const [isAccountUsagePageOpen, setIsAccountUsagePageOpen] = useState(false);
   
   const [fontSize, setFontSize] = useState(() => {
     const saved = localStorage.getItem('bible-font-size');
@@ -1295,8 +1268,6 @@ const MainApp: React.FC = () => {
               exit={{ x: isMobile ? '-100%' : -leftSidebarWidth, opacity: 0 }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
               style={{ width: isMobile ? 'min(86vw, 340px)' : `${leftSidebarWidth}px` }}
-              onMouseEnter={!isMobile ? openSidebarWithHover : undefined}
-              onMouseLeave={!isMobile ? closeSidebarWithHover : undefined}
               className="fixed left-0 top-0 bottom-0 z-50 border-r border-[#EBE6DF] bg-[#FBF9F7] shadow-2xl shadow-black/10 select-none flex flex-col group/sidebar"
             >
               {/* Claude Style Resize Border Handle (PC 전용) */}
@@ -1553,57 +1524,37 @@ const MainApp: React.FC = () => {
                 {/* 구분선 */}
                 <div className="my-2 border-t border-[#EAE4DA]" />
 
-                {/* 메뉴 목록: 사용량 / 계정 / 설정 */}
+                {/* 메뉴 목록: 사용량 · 계정 / 설정 */}
                 <div className="space-y-0.5">
-                  {/* 사용량 메뉴 */}
-                  <button 
-                    onClick={() => {
-                      setSettingsInitialSection('usage');
-                      setIsSettingsPageOpen(true);
-                      setIsSidebarOpen(false);
-                    }}
-                    className={`flex items-center gap-2 px-2.5 py-1.5 w-full rounded-xl transition-all cursor-pointer text-xs font-normal ${
-                      isSettingsPageOpen && settingsInitialSection === 'usage'
-                        ? 'bg-[#EBE5DC] text-[#2B2927] font-medium'
-                        : 'text-[#4A4741] hover:text-[#2B2927] hover:bg-[#F3EFE9]'
-                    }`}
-                  >
-                    <BarChart2 className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" />
-                    <span>사용량</span>
-                  </button>
-
-                  {/* 계정 메뉴 */}
+                  {/* 사용량 · 계정 통합 메뉴 */}
                   <button 
                     onClick={() => {
                       if (!isAuthenticated) {
                         setAuthPageSection('login');
                         setShowAuthModal(true);
-                        setIsSidebarOpen(false);
                         return;
                       }
-                      setSettingsInitialSection('account');
-                      setIsSettingsPageOpen(true);
-                      setIsSidebarOpen(false);
+                      setIsSettingsPageOpen(false);
+                      setIsAccountUsagePageOpen(true);
                     }}
                     className={`flex items-center gap-2 px-2.5 py-1.5 w-full rounded-xl transition-all cursor-pointer text-xs font-normal ${
-                      isSettingsPageOpen && settingsInitialSection === 'account'
+                      isAccountUsagePageOpen
                         ? 'bg-[#EBE5DC] text-[#2B2927] font-medium'
                         : 'text-[#4A4741] hover:text-[#2B2927] hover:bg-[#F3EFE9]'
                     }`}
                   >
-                    <User className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" />
-                    <span>계정</span>
+                    <BarChart2 className="w-4 h-4 stroke-[1.5px] text-[#6E6A63]" />
+                    <span>사용량 · 계정</span>
                   </button>
 
                   {/* 설정 메뉴 */}
                   <button 
                     onClick={() => {
-                      setSettingsInitialSection('display');
+                      setIsAccountUsagePageOpen(false);
                       setIsSettingsPageOpen(true);
-                      setIsSidebarOpen(false);
                     }}
                     className={`flex items-center gap-2 px-2.5 py-1.5 w-full rounded-xl transition-all cursor-pointer text-xs font-normal ${
-                      isSettingsPageOpen && settingsInitialSection === 'display'
+                      isSettingsPageOpen
                         ? 'bg-[#EBE5DC] text-[#2B2927] font-medium' 
                         : 'text-[#4A4741] hover:text-[#2B2927] hover:bg-[#F3EFE9]'
                     }`}
@@ -1783,20 +1734,9 @@ const MainApp: React.FC = () => {
                   ref={sidebarToggleBtnRef}
                   type="button"
                   onClick={() => {
-                    if (sidebarCloseTimerRef.current) {
-                      clearTimeout(sidebarCloseTimerRef.current);
-                      sidebarCloseTimerRef.current = null;
-                    }
-                    if (isSidebarOpen && isSidebarPinned) {
-                      setIsSidebarOpen(false);
-                      setIsSidebarPinned(false);
-                    } else {
-                      setIsSidebarOpen(true);
-                      setIsSidebarPinned(true);
-                    }
+                    setIsSidebarOpen(!isSidebarOpen);
+                    setIsSidebarPinned(!isSidebarOpen);
                   }}
-                  onMouseEnter={!isMobile ? openSidebarWithHover : undefined}
-                  onMouseLeave={!isMobile ? closeSidebarWithHover : undefined}
                   className="p-1.5 hover:bg-[#F3EFE9] rounded-lg transition-colors text-[#524E48] hover:text-[#2B2927] shrink-0 border border-transparent hover:border-[#E5E0D8] cursor-pointer"
                   title="사이드바 열기/닫기"
                 >
@@ -1826,6 +1766,21 @@ const MainApp: React.FC = () => {
                   <ClaudeSparkleIcon className={`w-3.5 h-3.5 ${isAiCommentaryOpen ? 'text-[#C46A40]' : 'text-[#6E6A63]'}`} />
                   <span className="font-normal">AI 주석</span>
                 </button>
+
+                {isAccountUsagePageOpen && (
+                  <div className="flex items-center gap-1 sm:gap-2 pl-1">
+                    <div className="w-px h-3.5 bg-[#E5E0D8]"></div>
+                    <button
+                      onClick={() => setIsAccountUsagePageOpen(false)}
+                      className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 text-xs font-medium text-[#6E6A63] hover:text-[#2B2927] hover:bg-[#F3EFE9] rounded-lg transition-colors cursor-pointer"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5 stroke-[1.8px]" />
+                      <span className="hidden sm:inline">성경 본문</span>
+                    </button>
+                    <span className="text-xs text-[#8C877D]">/</span>
+                    <span className="text-xs font-semibold text-[#2B2927]">사용량 · 계정</span>
+                  </div>
+                )}
 
                 {isSettingsPageOpen && (
                   <div className="flex items-center gap-1 sm:gap-2 pl-1">
@@ -1903,9 +1858,17 @@ const MainApp: React.FC = () => {
 
             {/* Content Area */}
             <div ref={contentRef} className="flex-1 overflow-hidden relative bg-[#FAF9F5]">
-              {isSettingsPageOpen ? (
+              {isAccountUsagePageOpen ? (
+                <AccountUsagePage 
+                  onClose={() => setIsAccountUsagePageOpen(false)}
+                  onOpenAdminModal={() => setShowAdminModal(true)}
+                  onOpenPricing={() => {
+                    setAuthPageSection('pricing');
+                    setShowAuthModal(true);
+                  }}
+                />
+              ) : isSettingsPageOpen ? (
                 <SettingsPage 
-                  initialSection={settingsInitialSection}
                   onClose={() => setIsSettingsPageOpen(false)}
                   fontSize={fontSize}
                   setFontSize={setFontSize}
