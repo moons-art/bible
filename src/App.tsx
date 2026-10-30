@@ -32,6 +32,7 @@ import { PolicyViewModal, type PolicyModalType } from './components/PolicyViewMo
 import { InviteBonusModal } from './components/InviteBonusModal';
 import { getCachedSitePolicy, subscribeSitePolicy, type SitePolicy, DEFAULT_SITE_POLICY } from './services/policyService';
 import { isAdminUser, syncUserProfile, getLocalUserResourceCounts } from './services/userService';
+import { formatPlanDisplayName } from './services/planConfigService';
 import { auth } from './api/firebaseConfig';
 import { processOAuthCallback, syncUserWithHub, getSocialUserMeta, getHubAppPlan } from './utils/socialAuth';
 import { signOut } from 'firebase/auth';
@@ -1513,9 +1514,7 @@ const MainApp: React.FC = () => {
                   {/* 플랜 정보 & 플랜 업그레이드 헤더 */}
                   <div className="flex items-center justify-between px-2 pt-1">
                     <span className="text-xs font-bold text-[#2B2927]">
-                      {subscribedPlan 
-                        ? subscribedPlan.split('(')[0].trim() 
-                        : '무료 플랜'}
+                      {formatPlanDisplayName(subscribedPlan)}
                     </span>
                     <button
                       onClick={() => {

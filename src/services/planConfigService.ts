@@ -426,3 +426,33 @@ export function getMonthlyCreditsQuota(
   return { isMonthlySubscriber: false, quota: 10 };
 }
 
+/**
+ * DB에 저장된 영문/원시 플랜 코드를 요금제 공식 한글 명칭으로 변환
+ */
+export function formatPlanDisplayName(rawPlan?: string | null): string {
+  if (!rawPlan) return '무료 플랜';
+  const clean = rawPlan.toLowerCase().trim();
+  
+  if (clean.includes('master') || clean.includes('마스터') || clean.includes('unlimited')) {
+    return '클라우드 마스터';
+  }
+  if (clean.includes('pro') || clean.includes('프로') || clean.includes('1000')) {
+    return '클라우드 프로';
+  }
+  if (clean.includes('lite') || clean.includes('라이트') || clean.includes('300')) {
+    return '클라우드 라이트';
+  }
+  if (clean.includes('standard') || clean.includes('스탠다드')) {
+    return '스탠다드 플랜';
+  }
+  if (clean.includes('365') || clean.includes('renewal') || clean.includes('갱신')) {
+    return '클라우드 365';
+  }
+  if (clean.includes('free') || clean.includes('무료')) {
+    return '무료 플랜';
+  }
+  
+  return rawPlan.split('(')[0].trim();
+}
+
+

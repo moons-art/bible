@@ -11,6 +11,7 @@ import { auth, db } from '../api/firebaseConfig';
 import { doc, getDoc } from 'firebase/firestore';
 import { shareInviteViaKakao, getSocialUserMeta } from '../utils/socialAuth';
 import { getLocalUserResourceCounts } from '../services/userService';
+import { formatPlanDisplayName } from '../services/planConfigService';
 import { getCommentaryHistory, getTotalMergedCommentaryCount } from '../services/aiHistoryService';
 
 interface SettingsPageProps {
@@ -171,9 +172,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   };
 
   // 플랜명 가공
-  const planDisplayName = subscribedPlan 
-    ? subscribedPlan.split('(')[0].trim() 
-    : 'FREE (무료 플랜 · 월간)';
+  const planDisplayName = formatPlanDisplayName(subscribedPlan);
 
   const isCloudPlan = cloudCommentaryLimit > 0;
 
