@@ -2137,15 +2137,15 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                     onClick={() => setListTab('trash')}
                     className={`py-1.5 px-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 shrink-0 ${
                       listTab === 'trash'
-                        ? 'bg-red-50 text-red-600 shadow-xs'
-                        : 'text-[#6A6864] hover:text-red-600'
+                        ? 'bg-white text-[#2C2B29] shadow-xs'
+                        : 'text-[#6A6864] hover:text-[#2C2B29]'
                     }`}
                     title="휴지통 (30일 보관)"
                   >
                     <Trash2 className="w-3.5 h-3.5 stroke-[1.5px]" />
                     <span>휴지통</span>
                     {trashSermons.length > 0 && (
-                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${listTab === 'trash' ? 'bg-red-200 text-red-800' : 'bg-[#EAE7E0] text-[#6A6864]'}`}>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${listTab === 'trash' ? 'bg-[#F0EEE6] text-[#2C2B29]' : 'bg-[#EAE7E0] text-[#6A6864]'}`}>
                         {trashSermons.length}
                       </span>
                     )}
@@ -2166,15 +2166,15 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                 {listTab === 'trash' ? (
                   <div className="space-y-2">
                     {/* 휴지통 상단 안내 배너 및 비우기 버튼 */}
-                    <div className="p-2.5 bg-red-50/70 border border-red-100 rounded-xl flex items-center justify-between gap-2">
-                      <div className="text-[11px] text-red-700 flex items-center gap-1.5">
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                    <div className="p-2.5 bg-[#F5F3ED] border border-[#E7E5DF] rounded-xl flex items-center justify-between gap-2">
+                      <div className="text-[11px] text-[#6A6864] flex items-center gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 text-[#8C877D]" />
                         <span>30일 후 자동 영구 삭제됩니다.</span>
                       </div>
                       {trashSermons.length > 0 && (
                         <button
                           onClick={handleEmptyTrash}
-                          className="px-2 py-1 text-[11px] font-semibold text-red-600 hover:text-red-700 hover:bg-red-100/60 rounded-md transition-colors whitespace-nowrap cursor-pointer"
+                          className="px-2.5 py-1 text-[11px] font-medium text-[#6A6864] hover:text-[#2C2B29] hover:bg-[#EAE7E0] rounded-lg transition-colors whitespace-nowrap cursor-pointer"
                         >
                           휴지통 비우기
                         </button>
@@ -2198,14 +2198,14 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex-1 min-w-0">
-                                <h4 className="font-serif font-bold text-xs text-[#2C2B29] truncate line-through decoration-red-300">
+                                <h4 className="font-serif font-bold text-xs text-[#2C2B29] truncate">
                                   {s.title || '제목 없음'}
                                 </h4>
                                 <p className="text-[11px] text-[#6A6864] line-clamp-1 font-serif mt-0.5">
                                   {stripHtml(s.content || '') || '내용 없음'}
                                 </p>
                               </div>
-                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-50 text-red-600 shrink-0">
+                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[#F0EEE6] text-[#6A6864] shrink-0">
                                 {daysLeft}일 후 영구삭제
                               </span>
                             </div>
@@ -2215,18 +2215,18 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                               <div className="flex items-center gap-1.5">
                                 <button
                                   onClick={(e) => handleRestoreSermon(s.id, e)}
-                                  className="px-2 py-1 rounded bg-[#F5F3ED] text-[#2C2B29] hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-1 transition-colors cursor-pointer font-medium"
+                                  className="px-2.5 py-1 rounded bg-[#F5F3ED] text-[#2C2B29] hover:bg-[#EAE7E0] flex items-center gap-1 transition-colors cursor-pointer font-medium"
                                   title="설교문 복구"
                                 >
-                                  <RotateCcw className="w-3 h-3 text-emerald-600" />
+                                  <RotateCcw className="w-3 h-3 text-[#6A6864]" />
                                   <span>복구</span>
                                 </button>
                                 <button
                                   onClick={(e) => handlePermanentDeleteSermon(s.id, e)}
-                                  className="px-2 py-1 rounded bg-[#F5F3ED] text-red-600 hover:bg-red-50 flex items-center gap-1 transition-colors cursor-pointer font-medium"
+                                  className="px-2.5 py-1 rounded bg-[#F5F3ED] text-[#6A6864] hover:text-[#2C2B29] hover:bg-[#EAE7E0] flex items-center gap-1 transition-colors cursor-pointer font-medium"
                                   title="완전 영구 삭제"
                                 >
-                                  <Trash2 className="w-3 h-3" />
+                                  <Trash2 className="w-3 h-3 text-[#6A6864]" />
                                   <span>영구삭제</span>
                                 </button>
                               </div>
