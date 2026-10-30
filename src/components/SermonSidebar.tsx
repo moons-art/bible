@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileEdit, Plus, Calendar, Clock, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers, BookOpen, Folder, FolderOpen, ArrowLeft, Bold, Italic, Underline, Highlighter, HardDrive, Cloud, CloudOff } from 'lucide-react';
+import { X, FileEdit, Plus, Calendar, Clock, Search, Save, ChevronRight, ChevronLeft, ChevronUp, ChevronDown, PanelRight, PanelBottom, Maximize2, Type, Minus, Copy, Trash2, Layers, BookOpen, Folder, FolderOpen, ArrowLeft, Bold, Italic, Underline, Highlighter, HardDrive, Cloud, CloudOff, RotateCcw, AlertCircle } from 'lucide-react';
 import { db, auth } from '../api/firebaseConfig';
 import { doc, collection, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
 import { BIBLE_LIST } from '../constants/bibleMeta';
@@ -11,7 +11,6 @@ import { useSermonSync, type SermonDocument } from '../hooks/useSermonSync';
 import { matchBibleReferences, getVersesFromLocalDB, createVerseQuoteHtml } from '../services/localBibleService';
 import { subscribeUserProfile, updateUserResourceCounts } from '../services/userService';
 import { getPlanSettings, canUserSyncCloudNotes, type SubscriptionPlansSettings } from '../services/planConfigService';
-
 
 interface Sermon {
   id: string;
@@ -23,7 +22,28 @@ interface Sermon {
   fontId?: string;
   fontSize?: number;
   autoVerseConversion?: boolean;
+  isDeleted?: boolean;
+  deletedAt?: number;
 }
+
+// 30일 보관 휴지통 영구 삭제 ID 블랙리스트 헬퍼 (다른 기기에서 다시 업로드되지 않도록 방지)
+const PERMANENTLY_DELETED_KEY = 'bible-permanently-deleted-sermon-ids';
+const getPermanentlyDeletedIds = (): Set<string> => {
+  try {
+    const raw = localStorage.getItem(PERMANENTLY_DELETED_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+};
+const addPermanentlyDeletedId = (id: string) => {
+  try {
+    const set = getPermanentlyDeletedIds();
+    set.add(id);
+    const arr = Array.from(set).slice(-500);
+    localStorage.setItem(PERMANENTLY_DELETED_KEY, JSON.stringify(arr));
+  } catch {}
+};
 
 export type DockPosition = 'right' | 'bottom' | 'free';
 
@@ -161,8 +181,17 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     const sermonsCol = collection(db, 'users', uid, 'sermons');
     const unsubscribe = onSnapshot(sermonsCol, (snapshot) => {
       const serverData: Sermon[] = [];
+      const now = Date.now();
+      const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+
       snapshot.forEach(docSnap => {
-        serverData.push({ id: docSnap.id, ...docSnap.data() } as Sermon);
+        const data = docSnap.data() as Sermon;
+        // 30일 경과된 휴지통 문서는 서버에서도 백그라운드 영구 삭제
+        if (data.isDeleted && data.deletedAt && (now - data.deletedAt > THIRTY_DAYS)) {
+          deleteDoc(doc(db, 'users', uid, 'sermons', docSnap.id)).catch(() => {});
+          return;
+        }
+        serverData.push({ id: docSnap.id, ...data } as Sermon);
       });
 
       // 기존 로컬 기기(localStorage)에 보관된 설교 목록 읽기
@@ -172,26 +201,51 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
         if (saved) localData = JSON.parse(saved);
       } catch {}
 
+      // 영구 삭제된 문서 ID 블랙리스트
+      const permanentlyDeleted = getPermanentlyDeletedIds();
+
       // 로컬과 서버 양방향 병합 (Merge)
       const serverMap = new Map<string, Sermon>(serverData.map(s => [s.id, s]));
       const mergedMap = new Map<string, Sermon>(serverData.map(s => [s.id, s]));
 
-      // 로컬에만 있는 설교는 서버에 자동 업로드하고 병합 목록에 유지 (기존 작성분 절대 유실 방지)
+      // 로컬 데이터 검토 및 안전 동기화
       localData.forEach(loc => {
+        // 이미 영구 삭제된 문서거나 30일 경과된 삭제본은 무시
+        if (permanentlyDeleted.has(loc.id) || (loc.isDeleted && loc.deletedAt && (now - loc.deletedAt > THIRTY_DAYS))) {
+          return;
+        }
+
         if (!serverMap.has(loc.id)) {
+          // 로컬에만 있고 서버에 없는데, 로컬에서 이미 삭제된 문서라면 절대 서버로 재업로드하지 않음!
+          if (loc.isDeleted) {
+            return;
+          }
+          // 정상 작성본만 서버에 자동 업로드하고 병합 목록에 유지
           mergedMap.set(loc.id, loc);
           const docRef = doc(db, 'users', uid, 'sermons', loc.id);
           setDoc(docRef, loc, { merge: true }).catch(err => {
             console.warn('[SermonSidebar] 로컬 설교 서버 동기화 실패:', loc.id, err);
           });
         } else {
-          // 둘 다 있는 경우: 더 최근 수정본(updatedAt) 기준 채택하되,
-          // 로컬에 유효한 본문이 있고 서버 본문이 비어있는 비정상 상태라면 로컬 본문을 보호
           const srv = serverMap.get(loc.id)!;
+          // 서버에서 휴지통에 보관된 상태(isDeleted)라면 로컬도 휴지통 상태로 동기화
+          if (srv.isDeleted) {
+            mergedMap.set(loc.id, srv);
+            return;
+          }
+          if (loc.isDeleted) {
+            // 로컬이 휴지통 삭제 상태면 서버로도 묘비(Tombstone) 전파
+            mergedMap.set(loc.id, loc);
+            const docRef = doc(db, 'users', uid, 'sermons', loc.id);
+            setDoc(docRef, { isDeleted: true, deletedAt: loc.deletedAt || Date.now() }, { merge: true }).catch(() => {});
+            return;
+          }
+
+          // 둘 다 있는 경우: 더 최근 수정본(updatedAt) 기준 채택
           const locUpdatedAt = loc.updatedAt || 0;
           const srvUpdatedAt = srv.updatedAt || 0;
-          const locHasContent = stripHtml(loc.content).length > 0;
-          const srvHasContent = stripHtml(srv.content).length > 0;
+          const locHasContent = stripHtml(loc.content || '').length > 0;
+          const srvHasContent = stripHtml(srv.content || '').length > 0;
 
           if (locUpdatedAt > srvUpdatedAt || (locHasContent && !srvHasContent)) {
             const preserved: Sermon = locUpdatedAt > srvUpdatedAt
@@ -211,7 +265,9 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
 
       setSermons(mergedList);
       saveSermonsToLocal(mergedList);
-      updateUserResourceCounts(uid, { sermonCount: mergedList.length });
+
+      const activeCount = mergedList.filter(s => !s.isDeleted).length;
+      updateUserResourceCounts(uid, { sermonCount: activeCount });
     }, (err) => {
       console.warn('[SermonSidebar] Firestore offline (로컬 기기 보관 사용 중):', err.code);
     });
@@ -262,23 +318,26 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     };
   }, []);
 
+  // 1) 휴지통으로 이동 (소프트 딜리트: 30일간 보관)
   const handleDeleteSermon = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm('이 설교문을 정말 삭제하시겠습니까?')) {
-      const nextSermons = sermons.filter(s => s.id !== id);
+    if (confirm('이 설교문을 휴지통으로 이동하시겠습니까?\n(30일 동안 휴지통에서 언제든 복구할 수 있습니다.)')) {
+      const deletedAt = Date.now();
+      const nextSermons = sermons.map(s => s.id === id ? { ...s, isDeleted: true, deletedAt } : s);
       setSermons(nextSermons);
       saveSermonsToLocal(nextSermons);
 
+      const activeCount = nextSermons.filter(s => !s.isDeleted).length;
       if (googleUserId) {
-        updateUserResourceCounts(googleUserId, { sermonCount: nextSermons.length });
+        updateUserResourceCounts(googleUserId, { sermonCount: activeCount });
       }
 
       if (googleUserId && canSyncCloud) {
         try {
           const docRef = doc(db, 'users', googleUserId, 'sermons', id);
-          await deleteDoc(docRef);
+          await setDoc(docRef, { isDeleted: true, deletedAt }, { merge: true });
         } catch (err) {
-          console.warn('[SermonSidebar] Firestore delete error:', err);
+          console.warn('[SermonSidebar] Firestore soft delete error:', err);
         }
       }
 
@@ -303,6 +362,104 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
       }
     }
   };
+
+  // 2) 휴지통에서 원래 목록으로 복구
+  const handleRestoreSermon = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextSermons = sermons.map(s => s.id === id ? { ...s, isDeleted: false, deletedAt: undefined } : s);
+    setSermons(nextSermons);
+    saveSermonsToLocal(nextSermons);
+
+    const activeCount = nextSermons.filter(s => !s.isDeleted).length;
+    if (googleUserId) {
+      updateUserResourceCounts(googleUserId, { sermonCount: activeCount });
+    }
+
+    if (googleUserId && canSyncCloud) {
+      try {
+        const docRef = doc(db, 'users', googleUserId, 'sermons', id);
+        await setDoc(docRef, { isDeleted: false, deletedAt: null }, { merge: true });
+      } catch (err) {
+        console.warn('[SermonSidebar] Firestore restore error:', err);
+      }
+    }
+  };
+
+  // 3) 영구 삭제 (복구 불가)
+  const handlePermanentDeleteSermon = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm('이 설교문을 완전히 영구 삭제하시겠습니까?\n영구 삭제된 설교문은 다시 복구할 수 없습니다.')) {
+      const nextSermons = sermons.filter(s => s.id !== id);
+      setSermons(nextSermons);
+      saveSermonsToLocal(nextSermons);
+
+      // 다른 기기에서 재업로드 방지 블랙리스트 등록
+      addPermanentlyDeletedId(id);
+
+      const activeCount = nextSermons.filter(s => !s.isDeleted).length;
+      if (googleUserId) {
+        updateUserResourceCounts(googleUserId, { sermonCount: activeCount });
+      }
+
+      if (googleUserId && canSyncCloud) {
+        try {
+          const docRef = doc(db, 'users', googleUserId, 'sermons', id);
+          await deleteDoc(docRef);
+        } catch (err) {
+          console.warn('[SermonSidebar] Firestore permanent delete error:', err);
+        }
+      }
+
+      try {
+        localStorage.removeItem(`sermon_draft_${id}`);
+      } catch {}
+
+      if (activeSermonId === id) {
+        hasUserEditedRef.current = false;
+        isEditorHydratedRef.current = false;
+        latestEditorRef.current = {
+          id: null,
+          title: '',
+          content: '',
+          fontId: 'noto-serif',
+          fontSize: 16,
+          autoVerseConversion: true,
+        };
+        setView('list');
+        setActiveSermonId(null);
+        setEditorContent('');
+      }
+    }
+  };
+
+  // 4) 휴지통 비우기 (일괄 영구 삭제)
+  const handleEmptyTrash = async () => {
+    const toDelete = trashSermons;
+    if (toDelete.length === 0) return;
+    if (confirm(`휴지통에 있는 ${toDelete.length}개의 설교문을 모두 완전히 영구 삭제하시겠습니까?\n영구 삭제 후에는 절대 복구할 수 없습니다.`)) {
+      const deleteIds = new Set(toDelete.map(s => s.id));
+      const nextSermons = sermons.filter(s => !deleteIds.has(s.id));
+      setSermons(nextSermons);
+      saveSermonsToLocal(nextSermons);
+
+      deleteIds.forEach(id => addPermanentlyDeletedId(id));
+
+      const activeCount = nextSermons.filter(s => !s.isDeleted).length;
+      if (googleUserId) {
+        updateUserResourceCounts(googleUserId, { sermonCount: activeCount });
+      }
+
+      if (googleUserId && canSyncCloud) {
+        toDelete.forEach(async (item) => {
+          try {
+            await deleteDoc(doc(db, 'users', googleUserId, 'sermons', item.id));
+          } catch {}
+        });
+      }
+    }
+  };
+
+
 
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -1187,24 +1344,40 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
     };
   }, [isResizing, dockPosition, onSidebarWidthChange, onSidebarHeightChange]);
 
-  // 목록 보기 모드: 최신순 vs 권별 모아보기
-  const [listTab, setListTab] = useState<'recent' | 'byBook'>('recent');
+  // 목록 보기 모드: 최신순 vs 권별 모아보기 vs 휴지통
+  const [listTab, setListTab] = useState<'recent' | 'byBook' | 'trash'>('recent');
   const [expandedBooks, setExpandedBooks] = useState<Record<string, boolean>>({});
 
   const toggleBookExpand = (bookId: string) => {
     setExpandedBooks(prev => ({ ...prev, [bookId]: !prev[bookId] }));
   };
 
-  // 설교 제목에서 성경 본문 스마트 추출 및 매핑
+  // 활성 설교문 (휴지통에 들어가지 않은 정상 목록)
+  const activeSermons = useMemo(() => {
+    const now = Date.now();
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    return sermons.filter(s => !s.isDeleted && (!s.deletedAt || now - s.deletedAt < THIRTY_DAYS));
+  }, [sermons]);
+
+  // 휴지통 설교문 (삭제되었고 30일 이내인 목록)
+  const trashSermons = useMemo(() => {
+    const now = Date.now();
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    return sermons
+      .filter(s => !!s.isDeleted && (!s.deletedAt || now - s.deletedAt < THIRTY_DAYS))
+      .sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
+  }, [sermons]);
+
+  // 설교 제목에서 성경 본문 스마트 추출 및 매핑 (활성 설교 기준)
   const sermonsWithBook = useMemo(() => {
-    return sermons.map(s => {
+    return activeSermons.map(s => {
       const extracted = extractBibleBookFromText(s.title);
       return {
         ...s,
         extractedBook: extracted, // { bookId, bookName, parsedRef }
       };
     });
-  }, [sermons]);
+  }, [activeSermons]);
 
   // 스마트 성경 구절 인식 검색 및 최상위 정렬
   const filteredSermons = useMemo(() => {
@@ -1934,7 +2107,7 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                   )}
                 </div>
 
-                {/* Tab Switcher: 최신순 vs 성경 66권 권별 */}
+                {/* Tab Switcher: 최신순 vs 성경 66권 권별 vs 휴지통 */}
                 <div className="flex bg-[#F5F3ED] p-1 rounded-xl gap-1">
                   <button
                     onClick={() => setListTab('recent')}
@@ -1958,20 +2131,112 @@ export const SermonSidebar = forwardRef<SermonSidebarRef, SermonSidebarProps>(({
                     }`}
                   >
                     <BookOpen className={`w-3.5 h-3.5 stroke-[1.5px] ${listTab === 'byBook' ? 'text-[#2C2B29]' : 'text-[#6A6864]'}`} />
-                    <span>권별 모아보기</span>
+                    <span>권별</span>
+                  </button>
+                  <button
+                    onClick={() => setListTab('trash')}
+                    className={`py-1.5 px-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 shrink-0 ${
+                      listTab === 'trash'
+                        ? 'bg-red-50 text-red-600 shadow-xs'
+                        : 'text-[#6A6864] hover:text-red-600'
+                    }`}
+                    title="휴지통 (30일 보관)"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 stroke-[1.5px]" />
+                    <span>휴지통</span>
+                    {trashSermons.length > 0 && (
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${listTab === 'trash' ? 'bg-red-200 text-red-800' : 'bg-[#EAE7E0] text-[#6A6864]'}`}>
+                        {trashSermons.length}
+                      </span>
+                    )}
                   </button>
                 </div>
               </div>
               
               <div className="flex-1 overflow-y-auto p-3.5 space-y-2 bg-[#FAF9F5] custom-scrollbar">
-                <button 
-                  onClick={createNewEditor}
-                  className="w-full flex items-center justify-center gap-2 p-2.5 border-2 border-dashed border-[#E5E0D8] rounded-xl text-[#4A4741] text-xs font-semibold bg-white/70 hover:bg-white hover:border-[#C4BFAF] hover:shadow-xs transition-all active:scale-[0.99]"
-                >
-                  <Plus className="w-4 h-4 stroke-[1.5px]" /> 새 설교문 작성하기
-                </button>
+                {listTab !== 'trash' && (
+                  <button 
+                    onClick={createNewEditor}
+                    className="w-full flex items-center justify-center gap-2 p-2.5 border-2 border-dashed border-[#E5E0D8] rounded-xl text-[#4A4741] text-xs font-semibold bg-white/70 hover:bg-white hover:border-[#C4BFAF] hover:shadow-xs transition-all active:scale-[0.99]"
+                  >
+                    <Plus className="w-4 h-4 stroke-[1.5px]" /> 새 설교문 작성하기
+                  </button>
+                )}
 
-                {filteredSermons.length === 0 ? (
+                {listTab === 'trash' ? (
+                  <div className="space-y-2">
+                    {/* 휴지통 상단 안내 배너 및 비우기 버튼 */}
+                    <div className="p-2.5 bg-red-50/70 border border-red-100 rounded-xl flex items-center justify-between gap-2">
+                      <div className="text-[11px] text-red-700 flex items-center gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                        <span>30일 후 자동 영구 삭제됩니다.</span>
+                      </div>
+                      {trashSermons.length > 0 && (
+                        <button
+                          onClick={handleEmptyTrash}
+                          className="px-2 py-1 text-[11px] font-semibold text-red-600 hover:text-red-700 hover:bg-red-100/60 rounded-md transition-colors whitespace-nowrap cursor-pointer"
+                        >
+                          휴지통 비우기
+                        </button>
+                      )}
+                    </div>
+
+                    {trashSermons.length === 0 ? (
+                      <div className="text-center py-12 text-[#A3A19B] text-xs font-medium">
+                        휴지통이 비어 있습니다.
+                      </div>
+                    ) : (
+                      trashSermons.map(s => {
+                        const now = Date.now();
+                        const deletedAt = s.deletedAt || now;
+                        const daysLeft = Math.max(0, Math.ceil((30 * 24 * 60 * 60 * 1000 - (now - deletedAt)) / (24 * 60 * 60 * 1000)));
+
+                        return (
+                          <div 
+                            key={s.id}
+                            className="p-3 bg-white border border-[#E7E5DF] rounded-xl transition-all shadow-2xs space-y-1.5"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-serif font-bold text-xs text-[#2C2B29] truncate line-through decoration-red-300">
+                                  {s.title || '제목 없음'}
+                                </h4>
+                                <p className="text-[11px] text-[#6A6864] line-clamp-1 font-serif mt-0.5">
+                                  {stripHtml(s.content || '') || '내용 없음'}
+                                </p>
+                              </div>
+                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-50 text-red-600 shrink-0">
+                                {daysLeft}일 후 영구삭제
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-1 border-t border-[#F5F3ED] text-[10px] text-[#A3A19B]">
+                              <span>삭제일: {new Date(deletedAt).toLocaleDateString()}</span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={(e) => handleRestoreSermon(s.id, e)}
+                                  className="px-2 py-1 rounded bg-[#F5F3ED] text-[#2C2B29] hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-1 transition-colors cursor-pointer font-medium"
+                                  title="설교문 복구"
+                                >
+                                  <RotateCcw className="w-3 h-3 text-emerald-600" />
+                                  <span>복구</span>
+                                </button>
+                                <button
+                                  onClick={(e) => handlePermanentDeleteSermon(s.id, e)}
+                                  className="px-2 py-1 rounded bg-[#F5F3ED] text-red-600 hover:bg-red-50 flex items-center gap-1 transition-colors cursor-pointer font-medium"
+                                  title="완전 영구 삭제"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>영구삭제</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                ) : filteredSermons.length === 0 ? (
                   <div className="text-center py-10 text-[#A3A19B] text-xs font-medium">
                     {searchQuery ? '검색된 설교문이 없습니다.' : '작성된 설교문이 없습니다.'}
                   </div>

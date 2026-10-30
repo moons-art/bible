@@ -212,7 +212,7 @@ export const BibleProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const sermons: Array<{ id: string; title: string }> = JSON.parse(raw);
       const map: Record<string, { id: string; title: string }> = {};
       for (const sermon of sermons) {
-        if (!sermon.title) continue;
+        if (!sermon.title || (sermon as any).isDeleted) continue;
         const parsed = extractFirstVerseFromTitle(sermon.title);
         if (parsed && !map[parsed.verseKey]) {
           map[parsed.verseKey] = { id: sermon.id, title: sermon.title };
